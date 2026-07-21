@@ -216,3 +216,32 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ===== DramaAgent 补充 =====
+
+# uv lock 文件应提交版本控制（保证可复现构建）
+# 但 uv 生成的非 lock 产物仍忽略
+
+# 前端
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+
+# Next.js
+frontend/next-env.d.ts
+
+# 本地运行时数据
+var/
+
+# E2E 输出
+e2e/test-results/
+e2e/playwright-report/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# IDE（VSCode workspace 除外）
+.idea/
+*.swp
+*.swo
