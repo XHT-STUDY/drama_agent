@@ -38,8 +38,10 @@ ci: lint typecheck test
 
 ## 启动本地基础设施（PostgreSQL + Redis）
 up:
+	mkdir -p var/uploads var/artifacts
 	docker compose up -d
 	@echo "=== PostgreSQL + Redis 已启动 ==="
+	@echo "=== 运行 make doctor 检查服务状态 ==="
 
 ## 停止本地基础设施
 down:
@@ -56,7 +58,17 @@ doctor:
 	@uv --version || (echo "ERROR: uv 未安装，请运行 pip install uv" && exit 1)
 	@echo "=== 检查 pnpm ==="
 	@pnpm --version || (echo "ERROR: pnpm 未安装，请运行 npm install -g pnpm" && exit 1)
-	@echo "=== 环境检查通过 ==="
+	@echo "=== 检查 Docker ==="
+	@docker --version || (echo "WARN: Docker 未安装，跳过服务健康检查" && exit 0)
+	@echo "=== 检查 docker-compose.yml ==="
+	@test -f docker-compose.yml || (echo "WARN: docker-compose.yml 不存在" && exit 0)
+	@echo "=== 检查 PostgreSQL ==="
+	@docker compose exec -T postgres pg_isready -U drama -d drama 2>/dev/null || echo "WARN: PostgreSQL 未运行或未就绪，请运行 make up"
+	@echo "=== 检查 Redis ==="
+	@docker compose exec -T redis redis-cli ping 2>/dev/null || echo "WARN: Redis 未运行或未就绪，请运行 make up"
+	@echo "=== 检查本地运行时目录 ==="
+	@(test -d var/uploads && test -d var/artifacts) || echo "WARN: var/uploads 或 var/artifacts 目录不存在，请运行 make up"
+	@echo "=== 环境检查完成 ==="
 
 ## 清理构建产物与缓存
 clean:

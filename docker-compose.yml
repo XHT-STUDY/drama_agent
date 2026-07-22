@@ -1,0 +1,42 @@
+# DramaAgent 本地开发基础设施
+# 启动：make up  /  停止：make down
+#
+# PostgreSQL + pgvector — 业务数据 + 向量检索，唯一事实源
+# Redis — SSE 发布、短期记忆、限流；不可作为唯一事实源
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: drama-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-drama}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-drama}
+      POSTGRES_DB: ${POSTGRES_DB:-drama}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-drama} -d ${POSTGRES_DB:-drama}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: drama-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -7,7 +7,9 @@ readme = "../README.md"
 license = { text = "MIT" }
 
 # A-01 阶段仅声明最小依赖，业务依赖在后续阶段逐 Task 添加
-dependencies = []
+dependencies = [
+    "pydantic-settings>=2",
+]
 
 [project.optional-dependencies]
 dev = [
