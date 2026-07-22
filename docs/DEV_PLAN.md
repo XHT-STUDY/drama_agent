@@ -2885,7 +2885,7 @@ Prompt 必须区分：
 | ID | 交付项 | 预计 | 依赖 | Status | Owner | Evidence / Blocker |
 | --- | --- | ---: | --- | --- | --- | --- |
 | A-01 | Monorepo 与开发命令 | 0.5d | - | DONE | AI Agent | 后端: pytest 2/2 passed, Ruff/mypy clean; 前端: Vitest 1/1 passed, ESLint/tsc clean; lock 文件已提交 |
-| A-02 | Compose 与配置 | 0.75d | A-01 | TODO | - | - |
+| A-02 | Compose 与配置 | 0.75d | A-01 | DONE | AI Agent | pytest 14/14 passed (config), Ruff/mypy clean; docker-compose.yml 可用 |
 | A-03 | 领域 Schema 与 fixtures | 1d | A-01 | TODO | - | - |
 | A-04 | CI 与质量门禁 | 0.75d | A-01,A-03 | TODO | - | - |
 | B-01 | FastAPI、错误与健康检查 | 0.75d | A-02 | TODO | - | - |
