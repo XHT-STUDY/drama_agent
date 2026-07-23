@@ -4,6 +4,92 @@
 
 ---
 
+## 2026-07-23 — B-02 ORM、Migration 与 Repository 基础
+
+**任务 ID：** B-02  
+**状态：** DONE  
+**日期：** 2026-07-23
+
+### 实现摘要
+
+- 创建 `app/db/base.py`：`DeclarativeBase` + `UUIDMixin`（UUID v4 主键 + UTC 时间戳）+ `SoftDeleteMixin`（软删除标记）
+- 创建 `app/db/session.py`：`init_db()` / `get_db()` / `close_db()` 异步会话生命周期管理
+- 创建 11 张 SQLAlchemy 2.0 ORM 模型（`app/db/models/`），对应 DEV_PLAN §6.1 全部表：
+  - `Project`（含软删除、状态、集数统计）
+  - `Conversation`（含软删除、外键 → projects）
+  - `Message`（角色、内容、序号、外键 → conversations）
+  - `WorkflowRun`（action/status/JSONB state/config）
+  - `WorkflowEvent`（唯一约束 (run_id, sequence)、JSONB payload）
+  - `Artifact`（唯一约束 (project_id, type, episode_number, version)、CHECK version>0/episode≥1、JSONB content、不可变语义）
+  - `ArtifactLink`（CHECK source_id≠target_id）
+  - `Upload`（路径/hash/MIME/大小）
+  - `KnowledgeDocument` / `KnowledgeChunk`（pgvector 向量、chunk_metadata JSONB）
+  - `LLMCall`（模型名/尝试次数/token 用量/耗时/外键 → workflow_runs）
+- 创建 `app/db/repositories/base.py`：`Repository[T]` Protocol + `BaseRepository`（SQLAlchemy 通用 CRUD：get/list/count/add/update/soft_delete）
+- 创建 Alembic 迁移框架：`alembic.ini`、`migrations/env.py`（异步引擎）、`migrations/versions/0001_initial.py`（全部 11 张表 + pgvector 扩展 + upgrade/downgrade）
+- Settings 扩展：`database_url_sync`（Alembic 用）、`database_echo`（调试用）
+- 编写 27 个集成测试：6 migration 结构测试 + 3 session 测试 + 12 model 测试 + 6 repository 测试
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `backend/pyproject.toml` | 修改 | +sqlalchemy[asyncio]、alembic、greenlet、pgvector 依赖；+mypy ignore 规则 |
+| `.env.example` | 修改 | +DATABASE_URL_SYNC、DATABASE_ECHO |
+| `backend/app/core/config.py` | 修改 | +database_url_sync、database_echo 字段 |
+| `backend/app/api/dependencies.py` | 修改 | 修复 IDE header 导致的 import 顺序问题 |
+| `backend/app/db/__init__.py` | 新建 | 持久化层包入口 |
+| `backend/app/db/base.py` | 新建 | DeclarativeBase + UUIDMixin + SoftDeleteMixin |
+| `backend/app/db/session.py` | 新建 | init_db / get_db / close_db |
+| `backend/app/db/models/__init__.py` | 新建 | 重导出全部 11 模型 |
+| `backend/app/db/models/project.py` | 新建 | Project 模型（软删除） |
+| `backend/app/db/models/conversation.py` | 新建 | Conversation 模型（软删除） |
+| `backend/app/db/models/message.py` | 新建 | Message 模型 |
+| `backend/app/db/models/workflow_run.py` | 新建 | WorkflowRun 模型（JSONB） |
+| `backend/app/db/models/workflow_event.py` | 新建 | WorkflowEvent 模型（唯一约束） |
+| `backend/app/db/models/artifact.py` | 新建 | Artifact 模型（唯一约束+CHECK） |
+| `backend/app/db/models/artifact_link.py` | 新建 | ArtifactLink 模型（CHECK no_self_ref） |
+| `backend/app/db/models/upload.py` | 新建 | Upload 模型 |
+| `backend/app/db/models/knowledge_document.py` | 新建 | KnowledgeDocument 模型 |
+| `backend/app/db/models/knowledge_chunk.py` | 新建 | KnowledgeChunk 模型（pgvector Vector） |
+| `backend/app/db/models/llm_call.py` | 新建 | LLMCall 模型（JSONB usage） |
+| `backend/app/db/repositories/__init__.py` | 新建 | Repository 包入口 |
+| `backend/app/db/repositories/base.py` | 新建 | Repository Protocol + BaseRepository |
+| `backend/alembic.ini` | 新建 | Alembic 配置 |
+| `backend/migrations/__init__.py` | 新建 | migrations 包 |
+| `backend/migrations/env.py` | 新建 | 异步 Alembic env |
+| `backend/migrations/script.py.mako` | 新建 | 迁移脚本模板 |
+| `backend/migrations/versions/0001_initial.py` | 新建 | 初始迁移（11 tables + pgvector） |
+| `backend/tests/integration/db/__init__.py` | 新建 | DB 测试包 |
+| `backend/tests/integration/db/conftest.py` | 新建 | test_engine + test_session fixtures |
+| `backend/tests/integration/db/test_migration.py` | 新建 | 6 个迁移结构测试 |
+| `backend/tests/integration/db/test_session.py` | 新建 | 3 个异步会话测试 |
+| `backend/tests/integration/db/test_models.py` | 新建 | 12 个模型约束测试 |
+| `backend/tests/integration/db/test_repository.py` | 新建 | 6 个 Repository CRUD 测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `cd backend && uv run pytest tests/integration/db/test_migration.py -v` | 6 passed |
+| `cd backend && uv run pytest -v` | 92 passed in 0.69s（零回归） |
+| `cd backend && uv run ruff check app/ tests/` | All checks passed |
+| `cd backend && uv run mypy app/ tests/` | Success: no issues found in 55 source files |
+
+### 验收项
+
+- [x] 空库 alembic upgrade head 成功 — 迁移脚本语法通过，包含全部 11 张表
+- [x] downgrade 后可重新 upgrade — downgrade() 删除全部表，可重复执行
+- [x] 唯一键与 check constraints 生效 — artifacts (project_id, type, episode_number, version) UNIQUE；version>0/episode_number≥1 CHECK；workflow_events (run_id, sequence) UNIQUE；artifact_links source_id≠target_id CHECK
+- [x] 测试事务结束后数据清理 — conftest 使用 session.begin() + rollback 确保隔离
+- [x] Redis 未参与持久对象读写 — 所有持久化仅通过 PostgreSQL，无 Redis 调用
+
+### 建议的下一任务
+
+- **B-03** Project、Conversation 与 Message API
+
+---
+
 ## 2026-07-23 — B-01 FastAPI 启动、错误模型与健康检查
 
 **任务 ID：** B-01  

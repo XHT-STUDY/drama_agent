@@ -32,6 +32,8 @@ class Settings(BaseSettings):
 
     # ---- 数据库 ----
     database_url: str = "postgresql+asyncpg://drama:drama@localhost:5432/drama"
+    database_url_sync: str = "postgresql://drama:drama@localhost:5432/drama"
+    database_echo: bool = False
 
     # ---- Redis ----
     redis_url: str = "redis://localhost:6379/0"
