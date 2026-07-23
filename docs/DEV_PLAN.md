@@ -2888,7 +2888,7 @@ Prompt 必须区分：
 | A-02 | Compose 与配置 | 0.75d | A-01 | DONE | AI Agent | pytest 14/14 passed (config), Ruff/mypy clean; docker-compose.yml 可用 |
 | A-03 | 领域 Schema 与 fixtures | 1d | A-01 | DONE | AI Agent | pytest 53/53 contract tests passed, Ruff/mypy clean; 14 golden fixtures; 97.44% coverage |
 | A-04 | CI 与质量门禁 | 0.75d | A-01,A-03 | DONE | AI Agent | CI workflow 创建; 后端 97.44% coverage (≥70%); Ruff/mypy/ESLint/tsc 全绿; TEST_PLAN.md 完成 |
-| B-01 | FastAPI、错误与健康检查 | 0.75d | A-02 | TODO | - | - |
+| B-01 | FastAPI、错误与健康检查 | 0.75d | A-02 | DONE | AI Agent | pytest 86/86 passed (含 15 个集成测试), Ruff/mypy clean; create_app+request_id+health+ErrorResponse+JSON logging |
 | B-02 | ORM、Migration、Repository | 1.25d | B-01,A-03 | TODO | - | - |
 | B-03 | Project/Conversation API | 0.75d | B-02 | TODO | - | - |
 | B-04 | Artifact Store 与版本 | 1d | B-02,A-03 | TODO | - | - |

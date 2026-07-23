@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-07-23 — B-01 FastAPI 启动、错误模型与健康检查
+
+**任务 ID：** B-01  
+**状态：** DONE  
+**日期：** 2026-07-23
+
+### 实现摘要
+
+- 创建 `create_app(settings)` 应用工厂，统一管理 FastAPI 实例化、中间件、异常处理器和路由注册
+- 实现 `ErrorResponse` / `FieldError` Pydantic v2 模型 + `AppError` 异常层次（`NotFoundError`、`ServiceUnavailableError`）+ 4 个 FastAPI 异常处理器（AppError、RequestValidationError、HTTPException、未处理异常）
+- 实现 `RequestIDMiddleware`：优先复用客户端 `X-Request-ID` 头，否则生成 UUID4；通过 `contextvars` 跨 middleware/handler/日志传递
+- 实现 `/health/live`（不依赖外部服务）和 `/health/ready`（检查 DB + Redis 连通性，任一不可用返回 503 并指明依赖名）
+- 实现 `JsonFormatter` 结构化 JSON 日志：每行 `{"timestamp","level","logger","message","request_id","module"}`
+- 添加 CORS 中间件（`cors_origins` 从 Settings 读取）
+- 配置 OpenAPI v1 tags（`health`），生产环境禁用交互式文档
+- 编写 15 个集成测试（async）覆盖全部验收条件
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `backend/pyproject.toml` | 修改 | +fastapi、uvicorn、asyncpg、redis、httpx 依赖；+mypy ignore 规则 |
+| `.env.example` | 修改 | +CORS_ORIGINS 配置项 |
+| `backend/app/core/__init__.py` | 修改 | 包文档注释 |
+| `backend/app/core/config.py` | 修改 | Settings 添加 `cors_origins` 字段 |
+| `backend/app/core/errors.py` | 新建 | ErrorResponse/FieldError 模型、AppError 异常层次、4 个 exception handlers |
+| `backend/app/core/logging.py` | 新建 | JsonFormatter、setup_logging()、get_logger() |
+| `backend/app/main.py` | 新建 | create_app() 工厂、RequestIDMiddleware、lifespan、CORS |
+| `backend/app/api/__init__.py` | 新建 | API 包入口 |
+| `backend/app/api/v1/__init__.py` | 新建 | v1 命名空间 |
+| `backend/app/api/v1/router.py` | 新建 | /health/live、/health/ready + DB/Redis 检查函数 |
+| `backend/app/api/dependencies.py` | 新建 | get_settings()、get_request_id() 依赖注入 |
+| `backend/tests/conftest.py` | 新建 | _force_test_env autouse fixture |
+| `backend/tests/integration/__init__.py` | 新建 | 集成测试包 |
+| `backend/tests/integration/conftest.py` | 新建 | test_settings、app、async_client fixtures |
+| `backend/tests/integration/test_health.py` | 新建 | 17 个集成测试（15 async + 2 sync） |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `cd backend && uv run pytest -m integration tests/integration/test_health.py -v` | 15 passed in 0.22s |
+| `cd backend && uv run pytest -v` | 86 passed in 1.59s（零回归） |
+| `cd backend && uv run ruff check app/ tests/` | All checks passed |
+| `cd backend && uv run mypy app/ tests/` | Success: no issues found in 32 source files |
+
+### 验收项
+
+- [x] `/health/live` 不依赖外部服务 — 直接返回 `{"status": "ok"}`，无任何外部调用
+- [x] `/health/ready` 返回 503 并指明依赖 — `ServiceUnavailableError.detail` 包含 dependency name；多依赖同时失败时全部列出
+- [x] 任何错误响应包含 request_id — 404/405/422/500 全部验证通过
+- [x] 日志为结构化 JSON — `JsonFormatter` 输出标准 JSON 行，含 timestamp/level/logger/message/request_id/module
+- [x] OpenAPI tagged v1 — `/openapi.json` 包含 `health` tag 和 `/api/v1/health/*` paths
+
+### 建议的下一任务
+
+- **B-02** ORM、Migration、Repository 基类
+
+---
+
 ## 2026-07-23 — 阶段 A Exit Gate 验收
 
 **类型：** 阶段验收  

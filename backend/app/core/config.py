@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     upload_max_bytes: int = 10_485_760  # 10 MB
 
+    # ---- CORS ----
+    cors_origins: list[str] = ["*"]
+
     # ---- SSE ----
     sse_heartbeat_seconds: int = 15
 

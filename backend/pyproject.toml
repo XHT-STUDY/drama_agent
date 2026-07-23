@@ -6,10 +6,15 @@ requires-python = ">=3.11"
 readme = "../README.md"
 license = { text = "MIT" }
 
-# A-01 阶段仅声明最小依赖，业务依赖在后续阶段逐 Task 添加
+# 依赖随任务推进逐阶段添加（A-01 → B-01 → …）
 dependencies = [
     "pydantic>=2",
     "pydantic-settings>=2",
+    # B-01: FastAPI 启动、错误模型与健康检查
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "asyncpg>=0.30",
+    "redis>=5.2",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +24,8 @@ dev = [
     "pytest-cov>=6",
     "ruff>=0.11",
     "mypy>=1.15",
+    # B-01: 集成测试 HTTP 客户端
+    "httpx>=0.28",
 ]
 
 [tool.ruff]
@@ -72,8 +79,12 @@ disallow_untyped_defs = true
 module = ["tests.*"]
 disallow_untyped_defs = false
 
+[[tool.mypy.overrides]]
+module = ["asyncpg", "redis.*"]
+ignore_missing_imports = true
+
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.25", "pytest-cov>=6", "ruff>=0.11", "mypy>=1.15"]
+dev = ["pytest>=8", "pytest-asyncio>=0.25", "pytest-cov>=6", "ruff>=0.11", "mypy>=1.15", "httpx>=0.28"]
 
 # ========== Coverage ==========
 
