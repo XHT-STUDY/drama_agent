@@ -54,11 +54,16 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI) -> Any:
     """应用生命周期管理。
 
-    启动：初始化结构化日志。
-    关闭：预留资源清理钩子（后续阶段添加）。
+    启动：初始化 DB 引擎 + 结构化日志。
+    关闭：释放 DB 连接池资源。
     """
     settings: Settings = app.state.settings
     setup_logging(settings.log_level)
+
+    # 初始化数据库引擎
+    from app.db.session import init_db
+    init_db(settings)
+
     logger.info(
         "应用启动",
         extra={
@@ -68,6 +73,10 @@ async def lifespan(app: FastAPI) -> Any:
         },
     )
     yield
+
+    # 关闭数据库连接池
+    from app.db.session import close_db
+    await close_db()
     logger.info("应用关闭")
 
 

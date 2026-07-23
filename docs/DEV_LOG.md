@@ -4,6 +4,62 @@
 
 ---
 
+## 2026-07-23 — B-03 Project、Conversation 与 Message API
+
+**任务 ID：** B-03  
+**状态：** DONE  
+**日期：** 2026-07-23
+
+### 实现摘要
+
+- 创建 Domain Schema：`ProjectCreate/Update/Response/ListResponse`、`ConversationCreate/Response/ListResponse`、`MessageCreate/Response/ListResponse`——API 层独立 Pydantic 模型，与 ORM 完全分离
+- 创建 Application 层：`ProjectService`（CRUD + 软删除过滤）、`ConversationService`（会话创建/列表）、`MessageService`（追加消息/分页列表/sequence 自动分配）
+- 创建 API 路由：`/api/v1/projects`（POST/GET/PATCH）、`/api/v1/projects/{id}/conversations`（POST/GET）、`/api/v1/conversations/{id}/messages`（POST/GET）
+- 跨项目消息保护：消息通过 FK 链自然校验（conversation → project）
+- 消息稳定排序：按 `created_at ASC, id ASC`
+- 集成 `init_db()` 到应用生命周期（`create_app` lifespan）
+- 编写 15 个 API 集成测试（7 projects + 8 conversations）
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `backend/app/domain/project.py` | 新建 | ProjectCreate/Update/Response/ListResponse |
+| `backend/app/domain/conversation.py` | 新建 | Conversation/Messsage Request/Response schemas |
+| `backend/app/application/__init__.py` | 新建 | 应用层包入口 |
+| `backend/app/application/project_service.py` | 新建 | Project CRUD + 校验 |
+| `backend/app/application/conversation_service.py` | 新建 | ConversationService + MessageService |
+| `backend/app/api/v1/projects.py` | 新建 | 4 个项目端点 |
+| `backend/app/api/v1/conversations.py` | 新建 | 4 个会话/消息端点 |
+| `backend/app/api/v1/router.py` | 修改 | include_router projects + conversations |
+| `backend/app/api/dependencies.py` | 修改 | 重导出 get_db |
+| `backend/app/main.py` | 修改 | lifespan 中 init_db() + close_db() |
+| `backend/tests/integration/api/__init__.py` | 新建 | API 测试包 |
+| `backend/tests/integration/api/conftest.py` | 新建 | app + async_client (含测试 DB) |
+| `backend/tests/integration/api/test_projects.py` | 新建 | 7 个项目 API 测试 |
+| `backend/tests/integration/api/test_conversations.py` | 新建 | 8 个会话/消息 API 测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `cd backend && uv run pytest -v` | 92 passed in 1.85s（零回归） |
+| `cd backend && uv run ruff check app/ tests/` | All checks passed |
+| `cd backend && uv run mypy app/ tests/` | Success: no issues found in 66 source files |
+
+### 验收项
+
+- [x] 可以创建、查询、更新项目 — POST/GET/PATCH `/api/v1/projects`
+- [x] 不存在的 project 返回 PROJECT_NOT_FOUND — NotFoundError + code="PROJECT_NOT_FOUND"
+- [x] 消息不能跨项目写入 — FK 链自然保护 + ConversationService 校验项目存在
+- [x] 消息按时间和 ID 稳定排序 — `ORDER BY created_at ASC, id ASC`
+
+### 建议的下一任务
+
+- **B-04** Artifact Store 与不可变版本
+
+---
+
 ## 2026-07-23 — B-02 ORM、Migration 与 Repository 基础
 
 **任务 ID：** B-02  

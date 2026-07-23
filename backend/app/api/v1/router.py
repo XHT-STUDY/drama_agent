@@ -1,8 +1,9 @@
 """DramaAgent API v1 路由聚合。
 
 注册所有 v1 端点：
-- /health/live  — Kubernetes liveness probe
-- /health/ready — Kubernetes readiness probe（含 DB/Redis 检查）
+- /health/* — 健康检查
+- /projects/* — 项目管理
+- /conversations/* — 会话与消息
 """
 
 from __future__ import annotations
@@ -12,10 +13,12 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
+from app.api.v1.conversations import router as conversations_router
+from app.api.v1.projects import router as projects_router
 from app.core.errors import ServiceUnavailableError
 from app.core.logging import get_logger
 
-router = APIRouter(tags=["health"])
+router = APIRouter()
 logger = get_logger(__name__)
 
 
@@ -124,3 +127,8 @@ async def health_ready(request: Request) -> dict[str, Any]:
         )
 
     return {"status": "ok", "checks": checks}
+
+
+# ---- 子路由注册 ----
+router.include_router(projects_router)
+router.include_router(conversations_router)

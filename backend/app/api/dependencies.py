@@ -3,6 +3,7 @@
 提供 FastAPI Depends() 可用的公共依赖：
 - get_settings：获取应用配置
 - get_request_id：获取当前请求 ID
+- get_db：获取数据库异步会话
 """
 
 from __future__ import annotations
@@ -10,6 +11,9 @@ from __future__ import annotations
 from fastapi import Request
 
 from app.core.config import Settings
+from app.db.session import get_db as get_db
+
+__all__ = ["get_settings", "get_request_id", "get_db"]
 
 
 def get_settings(request: Request) -> Settings:
