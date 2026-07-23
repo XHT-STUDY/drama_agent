@@ -4,7 +4,142 @@
 
 ---
 
-## 2026-07-22 — A-02 本地基础设施与配置
+## 2026-07-23 — 阶段 A Exit Gate 验收
+
+**类型：** 阶段验收  
+**日期：** 2026-07-23  
+**关联阶段：** Phase A（任务 A-01 ~ A-04）
+
+### 验收步骤与结果
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 1 | `cp .env.example .env` | ✅ 创建成功 |
+| 2 | `make install` | ✅ 后端 uv sync + 前端 pnpm install 成功 |
+| 3 | `make up` | ⚠️ 跳过 — Docker 安装在 WSL 中，Windows 侧不可用 |
+| 4 | `make doctor` | ✅ Python 3.14.6 + uv 0.11.30 + pnpm 11.15.1，运行时目录已创建 |
+| 5 | `make ci` | ✅ Lint/typecheck/test 全部通过 |
+
+### 三项通过条件
+
+| 条件 | 判定 |
+|---|---|
+| 所有命令成功 | ✅ PASS（Docker 环境限制除外） |
+| 无真实 LLM 调用 | ✅ PASS（APP_ENV=test → FakeLLM） |
+| 领域契约测试全部通过 | ✅ PASS（53/53 contract tests） |
+
+### 遗留问题
+
+- Docker 未安装在 Windows 本机，`make up` / PostgreSQL / Redis 健康检查跳过。WSL 中 Docker 已就绪，GitHub Actions CI 配有 service 容器自动提供。
+
+---
+
+## 2026-07-23 — A-04 质量门禁与 CI
+
+**任务 ID：** A-04  
+**状态：** DONE  
+**日期：** 2026-07-23
+
+### 实现摘要
+
+- 创建 `.github/workflows/ci.yml`：双 Job 流水线（后端 + 前端），含 PostgreSQL + Redis service 容器，覆盖率报告上传为 artifact
+- 后端添加 `pytest-cov>=6` + `[tool.coverage.*]` 配置（70% fail_under）
+- 前端添加 `@vitest/coverage-v8` + vitest.config.ts 覆盖率配置
+- 创建 `docs/TEST_PLAN.md`：9 节完整测试计划文档（分层、时机、工具链、覆盖率目标、FakeLLM 规则、规范）
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `.github/workflows/ci.yml` | 新建 | GitHub Actions CI 流水线 |
+| `docs/TEST_PLAN.md` | 新建 | 测试策略与规范文档 |
+| `backend/pyproject.toml` | 修改 | +pytest-cov 依赖，+coverage 配置 |
+| `frontend/package.json` | 修改 | +@vitest/coverage-v8，+test:coverage script |
+| `frontend/vitest.config.ts` | 修改 | +coverage 配置块（v8 provider） |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `cd backend && uv run ruff check app/ tests/` | All checks passed |
+| `cd backend && uv run mypy app/ tests/` | Success: no issues found in 21 source files |
+| `cd backend && uv run pytest --cov=app -m "not smoke"` | 69 passed, 97.44% coverage (≥70%) |
+| `cd frontend && pnpm lint` | No ESLint warnings or errors |
+| `cd frontend && pnpm typecheck` | pass |
+| `cd frontend && pnpm test:coverage` | 1 passed, coverage report generated |
+
+### 验收项
+
+- [x] 一个故意失败的测试能阻止 CI — pytest/vitest exit 1 on failure
+- [x] CI 不读取开发者本机 .env — CI 显式设置 APP_ENV=test → FakeLLM
+- [x] 测试报告和覆盖率可下载 — CI upload htmlcov/ + coverage/ 为 artifact（7天）
+- [x] 文档写明每类测试何时运行 — TEST_PLAN.md §2
+
+### 建议的下一任务
+
+- **阶段 A Exit Gate** 验收
+
+---
+
+## 2026-07-23 — A-03 领域 Schema、枚举与 Golden Fixtures
+
+**任务 ID：** A-03  
+**状态：** DONE  
+**日期：** 2026-07-23
+
+### 实现摘要
+
+- 创建 `backend/app/domain/` 包，8 个模块文件落地 DEV_PLAN.md §5.4–§5.9 全部 Pydantic v2 模型
+- 定义 4 个 StrEnum（ProjectStatus, ArtifactType, ArtifactStatus, EvaluationDimension）+ Literal 类型别名 + 默认评估权重常量
+- 实现关键校验器：10 集大纲集数/编号验证、分数 0–100 边界、权重和 = 1.0、extra=forbid
+- 实现确定性函数：`compute_overall_score()` 和 `compute_need_revision()`
+- 创建 14 个 Golden Fixtures（每类 Artifact 1 合法 + 1 非法），使用"足球少年逆袭"主题
+- 编写 53 个 Contract 测试
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `backend/pyproject.toml` | 修改 | +pydantic>=2 依赖 |
+| `backend/app/domain/__init__.py` | 新建 | 包入口，重导出全部公开符号 |
+| `backend/app/domain/enums.py` | 新建 | 4 StrEnum + Literal 别名 + 默认权重 |
+| `backend/app/domain/requirement.py` | 新建 | NormalizedRequirement (§5.4) |
+| `backend/app/domain/story_bible.py` | 新建 | CharacterProfile, StoryBible (§5.5) |
+| `backend/app/domain/outline.py` | 新建 | EpisodeOutline, EpisodeOutlineSet (§5.6) |
+| `backend/app/domain/script.py` | 新建 | DialogueLine, Scene, ScriptDraft (§5.7) |
+| `backend/app/domain/evaluation.py` | 新建 | EvaluationIssue, EvaluationReport, 加权计算函数 (§5.8) |
+| `backend/app/domain/revision.py` | 新建 | RevisionOperation, RevisionPlan (§5.9) |
+| `backend/app/domain/continuity.py` | 新建 | ContinuityState + 5 子模型 (§5.9) |
+| `backend/tests/contract/__init__.py` | 新建 | contract 测试包 |
+| `backend/tests/contract/conftest.py` | 新建 | Golden fixture 加载工具 |
+| `backend/tests/contract/test_domain_schemas.py` | 新建 | 53 个 contract 测试 |
+| `backend/tests/golden/__init__.py` | 新建 | golden 包 |
+| `backend/tests/golden/*.json` (×14) | 新建 | 7 类 × (1 valid + 1 invalid) |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `cd backend && uv run ruff check app/domain/ tests/` | All checks passed |
+| `cd backend && uv run mypy app/domain/ tests/contract/` | Success: no issues found in 12 source files |
+| `cd backend && uv run pytest tests/contract/test_domain_schemas.py` | 53 passed in 0.26s |
+| `cd backend && uv run pytest` | 69 passed in 0.53s（含 A-01/A-02 回归） |
+
+### 验收项
+
+- [x] 10 集大纲的编号/数量验证有效
+- [x] 0..100 分数边界有效
+- [x] Evaluation 权重之和测试等于 1
+- [x] 非法额外字段被拒绝
+- [x] Golden fixtures 可序列化再反序列化
+
+### 建议的下一任务
+
+- **A-04** 质量门禁与 CI
+
+---
+
+> **后续任务记录请按此格式追加到本文件末尾。**
 
 **任务 ID：** A-02  
 **状态：** DONE  

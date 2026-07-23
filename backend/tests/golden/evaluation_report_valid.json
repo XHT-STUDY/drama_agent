@@ -1,0 +1,32 @@
+{
+  "episode_number": 1,
+  "script_artifact_id": "00000000-0000-0000-0000-000000000010",
+  "rubric_version": "1.0.0",
+  "dimension_scores": {
+    "opening_hook": 82,
+    "main_clarity": 75,
+    "character_appeal": 80,
+    "conflict_intensity": 68,
+    "payoff_density": 72,
+    "ending_hook": 85,
+    "pacing": 78,
+    "visualizability": 70,
+    "compliance_safety": 90
+  },
+  "overall_score": 77.6,
+  "strengths": ["开头钩子设计巧妙，情感冲击力强", "集尾钩子悬念设置到位"],
+  "issues": [
+    {
+      "issue_id": "iss_001",
+      "dimension": "conflict_intensity",
+      "severity": "medium",
+      "scene_number": 1,
+      "evidence": "教练的语气里带着公式化的遗憾",
+      "diagnosis": "教练与林峰的对话冲突感偏弱，缺少更尖锐的对抗元素",
+      "suggestion": "可增加一位与主角对立的配角在淘汰现场表达更直接的质疑或嘲讽"
+    }
+  ],
+  "revision_suggestions": ["加强第一场戏的冲突张力"],
+  "need_revision": true,
+  "risk_flags": []
+}

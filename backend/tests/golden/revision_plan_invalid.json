@@ -1,0 +1,8 @@
+{
+  "episode_number": 1,
+  "source_script_artifact_id": "00000000-0000-0000-0000-000000000010",
+  "source_evaluation_artifact_id": "00000000-0000-0000-0000-000000000020",
+  "operations": [],
+  "locked_facts": [],
+  "max_change_ratio": 0.35
+}

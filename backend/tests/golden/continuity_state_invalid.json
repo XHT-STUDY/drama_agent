@@ -1,0 +1,23 @@
+{
+  "through_episode": 3,
+  "episode_summaries": [
+    {
+      "episode_number": 1,
+      "summary": "林峰被淘汰。",
+      "key_events": [],
+      "ending_state": ""
+    },
+    {
+      "episode_number": 5,
+      "summary": "跳过第3集直接写第5集。",
+      "key_events": [],
+      "ending_state": ""
+    }
+  ],
+  "open_loops": [],
+  "resolved_loops": [],
+  "locked_facts": [],
+  "character_states": {},
+  "relationship_changes": [],
+  "timeline_events": []
+}

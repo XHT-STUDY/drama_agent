@@ -8,6 +8,7 @@ license = { text = "MIT" }
 
 # A-01 阶段仅声明最小依赖，业务依赖在后续阶段逐 Task 添加
 dependencies = [
+    "pydantic>=2",
     "pydantic-settings>=2",
 ]
 
@@ -15,6 +16,7 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.25",
+    "pytest-cov>=6",
     "ruff>=0.11",
     "mypy>=1.15",
 ]
@@ -71,4 +73,28 @@ module = ["tests.*"]
 disallow_untyped_defs = false
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.11", "mypy>=1.15"]
+dev = ["pytest>=8", "pytest-asyncio>=0.25", "pytest-cov>=6", "ruff>=0.11", "mypy>=1.15"]
+
+# ========== Coverage ==========
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    "tests/*",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+# MVP 阶段 70%；阶段 I 提升至 85%（core）/ 75%（overall）
+fail_under = 70
+exclude_also = [
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+    "class .*\\bProtocol\\):",
+    "raise NotImplementedError",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

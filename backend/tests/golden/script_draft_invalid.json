@@ -1,0 +1,20 @@
+{
+  "episode_number": 1,
+  "title": "被抛弃的天才",
+  "opening_hook": "林峰被淘汰了。",
+  "scenes": [
+    {
+      "scene_number": 1,
+      "location": "青训营门口",
+      "time_of_day": "日白天",
+      "characters": ["林峰"],
+      "action": "林峰拿着行李走出青训营大门。",
+      "dialogue": []
+    }
+  ],
+  "ending_hook": "林峰离开了。",
+  "plain_text": "林峰拿着行李走出青训营大门。",
+  "word_count": 5,
+  "dialogue_ratio": 0.0,
+  "referenced_outline_artifact_id": "00000000-0000-0000-0000-000000000001"
+}

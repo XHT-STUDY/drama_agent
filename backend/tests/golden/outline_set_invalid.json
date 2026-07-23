@@ -1,0 +1,20 @@
+{
+  "episodes": [
+    {
+      "episode_number": 1,
+      "title": "被抛弃的天才",
+      "opening_hook": "青训营的淘汰名单上，林峰的名字赫然在列。",
+      "objective": "建立初始处境。",
+      "core_conflict": "林峰被迫离开青训营。",
+      "key_events": ["林峰被告知淘汰", "林峰离开青训营"],
+      "payoff": "林峰被张德胜注意到。",
+      "ending_hook": "张德胜递给林峰一张名片。",
+      "next_bridge": "",
+      "introduced_loops": [],
+      "resolved_loops": [],
+      "required_characters": []
+    }
+  ],
+  "arc_summary": "一个大纲占位。",
+  "validation_notes": []
+}

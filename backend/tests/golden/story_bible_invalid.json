@@ -1,0 +1,41 @@
+{
+  "title": "足球少年之逆袭人生",
+  "logline": "被青训队抛弃的足球少年林峰逆袭的故事。",
+  "genre": "都市/体育/逆袭",
+  "tone": ["爽文"],
+  "world_setting": "当代都市。",
+  "protagonist": {
+    "character_id": "char_001",
+    "name": "林峰",
+    "role": "主角",
+    "age_range": "19-22",
+    "visible_goal": "进入职业联赛",
+    "hidden_need": null,
+    "traits": ["坚韧"],
+    "strengths": ["战术视野"],
+    "flaws": ["自信心不足"],
+    "relationship_notes": [],
+    "forbidden_changes": []
+  },
+  "antagonist": {
+    "character_id": "char_001",
+    "name": "林峰",
+    "role": "反派",
+    "age_range": "19-22",
+    "visible_goal": "打压主角",
+    "hidden_need": null,
+    "traits": ["傲慢"],
+    "strengths": ["个人技术"],
+    "flaws": ["团队意识差"],
+    "relationship_notes": [],
+    "forbidden_changes": []
+  },
+  "supporting_characters": [],
+  "main_conflict": "林峰与对手的对抗。",
+  "stakes": "职业生涯前途。",
+  "story_rules": [],
+  "long_term_payoffs": [],
+  "open_loops": [],
+  "locked_facts": ["林峰的天赋是战术视野"],
+  "compliance_notes": []
+}

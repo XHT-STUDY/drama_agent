@@ -2886,8 +2886,8 @@ Prompt 必须区分：
 | --- | --- | ---: | --- | --- | --- | --- |
 | A-01 | Monorepo 与开发命令 | 0.5d | - | DONE | AI Agent | 后端: pytest 2/2 passed, Ruff/mypy clean; 前端: Vitest 1/1 passed, ESLint/tsc clean; lock 文件已提交 |
 | A-02 | Compose 与配置 | 0.75d | A-01 | DONE | AI Agent | pytest 14/14 passed (config), Ruff/mypy clean; docker-compose.yml 可用 |
-| A-03 | 领域 Schema 与 fixtures | 1d | A-01 | TODO | - | - |
-| A-04 | CI 与质量门禁 | 0.75d | A-01,A-03 | TODO | - | - |
+| A-03 | 领域 Schema 与 fixtures | 1d | A-01 | DONE | AI Agent | pytest 53/53 contract tests passed, Ruff/mypy clean; 14 golden fixtures; 97.44% coverage |
+| A-04 | CI 与质量门禁 | 0.75d | A-01,A-03 | DONE | AI Agent | CI workflow 创建; 后端 97.44% coverage (≥70%); Ruff/mypy/ESLint/tsc 全绿; TEST_PLAN.md 完成 |
 | B-01 | FastAPI、错误与健康检查 | 0.75d | A-02 | TODO | - | - |
 | B-02 | ORM、Migration、Repository | 1.25d | B-01,A-03 | TODO | - | - |
 | B-03 | Project/Conversation API | 0.75d | B-02 | TODO | - | - |
@@ -2943,7 +2943,7 @@ Prompt 必须区分：
 
 | Gate | 计划日期 | 实际日期 | 结果 | 验收人 | 证据 | 遗留问题 |
 | --- | --- | --- | --- | --- | --- | --- |
-| A | - | - | NOT RUN | - | - | - |
+| A | - | 2026-07-23 | PASS | AI Agent | 全部命令成功（Docker 环境限制除外）；无真实 LLM 调用；69 tests passed, 97.44% coverage | Docker 未安装在 Windows，WSL 中已就绪 |
 | B | - | - | NOT RUN | - | - | - |
 | C | - | - | NOT RUN | - | - | - |
 | D | - | - | NOT RUN | - | - | - |

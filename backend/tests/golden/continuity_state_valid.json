@@ -1,0 +1,91 @@
+{
+  "through_episode": 3,
+  "episode_summaries": [
+    {
+      "episode_number": 1,
+      "summary": "林峰被青训队淘汰后，在公园独自练球，被老教练张德胜发现并邀请加入球队试训。",
+      "key_events": ["林峰被告知淘汰", "林峰在公园练球", "张德胜递出名片"],
+      "ending_state": "林峰决定接受张德胜的邀请，前往低级别球队试训"
+    },
+    {
+      "episode_number": 2,
+      "summary": "林峰加入张德胜的球队，在训练中表现出色，用精准传球赢得队友认可。",
+      "key_events": ["林峰第一次参加球队训练", "林峰在训练赛中展现战术视野"],
+      "ending_state": "林峰逐渐融入球队，张德胜开始系统性培养他的天赋"
+    },
+    {
+      "episode_number": 3,
+      "summary": "林峰在联赛揭幕战中替补登场送出关键助攻，球队取得开门红。陈浩开始关注林峰。",
+      "key_events": ["林峰替补登场", "林峰送出关键助攻", "神秘人通知陈浩"],
+      "ending_state": "林峰在职业赛场上迈出成功第一步，但陈浩的注意力已锁定在他身上"
+    }
+  ],
+  "open_loops": [
+    {
+      "loop_id": "loop_001",
+      "description": "林峰被青训队淘汰的真正原因",
+      "introduced_episode": 1,
+      "resolved_episode": null,
+      "status": "open"
+    },
+    {
+      "loop_id": "loop_002",
+      "description": "陈浩父亲与联赛高层的利益关系",
+      "introduced_episode": 3,
+      "resolved_episode": null,
+      "status": "open"
+    }
+  ],
+  "resolved_loops": [
+    {
+      "loop_id": "loop_003",
+      "description": "林峰是否能在职业赛场立足",
+      "introduced_episode": 1,
+      "resolved_episode": 3,
+      "status": "resolved"
+    }
+  ],
+  "locked_facts": [
+    "林峰的核心天赋是战术视野",
+    "陈浩是林峰在青训时期的前队友"
+  ],
+  "character_states": {
+    "char_protagonist_001": {
+      "character_id": "char_protagonist_001",
+      "physical_state": "轻微疲劳，第5集比赛受伤已恢复",
+      "emotional_state": "从自我怀疑转向坚定自信",
+      "current_goal": "在球队中站稳脚跟，用表现证明自己的价值",
+      "known_information": ["陈浩已注意到自己的表现", "球队面临财务问题"],
+      "last_updated_episode": 3
+    }
+  },
+  "relationship_changes": [
+    {
+      "from_character_id": "char_protagonist_001",
+      "to_character_id": "char_support_001",
+      "episode_number": 2,
+      "before": "陌生人",
+      "after": "师徒信任关系初步建立"
+    }
+  ],
+  "timeline_events": [
+    {
+      "event_id": "evt_001",
+      "episode_number": 1,
+      "order_in_episode": 1,
+      "description": "林峰被青训队淘汰"
+    },
+    {
+      "event_id": "evt_002",
+      "episode_number": 1,
+      "order_in_episode": 2,
+      "description": "张德胜发现林峰的天赋"
+    },
+    {
+      "event_id": "evt_003",
+      "episode_number": 3,
+      "order_in_episode": 1,
+      "description": "林峰职业赛场首秀成功"
+    }
+  ]
+}

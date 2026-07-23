@@ -1,0 +1,22 @@
+{
+  "episode_number": 1,
+  "script_artifact_id": "00000000-0000-0000-0000-000000000010",
+  "rubric_version": "1.0.0",
+  "dimension_scores": {
+    "opening_hook": 82,
+    "main_clarity": 75,
+    "character_appeal": 80,
+    "conflict_intensity": 68,
+    "payoff_density": 72,
+    "ending_hook": 85,
+    "pacing": 78,
+    "visualizability": 70,
+    "compliance_safety": 150
+  },
+  "overall_score": 80.0,
+  "strengths": [],
+  "issues": [],
+  "revision_suggestions": [],
+  "need_revision": false,
+  "risk_flags": []
+}

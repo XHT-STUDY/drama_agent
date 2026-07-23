@@ -1,0 +1,17 @@
+{
+  "episode_number": 1,
+  "source_script_artifact_id": "00000000-0000-0000-0000-000000000010",
+  "source_evaluation_artifact_id": "00000000-0000-0000-0000-000000000020",
+  "operations": [
+    {
+      "operation_id": "op_001",
+      "target_scene_number": 1,
+      "issue_ids": ["iss_001"],
+      "instruction": "增加配角陈浩在淘汰现场的出场，通过台词和态度制造更强冲突感",
+      "preserve": ["林峰的核心性格特质（坚韧、不善言辞）", "教练宣布淘汰名单的流程"],
+      "expected_effect": "冲突强度维度评分提升，开场剧情更有张力"
+    }
+  ],
+  "locked_facts": ["林峰的核心天赋是战术视野，不是超能力", "陈浩是林峰在青训时期的前队友"],
+  "max_change_ratio": 0.35
+}

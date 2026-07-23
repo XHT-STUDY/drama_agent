@@ -1,0 +1,149 @@
+# DramaAgent CI 流水线
+#
+# 触发条件：push / PR 到 main 分支
+# 后端：Python 3.11 + uv → Ruff, Mypy, Pytest（排除 smoke）
+# 前端：Node.js LTS + pnpm → ESLint, tsc, Vitest（含 coverage）
+# 服务容器：PostgreSQL + pgvector, Redis
+#
+# CI 不读取开发者本机 .env；APP_ENV 固定为 test 以确保 FakeLLM/FakeEmbedder。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一分支的并发运行自动取消旧的
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_ENV: test
+
+jobs:
+  # ========== 后端 ==========
+  backend:
+    name: "后端 (lint · typecheck · test)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: drama
+          POSTGRES_PASSWORD: drama
+          POSTGRES_DB: drama
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://drama:drama@localhost:5432/drama
+      REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: 安装后端依赖
+        run: uv sync --frozen
+        working-directory: backend
+
+      - name: Lint（Ruff）
+        run: uv run ruff check app/ tests/
+        working-directory: backend
+
+      - name: 类型检查（Mypy）
+        run: uv run mypy app/ tests/
+        working-directory: backend
+
+      - name: 测试（排除 smoke）
+        run: >
+          uv run pytest
+          --cov=app
+          --cov-report=term-missing
+          --cov-report=html
+          --cov-report=xml
+          -m "not smoke"
+          -v
+        working-directory: backend
+
+      - name: 上传覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: |
+            backend/htmlcov/
+            backend/coverage.xml
+          retention-days: 7
+
+  # ========== 前端 ==========
+  frontend:
+    name: "前端 (lint · typecheck · test)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Lint（ESLint）
+        run: pnpm lint
+        working-directory: frontend
+
+      - name: 类型检查（tsc）
+        run: pnpm typecheck
+        working-directory: frontend
+
+      - name: 测试 + 覆盖率（Vitest）
+        run: pnpm test:coverage
+        working-directory: frontend
+
+      - name: 上传覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          retention-days: 7
