@@ -12,14 +12,12 @@ from typing import Any
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 
-# 导入所有模型确保 create_all 能发现它们
-import app.db.models  # noqa: F401
+import app.db.models  # noqa: F401  # 确保 create_all 发现所有模型
 from app.core.config import Settings
 from app.db.base import Base
 from app.main import create_app
-
 
 # ---- 测试数据库 URL ----
 
