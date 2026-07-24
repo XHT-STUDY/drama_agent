@@ -1,12 +1,39 @@
-"""剧本模型 — DialogueLine、Scene 与 ScriptDraft（§5.7）。
+"""剧本模型 — EpisodeWriterInput、DialogueLine、Scene 与 ScriptDraft (§5.7, C-05).
 
 word_count 和 dialogue_ratio 由确定性 Tool 计算，
 不可信任 LLM 自报数值。
 """
 
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
+
+
+class EpisodeWriterInput(BaseModel):
+    """Episode Writer Skill 的输入模型 (C-05).
+
+    封装单集大纲、StoryBible、前集摘要和连续性状态。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    episode_number: int = Field(..., description="目标集号", ge=1)
+    episode_outline: dict[str, Any] = Field(
+        ..., description="本集大纲 (EpisodeOutline 的 dict 表示)"
+    )
+    story_bible: dict[str, Any] = Field(
+        ..., description="完整 StoryBible (dict 表示)"
+    )
+    previous_summary: str = Field(
+        default="", description="前集摘要文本 (第1集为空)"
+    )
+    continuity_state: str = Field(
+        default="", description="当前连续性状态 (人物状态/伏笔/时间线)"
+    )
+    rag_context: str = Field(
+        default="", description="知识库检索片段 (MVP 可为空)"
+    )
 
 
 class DialogueLine(BaseModel):

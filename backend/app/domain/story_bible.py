@@ -1,10 +1,28 @@
-"""故事设定模型 — CharacterProfile 与 StoryBible（§5.5）。
+"""故事设定模型 — StoryBibleInput、CharacterProfile 与 StoryBible (§5.5, C-03).
 
 StoryBible 是整部短剧的世界观、人物和规则集合，
 一经创建不可原地覆盖，修订时必须产生新版本。
 """
 
+from typing import Any
+
 from pydantic import BaseModel, Field, model_validator
+
+
+class StoryBibleInput(BaseModel):
+    """StoryBible Skill 的输入模型 (C-03).
+
+    封装归一化需求与知识库上下文，供 StoryBibleSkill 消费。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    normalized_requirement: dict[str, Any] = Field(
+        ..., description="归一化后的创作需求 (NormalizedRequirement 的 dict 表示)"
+    )
+    rag_context: str = Field(
+        default="", description="知识库检索片段 (MVP 阶段可为空)"
+    )
 
 
 class CharacterProfile(BaseModel):

@@ -1,0 +1,96 @@
+{
+  "_description": "C-03 StoryBible golden fixture — 足球少年的完整故事设定",
+  "input": {
+    "normalized_requirement": {
+      "title": "足球少年之逆袭人生",
+      "logline": "一个被青训队抛弃的足球少年, 凭借隐藏天赋逆袭进入职业赛场.",
+      "genre": "都市/体育/逆袭",
+      "tone": ["爽文", "热血", "励志"],
+      "audience": "18-35岁男性",
+      "target_episode_count": 10,
+      "episode_duration_seconds": 120,
+      "protagonist_seed": "被青训队抛弃的19岁足球少年林峰, 拥有被忽视的战术视野天赋",
+      "conflict_seed": "林峰进入低级别球队后被前青训队友和资本势力联手打压",
+      "must_have": ["主角逆袭高光时刻", "每集结尾追更钩子", "至少一场完整比赛描写"],
+      "must_avoid": ["主角主动使用暴力", "涉及真实球队名称"],
+      "source_type": "idea",
+      "assumptions": ["默认以当代都市为背景"],
+      "open_questions": ["是否需要加入爱情线?"]
+    },
+    "rag_context": ""
+  },
+  "expected_output": {
+    "title": "足球少年之逆袭人生",
+    "logline": "被青训队抛弃的足球少年林峰, 凭借被所有人忽视的战术视野天赋, 从底层联赛一路逆袭至职业巅峰。",
+    "genre": "都市/体育/逆袭",
+    "tone": ["爽文", "热血", "励志"],
+    "world_setting": "当代都市, 职业足球联赛体系, 青训营与低级别联赛并存的竞技世界。",
+    "protagonist": {
+      "character_id": "char_protagonist_001",
+      "name": "林峰",
+      "role": "主角",
+      "age_range": "19-22",
+      "visible_goal": "进入职业联赛并证明自己的价值",
+      "hidden_need": "获得真正的认可和归属感, 而非仅仅胜利",
+      "traits": ["坚韧", "观察力强", "不善言辞", "重情义"],
+      "strengths": ["战术视野", "传球精准度", "逆境抗压能力"],
+      "flaws": ["自信心不足", "有时过度无私", "不善处理人际关系"],
+      "relationship_notes": ["与前青训队友陈浩是对手关系", "与教练张德胜是师徒关系"],
+      "forbidden_changes": ["林峰的战术天赋来源不可改为药物或外挂", "林峰不能主动使用暴力"]
+    },
+    "antagonist": {
+      "character_id": "char_antagonist_001",
+      "name": "陈浩",
+      "role": "反派",
+      "age_range": "19-22",
+      "visible_goal": "成为联赛最佳球员并打压林峰",
+      "hidden_need": "证明父亲的投资没有白费, 摆脱家族阴影",
+      "traits": ["天赋出众", "傲慢", "心机深沉", "渴望认可"],
+      "strengths": ["个人技术", "射门能力", "资源操控"],
+      "flaws": ["团队意识差", "情绪控制弱", "过度依赖家庭背景"],
+      "relationship_notes": ["其父是联赛赞助商代表", "与林峰曾是青训队友"],
+      "forbidden_changes": ["陈浩不能在中途洗白", "陈浩不能使用暴力"]
+    },
+    "supporting_characters": [
+      {
+        "character_id": "char_support_001",
+        "name": "张德胜",
+        "role": "导师",
+        "age_range": "45-50",
+        "visible_goal": "带领低级别球队保级并培养新人",
+        "hidden_need": "弥补自己作为球员时的遗憾",
+        "traits": ["严厉", "正直", "经验丰富"],
+        "strengths": ["战术布置", "心理疏导", "人才识别"],
+        "flaws": ["固执", "有时过于保守"],
+        "relationship_notes": ["林峰的教练和导师"],
+        "forbidden_changes": []
+      }
+    ],
+    "main_conflict": "林峰与陈浩在场内外的全面对抗, 从个人恩怨到球队存亡的层层升级。",
+    "stakes": "林峰的职业生涯前途、低级别球队的存亡、以及体育公平竞争的底线。",
+    "story_rules": [
+      "每集结尾必须有追更钩子",
+      "比赛描写需兼具真实性和戏剧性",
+      "主角成长必须有明确的阶段性标志"
+    ],
+    "long_term_payoffs": [
+      "林峰战术天赋的完全觉醒 (预计第8集)",
+      "陈浩家族背景的揭露 (预计第6集)"
+    ],
+    "open_loops": [
+      "林峰被青训队抛弃的真正原因",
+      "陈浩父亲与联赛高层的利益关系"
+    ],
+    "locked_facts": [
+      "林峰的核心天赋是战术视野, 不是超能力",
+      "陈浩是林峰在青训时期的前队友",
+      "张德胜教练曾是职业球员, 因伤退役",
+      "林峰所在的低级别球队面临财务危机"
+    ],
+    "compliance_notes": [
+      "不涉及真实球队和球员名称",
+      "比赛冲突描写不鼓励现实暴力",
+      "商业竞争描写需合理夸张"
+    ]
+  }
+}

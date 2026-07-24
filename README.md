@@ -92,3 +92,24 @@ drama-agent/
 - 测试命令
 
 开发时请遵循 DEV_PLAN.md §0.1 中的执行原则，每次只实现一个任务 ID。
+
+## 当前状态
+
+| 阶段 | 任务 | 状态 | 测试 |
+|---|---|---|---|
+| A | A-01 ~ A-04 工程基线 | ✅ DONE | 69 tests, 97.44% coverage |
+| B | B-01 ~ B-07 核心基础设施 | ✅ DONE | 129 tests |
+| C | C-01 ~ C-05 创作链路 | ✅ DONE | 219 tests (含 104 Phase C tests) |
+| C | C-06 ~ C-08 创作链路 | 🔲 TODO | — |
+| D ~ I | 后续阶段 | 🔲 TODO | — |
+
+**最近完成** (2026-07-24): C-01 Prompt Loader → C-05 Episode Writer，详见 [docs/DEV_LOG.md](docs/DEV_LOG.md)。
+
+### 已交付的 Phase C 能力
+
+- **Prompt 管理系统**: 6 个版本化模板，Manifest + PromptLoader + Schema 注册
+- **需求归一化**: Idea/Outline/TXT/DOCX → NormalizedRequirement，关键信息缺失自动阻断
+- **StoryBible 生成**: 完整故事宝典（世界观/人物/规则/伏笔），含质量门禁校验
+- **分集大纲**: 一次生成 10 集，含四要素（开头/冲突/爽点/钩子）+ 角色引用检查
+- **剧本写作**: Scene/DialogueLine + plain_text，WordCountTool/DialogueRatioTool 指标覆盖
+- **CreationAgent**: 统一创作入口，组合 Skill + BaseAgent + PromptLoader

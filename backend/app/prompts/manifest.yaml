@@ -1,0 +1,65 @@
+# DramaAgent Prompt Manifest
+# ===========================
+# 集中管理所有 Prompt 模板的元数据。
+# 每个 entry 记录 name、version、schema 绑定、模板路径和 changelog。
+#
+# 规则（见 DEV_PLAN §9.2）：
+# - 同 name 不允许重复 version
+# - input_schema / output_schema 必须可解析为 Pydantic 类
+# - 模板文件相对路径指向 templates/ 目录
+# - 修改 Prompt 内容必须同时更新 version 和 changelog
+
+prompts:
+  # ---- 需求归一化 ----
+  - name: normalize_requirement
+    version: "1.0.0"
+    input_schema: RequirementInput
+    output_schema: NormalizedRequirement
+    owner: normalizer
+    template: requirement.md
+    changelog: "初始版本：接收 Idea/Outline/TXT/DOCX，归一化为结构化创作需求"
+
+  # ---- StoryBible 生成 ----
+  - name: story_bible
+    version: "1.0.0"
+    input_schema: StoryBibleInput
+    output_schema: StoryBible
+    owner: planner
+    template: story_bible.md
+    changelog: "初始版本：从归一化需求生成完整故事设定（人物、世界观、规则、伏笔）"
+
+  # ---- 分集大纲 ----
+  - name: outline
+    version: "1.0.0"
+    input_schema: OutlineInput
+    output_schema: EpisodeOutlineSet
+    owner: planner
+    template: outline.md
+    changelog: "初始版本：一次生成 10 集分集大纲，每集含开头/冲突/爽点/结尾钩子"
+
+  # ---- 单集剧本写作 ----
+  - name: write_episode
+    version: "1.0.0"
+    input_schema: EpisodeWriterInput
+    output_schema: ScriptDraft
+    owner: writer
+    template: episode_writer.md
+    changelog: "初始版本：基于大纲与连续性状态撰写单集完整剧本（场景/对白/旁白）"
+
+  # ---- 剧集评估 ----
+  - name: evaluate_episode
+    version: "1.0.0"
+    input_schema: EvaluationInput
+    output_schema: EvaluationReport
+    owner: evaluator
+    template: evaluate_episode.md
+    changelog: "初始版本：九维度评估单集剧本，输出评分、诊断与改进建议"
+
+  # ---- 剧集摘要 ----
+  - name: summarize_episode
+    version: "1.0.0"
+    input_schema: SummaryInput
+    output_schema: EpisodeSummary
+    owner: summarizer
+    template: episode_summary.md
+    changelog: "初始版本：生成单集摘要，更新人物状态与伏笔追踪"

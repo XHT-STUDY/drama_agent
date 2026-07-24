@@ -26,11 +26,11 @@ from app.domain.evaluation import (
     compute_need_revision,
     compute_overall_score,
 )
-from app.domain.outline import EpisodeOutline, EpisodeOutlineSet
-from app.domain.requirement import NormalizedRequirement
+from app.domain.outline import EpisodeOutline, EpisodeOutlineSet, OutlineInput
+from app.domain.requirement import NeedsUserInput, NormalizedRequirement, RequirementInput
 from app.domain.revision import RevisionOperation, RevisionPlan
-from app.domain.script import DialogueLine, Scene, ScriptDraft
-from app.domain.story_bible import CharacterProfile, StoryBible
+from app.domain.script import DialogueLine, EpisodeWriterInput, Scene, ScriptDraft
+from app.domain.story_bible import CharacterProfile, StoryBible, StoryBibleInput
 
 __all__ = [
     # Enums
@@ -40,16 +40,21 @@ __all__ = [
     "EvaluationDimension",
     # Requirement
     "NormalizedRequirement",
+    "NeedsUserInput",
+    "RequirementInput",
     # StoryBible
     "CharacterProfile",
     "StoryBible",
+    "StoryBibleInput",
     # Outline
     "EpisodeOutline",
     "EpisodeOutlineSet",
+    "OutlineInput",
     # Script
     "DialogueLine",
     "Scene",
     "ScriptDraft",
+    "EpisodeWriterInput",
     # Evaluation
     "EvaluationIssue",
     "EvaluationReport",

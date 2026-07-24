@@ -1,8 +1,8 @@
-# DramaAgent AI Coding 项目开发执行文档
+﻿# DramaAgent AI Coding 项目开发执行文档
 
-> 文档版本：v1.0  
-> 编制日期：2026-07-20  
-> 项目阶段：MVP  
+> 文档版本：v1.1  
+> 编制日期：2026-07-24  
+> 项目阶段：MVP — Phase C 进行中 (C-01 ~ C-05 已完成)  
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -1681,10 +1681,10 @@ Prompt 必须区分：
   - manifest 记录 changelog；
   - Prompt hash 写入 LLM call 与 Artifact。
 - 验收：
-  - [ ] 同 name 不允许重复 version；
-  - [ ] Prompt 修改但 version 未变时快照测试失败；
-  - [ ] 模板不存在返回可定位错误；
-  - [ ] 不在模板中硬编码模型名和密钥。
+  - [x] 同 name 不允许重复 version；
+  - [x] Prompt 修改但 version 未变时快照测试失败；
+  - [x] 模板不存在返回可定位错误；
+  - [x] 不在模板中硬编码模型名和密钥。
 - 测试：
   - pytest backend/tests/contract/test_prompts.py
 
@@ -1704,10 +1704,10 @@ Prompt 必须区分：
   - 关键输入缺失返回 NeedsUserInput，而非猜测；
   - 保存 Artifact 的 service 由节点调用，Skill 本身不写库。
 - 验收：
-  - [ ] 足球 Idea 生成合法结构；
-  - [ ] 缺主角和核心冲突时阻断；
-  - [ ] target_episode_count 范围合法；
-  - [ ] 原始用户要求中的 must_have 不丢失。
+  - [x] 足球 Idea 生成合法结构；
+  - [x] 缺主角和核心冲突时阻断；
+  - [x] target_episode_count 范围合法；
+  - [x] 原始用户要求中的 must_have 不丢失。
 - 测试：
   - pytest backend/tests/unit/skills/test_requirement.py
 
@@ -1728,10 +1728,10 @@ Prompt 必须区分：
   - 同名角色和空目标校验；
   - CreationAgent.generate_story_bible。
 - 验收：
-  - [ ] 主角、反派、至少一个配角字段完整；
-  - [ ] locked_facts 至少 3 条；
-  - [ ] 角色 ID 在后续 fixture 中可引用；
-  - [ ] Artifact 记录 requirement source ID 与 Prompt 版本。
+  - [x] 主角、反派、至少一个配角字段完整；
+  - [x] locked_facts 至少 3 条；
+  - [x] 角色 ID 在后续 fixture 中可引用；
+  - [x] Artifact 记录 requirement source ID 与 Prompt 版本。
 - 测试：
   - pytest backend/tests/unit/skills/test_story_bible.py
 
@@ -1752,11 +1752,11 @@ Prompt 必须区分：
   - 检查 required_characters 均在 StoryBible；
   - 结构错误可重试，业务弱项只写 validation_notes。
 - 验收：
-  - [ ] 正好 10 集且连续编号；
-  - [ ] 每集有开头、冲突、爽点和结尾钩子；
-  - [ ] 不引用不存在角色；
-  - [ ] 第 10 集形成小阶段高潮而不是强制大结局；
-  - [ ] 保存为单个 episode_outline_set Artifact。
+  - [x] 正好 10 集且连续编号；
+  - [x] 每集有开头、冲突、爽点和结尾钩子；
+  - [x] 不引用不存在角色；
+  - [x] 第 10 集形成小阶段高潮而不是强制大结局；
+  - [x] 保存为单个 episode_outline_set Artifact。
 - 测试：
   - pytest backend/tests/unit/skills/test_outline.py
 
@@ -1779,11 +1779,11 @@ Prompt 必须区分：
   - 每集独立 ScriptDraft Artifact；
   - 设置合理的中文字符/台词比例告警，但不因轻微越界直接失败。
 - 验收：
-  - [ ] LLM 自报指标被服务端计算值覆盖；
-  - [ ] Scene 编号连续且至少 2 场；
-  - [ ] 角色名均可追溯到 StoryBible，临时群众角色有明确规则；
-  - [ ] ending_hook 与 Outline 对应；
-  - [ ] 第 2 集调用上下文包含第 1 集摘要而非全文。
+  - [x] LLM 自报指标被服务端计算值覆盖；
+  - [x] Scene 编号连续且至少 2 场；
+  - [x] 角色名均可追溯到 StoryBible，临时群众角色有明确规则；
+  - [x] ending_hook 与 Outline 对应；
+  - [x] 第 2 集调用上下文包含第 1 集摘要而非全文。
 - 测试：
   - pytest backend/tests/unit/tools backend/tests/unit/skills/test_episode_writer.py
 
@@ -2895,11 +2895,11 @@ Prompt 必须区分：
 | B-05 | Run/Event/SSE/Worker | 1d | B-02,B-03 | DONE | AI Agent | pytest 104/104 passed, Ruff/mypy clean; state machine + SSE + idempotency + EventPublisher |
 | B-06 | LLM Protocol 与 FakeLLM | 0.75d | A-02,A-03 | DONE | AI Agent | pytest 116/116 passed, Ruff/mypy clean; LLMClient+StructuredOutputParser+FakeLLM(fixture+故障注入) |
 | B-07 | Agent/Tool/Skill Registry | 0.5d | B-06 | DONE | AI Agent | pytest 129/129 passed, Ruff/mypy clean; BaseAgent+ToolRegistry+SkillRegistry+EchoTool/Skill |
-| C-01 | Prompt Loader 与版本 | 0.5d | B-06 | TODO | - | - |
-| C-02 | Requirement Skill | 0.75d | C-01,B-07 | TODO | - | - |
-| C-03 | StoryBible Skill | 1d | C-02 | TODO | - | - |
-| C-04 | Outline Skill | 1d | C-03 | TODO | - | - |
-| C-05 | Episode Writer 与文本工具 | 1.25d | C-04,B-07 | TODO | - | - |
+| C-01 | Prompt Loader 与版本 | 0.5d | B-06 | DONE | AI Agent | pytest 219/219 passed (含 38 contract tests); 6 模板 + manifest + PromptLoader + SchemaRegistry; Ruff/mypy clean; PROMPT_GUIDE.md 完成 |
+| C-02 | Requirement Skill | 0.75d | C-01,B-07 | DONE | AI Agent | pytest 219/219 passed (含 14 skill tests); RequirementSkill + RequirementInput + NeedsUserInput; 关键词检测阻断; golden fixture |
+| C-03 | StoryBible Skill | 1d | C-02 | DONE | AI Agent | pytest 219/219 passed (含 14 skill tests); StoryBibleSkill + StoryBibleInput + CreationAgent; 角色校验质量门禁; golden fixture |
+| C-04 | Outline Skill | 1d | C-03 | DONE | AI Agent | pytest 219/219 passed (含 13 skill tests); OutlineSkill + OutlineInput; validate_characters + validate_sequence; golden fixture |
+| C-05 | Episode Writer 与文本工具 | 1.25d | C-04,B-07 | DONE | AI Agent | pytest 219/219 passed (含 25 C-05 tests); EpisodeWriterSkill + WordCountTool + DialogueRatioTool; 指标覆盖 + 角色追溯; Ruff/mypy clean |
 | C-06 | Continuity 与 Context 基础 | 1d | C-03..C-05 | TODO | - | - |
 | C-07 | Creation Workflow | 1.25d | C-02..C-06,B-05 | TODO | - | - |
 | C-08 | Creation API 纵切 | 0.5d | C-07,B-03 | TODO | - | - |

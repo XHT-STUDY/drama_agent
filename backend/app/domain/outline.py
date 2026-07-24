@@ -1,9 +1,30 @@
-"""分集大纲模型 — EpisodeOutline 与 EpisodeOutlineSet（§5.6）。
+"""分集大纲模型 — OutlineInput、EpisodeOutline 与 EpisodeOutlineSet (§5.6, C-04).
 
 MVP 固定输出 10 集大纲，集号 1..10 连续不重复。
 """
 
+from typing import Any
+
 from pydantic import BaseModel, Field, model_validator
+
+
+class OutlineInput(BaseModel):
+    """Outline Skill 的输入模型 (C-04).
+
+    封装 StoryBible 与知识库上下文，供 OutlineSkill 消费。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    story_bible: dict[str, Any] = Field(
+        ..., description="已生成的 StoryBible (dict 表示)"
+    )
+    rag_context: str = Field(
+        default="", description="知识库检索片段 (MVP 阶段可为空)"
+    )
+    outline_count: int = Field(
+        default=10, description="目标集数", ge=1, le=100
+    )
 
 
 class EpisodeOutline(BaseModel):
@@ -104,4 +125,49 @@ class EpisodeOutlineSet(BaseModel):
                     f"第 {current.episode_number} 集缺少 next_bridge，"
                     f"与第 {next_ep.episode_number} 集的衔接不明确"
                 )
+            # 第 10 集不需要 next_bridge (这是最后一集)
+        # 检查第 10 集是否为小阶段高潮而非强制大结局
+        if len(self.episodes) == 10:
+            ep10 = self.episodes[9]
+            finale_keywords = ["大结局", "全剧终", "剧终", "完结"]
+            for kw in finale_keywords:
+                if kw in ep10.title or kw in ep10.ending_hook:
+                    notes.append(
+                        f"第 10 集包含 '{kw}'，暗示强制大结局而非小阶段高潮"
+                    )
         return notes
+
+    def validate_characters(self, story_bible: dict[str, Any]) -> list[str]:
+        """检查所有 required_characters 均在 StoryBible 中存在。
+
+        Args:
+            story_bible: StoryBible 的 dict 表示 (含 protagonist/antagonist/supporting_characters)
+
+        Returns:
+            引用不存在角色的错误列表，空列表表示全部存在。
+        """
+        # 收集所有已知的角色 ID
+        known_ids: set[str] = set()
+        protag = story_bible.get("protagonist", {})
+        antag = story_bible.get("antagonist", {})
+        supporting = story_bible.get("supporting_characters", [])
+
+        if protag and isinstance(protag, dict):
+            known_ids.add(protag.get("character_id", ""))
+        if antag and isinstance(antag, dict):
+            known_ids.add(antag.get("character_id", ""))
+        for char in (supporting or []):
+            if isinstance(char, dict):
+                known_ids.add(char.get("character_id", ""))
+
+        # 丢弃空 ID
+        known_ids.discard("")
+
+        errors: list[str] = []
+        for ep in self.episodes:
+            for cid in ep.required_characters:
+                if cid not in known_ids:
+                    errors.append(
+                        f"第 {ep.episode_number} 集引用了不存在的角色 '{cid}'"
+                    )
+        return errors

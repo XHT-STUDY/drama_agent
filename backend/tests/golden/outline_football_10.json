@@ -1,0 +1,20 @@
+{
+  "_description": "C-04 Outline golden fixture — 足球少年 10 集分集大纲的输入/输出对",
+  "input": {
+    "story_bible_ref": "story_bible_valid.json",
+    "outline_count": 10,
+    "rag_context": ""
+  },
+  "expected_output_summary": {
+    "episode_count": 10,
+    "episode_numbers": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "arc_summary": "从被青训队抛弃到带领底层球队保级成功，林峰完成了从自我怀疑到自信觉醒的成长弧线。10 集覆盖一个完整的小阶段逆袭。",
+    "key_validation_points": [
+      "每集四要素齐全 (opening_hook / core_conflict / payoff / ending_hook)",
+      "required_characters 均在 StoryBible 中可追溯",
+      "next_bridge 在各集间形成合理衔接",
+      "第 10 集为小阶段高潮 (非强制大结局)",
+      "角色 ID 引用: char_protagonist_001 (林峰), char_antagonist_001 (陈浩), char_support_001 (张德胜)"
+    ]
+  }
+}
