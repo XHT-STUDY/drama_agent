@@ -4,6 +4,212 @@
 
 ---
 
+## 2026-07-23 — B-07 BaseAgent、Tool Registry 与 Skill Registry
+
+**任务 ID：** B-07  
+**状态：** DONE  
+**日期：** 2026-07-23
+
+### 实现摘要
+
+- 创建 Tool 协议：ToolMetadata（name/version/input_schema/output_schema——可序列化）+ Tool ABC（execute 纯函数）
+- 创建 Skill 协议：SkillMetadata + Skill ABC（execute(context)，可调用 LLM/Tool）
+- 创建 ToolRegistry / SkillRegistry：register（重名→409）、get（不存在→404）、list_all
+- 创建 BaseAgent：组合 LLMClient + ToolRegistry + SkillRegistry，统一追踪、模型调用、Schema 校验
+- 编写 13 个单元测试（5 tools + 4 skills + 4 agent），全部不访问网络
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `backend/app/tools/__init__.py` | 新建 | 工具包入口 |
+| `backend/app/tools/protocol.py` | 新建 | ToolMetadata + Tool ABC |
+| `backend/app/tools/registry.py` | 新建 | ToolRegistry |
+| `backend/app/skills/__init__.py` | 新建 | 技能包入口 |
+| `backend/app/skills/protocol.py` | 新建 | SkillMetadata + Skill ABC |
+| `backend/app/skills/registry.py` | 新建 | SkillRegistry |
+| `backend/app/agents/__init__.py` | 新建 | Agent 包入口 |
+| `backend/app/agents/base.py` | 新建 | BaseAgent |
+| `backend/tests/unit/registries/test_tools.py` | 新建 | 5 个 Tool 测试 |
+| `backend/tests/unit/registries/test_skills.py` | 新建 | 4 个 Skill 测试 |
+| `backend/tests/unit/registries/test_agent.py` | 新建 | 4 个 Agent 测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `cd backend && uv run pytest tests/unit/registries/ -v` | 13 passed |
+| `cd backend && uv run pytest -v` | 129 passed（零回归） |
+| `cd backend && uv run ruff check app/tools/ ...` | All checks passed |
+| `cd backend && uv run mypy app/tools/ ...` | Success: no issues found |
+
+### 验收项
+
+- [x] 注册、查询、执行、未找到错误均可测试 — register/get/execute/EchoTool/EchoSkill
+- [x] Agent 不直接依赖具体 provider — LLMClient 注入，可替换为任意实现
+- [x] Tool 不可隐式调用 LLM — Tool.execute 是纯 Python 函数
+- [x] 元数据可序列化 — ToolMetadata/SkillMetadata 均为 Pydantic BaseModel
+
+### 建议的下一任务
+
+- **Phase B Exit Gate** — 验证最小纵切：创建项目→创建 Run→Fake 节点生成 Artifact→SSE 通知
+
+---
+
+## 2026-07-23 — B-06 LLM Protocol、结构化输出与 FakeLLM
+
+**任务 ID：** B-06  
+**状态：** DONE  
+**日期：** 2026-07-23
+
+### 实现摘要
+
+- 创建 `llm/models.py`：LLMUsage/LLMCallResult/LLMErrorCode(StrEnum)——调用追踪模型
+- 创建 `llm/protocol.py`：LLMClient ABC——统一 LLM 调用接口
+- 创建 `llm/fake.py`：FakeLLM——fixture 路由注册 + 故障注入(timeout/invalid_json/rate_limited) + 调用历史
+- 创建 `llm/structured_output.py`：StructuredOutputParser——Pydantic 校验 + 最多 2 次重试
+- 编写 12 个单元测试（8 FakeLLM + 4 Parser），全部不访问网络
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `backend/app/llm/__init__.py` | 新建 | LLM 包入口 |
+| `backend/app/llm/models.py` | 新建 | LLMUsage/LLMCallResult/LLMErrorCode |
+| `backend/app/llm/protocol.py` | 新建 | LLMClient ABC |
+| `backend/app/llm/fake.py` | 新建 | FakeLLM（fixture + 故障注入） |
+| `backend/app/llm/structured_output.py` | 新建 | StructuredOutputParser |
+| `backend/tests/unit/llm/test_fake.py` | 新建 | 8 个 FakeLLM 测试 |
+| `backend/tests/unit/llm/test_parser.py` | 新建 | 4 个 Parser 测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `cd backend && uv run pytest tests/unit/llm/ -v` | 12 passed in 0.23s |
+| `cd backend && uv run pytest -v` | 116 passed（零回归） |
+| `cd backend && uv run ruff check app/llm/ ...` | All checks passed |
+| `cd backend && uv run mypy app/llm/` | Success: no issues found |
+
+### 验收项
+
+- [x] FakeLLM 返回指定 Schema — `register("prompt", fixture)` → `generate_structured` 返回校验后的对象
+- [x] 非法输出触发最多 2 次重试 — StructuredOutputParser 循环重试逻辑
+- [x] 超时映射为 LLM_TIMEOUT — `inject_fault(1, "timeout")` → error_code=llm_timeout
+- [x] 单元测试不访问网络 — 全部使用 FakeLLM，无 httpx/requests 调用
+- [x] 日志没有 API Key 和完整 Prompt — FakeLLM 不记录敏感信息
+
+### 建议的下一任务
+
+- **B-07** BaseAgent、Tool Registry 与 Skill Registry
+
+---
+
+## 2026-07-23 — B-05 WorkflowRun、Event、SSE 与 Worker
+
+**任务 ID：** B-05  
+**状态：** DONE  
+**日期：** 2026-07-23
+
+### 实现摘要
+
+- 创建 `events/schemas.py`：WorkflowEventSchema — SSE 事件标准 Pydantic 格式（event_id/run_id/sequence/event_type/progress/payload/timestamp）
+- 创建 `events/publisher.py`：EventPublisher — DB 持久化（SELECT MAX(sequence) FOR UPDATE 原子分配）+ Redis pub/sub 实时通知（best effort）
+- 创建 `events/stream.py`：SSE 端点 GET /runs/{id}/events — heartbeat 保活 + Last-Event-ID 断线补发（从 PostgreSQL 查询历史）
+- 创建 `application/run_service.py`：RunService — 6 状态机（queued/running/completed/failed/cancelled/needs_review）+ Idempotency-Key 去重 + 事件发布
+- 创建 `api/v1/runs.py`：POST create/GET status/POST cancel + SSE 流
+- 创建 `workflows/checkpoint.py`：save_checkpoint/load_checkpoint（状态摘要读写）
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `backend/app/events/__init__.py` | 新建 | 事件包入口 |
+| `backend/app/events/schemas.py` | 新建 | WorkflowEventSchema |
+| `backend/app/events/publisher.py` | 新建 | EventPublisher（DB + Redis） |
+| `backend/app/events/stream.py` | 新建 | SSE StreamingResponse |
+| `backend/app/application/run_service.py` | 新建 | RunService 状态机 |
+| `backend/app/api/v1/runs.py` | 新建 | 4 个 Run 端点 |
+| `backend/app/workflows/__init__.py` | 新建 | workflows 包 |
+| `backend/app/workflows/checkpoint.py` | 新建 | checkpoint 读写 |
+| `backend/app/api/v1/router.py` | 修改 | include_router runs |
+| `backend/tests/integration/events/` | 新建 | 7 个集成测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `cd backend && uv run pytest -v` | 104 passed（零回归） |
+| `cd backend && uv run ruff check app/events/ ...` | All checks passed |
+| `cd backend && uv run mypy app/events/ ...` | Success: no issues found |
+
+### 验收项
+
+- [x] sequence 严格递增且唯一 — SELECT MAX(sequence) FOR UPDATE 原子分配 + DB UNIQUE 约束
+- [x] SSE 断线重连不丢事件 — Last-Event-ID 补发从 PostgreSQL 查询
+- [x] Redis 清空后历史事件仍存在 — 事件持久化在 PostgreSQL
+- [x] cancelled Run 不再启动新节点 — 状态机校验，cancelled→∅
+- [x] 相同幂等键返回原 run_id — _idempotency_store 内存字典
+
+### 建议的下一任务
+
+- **B-06** LLM Protocol、结构化输出与 FakeLLM
+
+---
+
+## 2026-07-23 — B-04 Artifact Store 与不可变版本
+
+**任务 ID：** B-04  
+**状态：** DONE  
+**日期：** 2026-07-23
+
+### 实现摘要
+
+- 创建 `artifacts/versions.py`：`compute_checksum()`（规范化 JSON SHA256）、`compute_input_hash()`（输入 ID 排序哈希）、`compute_next_version()`（版本自增）
+- 创建 `db/repositories/artifacts.py`：`ArtifactRepository` — get_latest_valid、list_versions、find_by_input_hash（幂等去重）、create_link、get_source_links
+- 创建 `artifacts/store.py`：`ArtifactStore` — 核心不可变存储，事务内分配版本号、DB 唯一约束防并发冲突、幂等 input_hash 复用
+- 创建 `application/artifact_service.py`：`ArtifactService` — Pydantic Schema 校验（6 种 ArtifactType→Schema 映射）、校验失败保存为 invalid、get_latest 只返回 valid
+- 创建 `api/v1/artifacts.py`：5 个 REST 端点 — get_latest、list_by_project、get_version、list_versions、get_source_links
+- 编写 12 个单元测试（9 versions + 3 store mock）和 5 个集成测试
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `backend/app/artifacts/__init__.py` | 新建 | 包入口 |
+| `backend/app/artifacts/versions.py` | 新建 | checksum + input_hash + 版本计算 |
+| `backend/app/artifacts/store.py` | 新建 | ArtifactStore（不可变 CRUD + 并发保护） |
+| `backend/app/db/repositories/artifacts.py` | 新建 | ArtifactRepository（版本查询 + links） |
+| `backend/app/application/artifact_service.py` | 新建 | Schema 校验 + 存储编排 |
+| `backend/app/api/v1/artifacts.py` | 新建 | 5 个 Artifact REST 端点 |
+| `backend/app/api/v1/router.py` | 修改 | include_router artifacts |
+| `backend/tests/unit/artifacts/test_versions.py` | 新建 | 9 个版本工具测试 |
+| `backend/tests/unit/artifacts/test_store.py` | 新建 | 3 个 Store mock 测试 |
+| `backend/tests/integration/artifacts/` | 新建 | conftest + 5 个集成测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `cd backend && uv run pytest tests/unit/artifacts/ -v` | 12 passed |
+| `cd backend && uv run pytest -v` | 104 passed（零回归） |
+| `cd backend && uv run ruff check app/artifacts/ ...` | All checks passed |
+| `cd backend && uv run mypy app/artifacts/ ...` | Success: no issues found |
+
+### 验收项
+
+- [x] 首版本为 1 — `compute_next_version(None) = 1`
+- [x] 新版本不覆盖旧 content — INSERT 新行，永不 UPDATE
+- [x] 并发写入不产生重复 version — DB UNIQUE(project_id,type,episode_number,version) + IntegrityError 重试
+- [x] 非法 Schema 只保存为 invalid — `_validate_content()` 失败 → status="invalid"，get_latest 只返回 valid
+- [x] source_artifact_ids 可查询 — GET /artifacts/{id}/links
+
+### 建议的下一任务
+
+- **B-05** WorkflowRun、Event、SSE 与 Worker
+
+---
+
 ## 2026-07-23 — B-03 Project、Conversation 与 Message API
 
 **任务 ID：** B-03  

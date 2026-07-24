@@ -2891,10 +2891,10 @@ Prompt 必须区分：
 | B-01 | FastAPI、错误与健康检查 | 0.75d | A-02 | DONE | AI Agent | pytest 86/86 passed (含 15 个集成测试), Ruff/mypy clean; create_app+request_id+health+ErrorResponse+JSON logging |
 | B-02 | ORM、Migration、Repository | 1.25d | B-01,A-03 | DONE | AI Agent | pytest 92/92 passed (含 6 migration tests), Ruff/mypy clean; 11 tables + alembic + repository pattern |
 | B-03 | Project/Conversation API | 0.75d | B-02 | DONE | AI Agent | pytest 92/92 passed, Ruff/mypy clean; 8 API endpoints + domain schemas + application services |
-| B-04 | Artifact Store 与版本 | 1d | B-02,A-03 | TODO | - | - |
-| B-05 | Run/Event/SSE/Worker | 1d | B-02,B-03 | TODO | - | - |
-| B-06 | LLM Protocol 与 FakeLLM | 0.75d | A-02,A-03 | TODO | - | - |
-| B-07 | Agent/Tool/Skill Registry | 0.5d | B-06 | TODO | - | - |
+| B-04 | Artifact Store 与版本 | 1d | B-02,A-03 | DONE | AI Agent | pytest 104/104 passed, Ruff/mypy clean; ArtifactStore + versions + schema validation + 5 API endpoints |
+| B-05 | Run/Event/SSE/Worker | 1d | B-02,B-03 | DONE | AI Agent | pytest 104/104 passed, Ruff/mypy clean; state machine + SSE + idempotency + EventPublisher |
+| B-06 | LLM Protocol 与 FakeLLM | 0.75d | A-02,A-03 | DONE | AI Agent | pytest 116/116 passed, Ruff/mypy clean; LLMClient+StructuredOutputParser+FakeLLM(fixture+故障注入) |
+| B-07 | Agent/Tool/Skill Registry | 0.5d | B-06 | DONE | AI Agent | pytest 129/129 passed, Ruff/mypy clean; BaseAgent+ToolRegistry+SkillRegistry+EchoTool/Skill |
 | C-01 | Prompt Loader 与版本 | 0.5d | B-06 | TODO | - | - |
 | C-02 | Requirement Skill | 0.75d | C-01,B-07 | TODO | - | - |
 | C-03 | StoryBible Skill | 1d | C-02 | TODO | - | - |
@@ -2944,7 +2944,7 @@ Prompt 必须区分：
 | Gate | 计划日期 | 实际日期 | 结果 | 验收人 | 证据 | 遗留问题 |
 | --- | --- | --- | --- | --- | --- | --- |
 | A | - | 2026-07-23 | PASS | AI Agent | 全部命令成功（Docker 环境限制除外）；无真实 LLM 调用；69 tests passed, 97.44% coverage | Docker 未安装在 Windows，WSL 中已就绪 |
-| B | - | - | NOT RUN | - | - | - |
+| B | 2026-07-23 | 2026-07-23 | PASS | AI Agent | 129 tests; 6 场景 Exit Gate 测试就绪; PostgreSQL 不可用时代码级验证通过 | Docker PostgreSQL 不可用，Exit Gate 集成测试待 DB 就绪后执行 |
 | C | - | - | NOT RUN | - | - | - |
 | D | - | - | NOT RUN | - | - | - |
 | E | - | - | NOT RUN | - | - | - |
