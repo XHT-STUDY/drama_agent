@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from httpx import AsyncClient
 
@@ -18,9 +20,9 @@ from httpx import AsyncClient
 class TestArtifactCreation:
     """Artifact 创建与版本管理。"""
 
-    async def _create_project(self, client: AsyncClient) -> str:
+    async def _create_project(self, client: AsyncClient) -> uuid.UUID:
         r = await client.post("/api/v1/projects", json={"title": "Artifact 测试"})
-        return r.json()["id"]
+        return uuid.UUID(r.json()["id"])
 
     async def test_first_version_is_1(self, async_client: AsyncClient) -> None:
         """首版本为 1。"""
@@ -30,6 +32,7 @@ class TestArtifactCreation:
         from app.artifacts.store import ArtifactStore
         from app.db.session import _async_session_factory
 
+        assert _async_session_factory is not None, "DB not initialized"
         async with _async_session_factory() as db:
             store = ArtifactStore()
             a = await store.create(
@@ -50,6 +53,7 @@ class TestArtifactCreation:
         from app.artifacts.store import ArtifactStore
         from app.db.session import _async_session_factory
 
+        assert _async_session_factory is not None, "DB not initialized"
         async with _async_session_factory() as db:
             store = ArtifactStore()
             a1 = await store.create(
@@ -78,6 +82,7 @@ class TestArtifactCreation:
         from app.application.artifact_service import ArtifactService
         from app.db.session import _async_session_factory
 
+        assert _async_session_factory is not None, "DB not initialized"
         async with _async_session_factory() as db:
             svc = ArtifactService()
             # ScriptDraft 需要 scenes 字段，传空 dict 会校验失败
@@ -96,6 +101,7 @@ class TestArtifactCreation:
         from app.application.artifact_service import ArtifactService
         from app.db.session import _async_session_factory
 
+        assert _async_session_factory is not None, "DB not initialized"
         async with _async_session_factory() as db:
             svc = ArtifactService()
             # 先创建 invalid
@@ -138,6 +144,7 @@ class TestArtifactCreation:
         from app.artifacts.store import ArtifactStore
         from app.db.session import _async_session_factory
 
+        assert _async_session_factory is not None, "DB not initialized"
         async with _async_session_factory() as db:
             store = ArtifactStore()
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.errors import AppError
 from app.skills.protocol import Skill, SkillMetadata
 from app.skills.registry import SkillRegistry
 
@@ -29,7 +30,7 @@ class TestSkillRegistry:
     def test_get_nonexistent_raises(self) -> None:
         """查询未注册名抛出错误。"""
         registry = SkillRegistry()
-        with pytest.raises(Exception) as exc:
+        with pytest.raises(AppError) as exc:
             registry.get("nonexistent")
         assert exc.value.code == "SKILL_NOT_FOUND"
 
@@ -37,7 +38,7 @@ class TestSkillRegistry:
         """重复注册抛出错误。"""
         registry = SkillRegistry()
         registry.register(EchoSkill())
-        with pytest.raises(Exception) as exc:
+        with pytest.raises(AppError) as exc:
             registry.register(EchoSkill())
         assert exc.value.code == "SKILL_ALREADY_REGISTERED"
 

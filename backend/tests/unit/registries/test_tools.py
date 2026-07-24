@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.errors import AppError
 from app.tools.protocol import Tool, ToolMetadata
 from app.tools.registry import ToolRegistry
 
@@ -29,7 +30,7 @@ class TestToolRegistry:
     def test_get_nonexistent_raises(self) -> None:
         """查询未注册名抛出错误。"""
         registry = ToolRegistry()
-        with pytest.raises(Exception) as exc:
+        with pytest.raises(AppError) as exc:
             registry.get("nonexistent")
         assert exc.value.code == "TOOL_NOT_FOUND"
 
@@ -37,7 +38,7 @@ class TestToolRegistry:
         """重复注册抛出错误。"""
         registry = ToolRegistry()
         registry.register(EchoTool())
-        with pytest.raises(Exception) as exc:
+        with pytest.raises(AppError) as exc:
             registry.register(EchoTool())
         assert exc.value.code == "TOOL_ALREADY_REGISTERED"
 

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -41,7 +42,7 @@ class LLMCallResult(BaseModel):
     model_config = {"extra": "forbid"}
 
     content: str = Field(default="", description="LLM 原始文本输出")
-    parsed: object | None = Field(default=None, description="Pydantic Schema 校验后的结构化对象")
+    parsed: Any = Field(default=None, description="Pydantic Schema 校验后的结构化对象")
     usage: LLMUsage = Field(default_factory=LLMUsage, description="Token 用量")
     model: str = Field(default="", description="实际使用的模型名")
     duration_ms: int = Field(default=0, description="调用耗时（毫秒）")

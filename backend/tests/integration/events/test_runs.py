@@ -20,7 +20,7 @@ class TestCreateRun:
 
     async def _create_project(self, client: AsyncClient) -> str:
         r = await client.post("/api/v1/projects", json={"title": "Run 测试"})
-        return r.json()["id"]
+        return str(r.json()["id"])
 
     async def test_create_run_returns_202(self, async_client: AsyncClient) -> None:
         """创建 Run 返回 202 Accepted。"""
@@ -68,7 +68,7 @@ class TestRunStatus:
 
     async def _create_project(self, client: AsyncClient) -> str:
         r = await client.post("/api/v1/projects", json={"title": "状态测试"})
-        return r.json()["id"]
+        return str(r.json()["id"])
 
     async def test_get_run(self, async_client: AsyncClient) -> None:
         """查询 Run 状态。"""

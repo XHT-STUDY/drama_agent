@@ -113,6 +113,7 @@ class TestExitGateB:
         from app.application.run_service import RunService
         from app.db.session import _async_session_factory
 
+        assert _async_session_factory is not None, "DB not initialized"
         async with _async_session_factory() as db:
             run_svc = RunService()
             artifact_svc = ArtifactService()
@@ -192,6 +193,7 @@ class TestExitGateB:
         from app.application.run_service import RunService
         from app.db.session import _async_session_factory
 
+        assert _async_session_factory is not None, "DB not initialized"
         async with _async_session_factory() as db:
             run_svc = RunService()
 
@@ -237,6 +239,7 @@ class TestExitGateB:
         from app.application.artifact_service import ArtifactService
         from app.db.session import _async_session_factory
 
+        assert _async_session_factory is not None, "DB not initialized"
         async with _async_session_factory() as db:
             svc = ArtifactService()
             a1 = await svc.create_validated_artifact(
@@ -303,6 +306,7 @@ class TestExitGateB:
         from app.db.session import _async_session_factory
         from app.events.publisher import EventPublisher
 
+        assert _async_session_factory is not None, "DB not initialized"
         async with _async_session_factory() as db:
             pub = EventPublisher()
 
