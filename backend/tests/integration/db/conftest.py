@@ -87,6 +87,9 @@ async def test_session(test_engine: Any) -> AsyncGenerator[AsyncSession, None]:
         class_=AsyncSession,
         expire_on_commit=False,
     )
-    async with session_factory() as session, session.begin():
-        yield session
-        await session.rollback()
+    async with session_factory() as session:
+        await session.begin()
+        try:
+            yield session
+        finally:
+            await session.rollback()

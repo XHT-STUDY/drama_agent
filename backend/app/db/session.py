@@ -19,6 +19,7 @@ from app.core.config import Settings
 # 模块级单例：引擎和会话工厂在 init_db 时初始化
 _engine = None
 _async_session_factory: async_sessionmaker[AsyncSession] | None = None
+_owns_engine = False  # init_db 创建的引擎才由 close_db 负责释放
 
 
 def init_db(settings: Settings) -> None:
@@ -27,10 +28,17 @@ def init_db(settings: Settings) -> None:
     应在应用启动时调用一次（如 FastAPI lifespan 中）。
     重复调用会覆盖原有引擎（先关闭旧引擎）。
 
+    如果测试代码已通过设置 _async_session_factory 完成初始化，
+    则本函数为 no-op，不会覆盖测试引擎。
+
     Args:
         settings: 应用配置，从中读取 database_url 和 database_echo。
     """
-    global _engine, _async_session_factory
+    global _engine, _async_session_factory, _owns_engine
+
+    # 已由测试 fixture 初始化，跳过
+    if _async_session_factory is not None:
+        return
 
     _engine = create_async_engine(
         settings.database_url,
@@ -43,6 +51,7 @@ def init_db(settings: Settings) -> None:
         class_=AsyncSession,
         expire_on_commit=False,
     )
+    _owns_engine = True
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -71,8 +80,11 @@ async def close_db() -> None:
     """关闭数据库引擎，释放所有连接池资源。
 
     应在应用关闭时调用（如 FastAPI lifespan 的 shutdown 阶段）。
+    仅释放由 init_db 创建的引擎；测试 fixture 注入的引擎不受影响。
     """
-    global _engine
-    if _engine is not None:
+    global _engine, _async_session_factory, _owns_engine
+    if _owns_engine and _engine is not None:
         await _engine.dispose()
         _engine = None
+        _async_session_factory = None
+        _owns_engine = False

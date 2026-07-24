@@ -206,6 +206,7 @@ class TestArtifactLinkConstraints:
         artifact_id = uuid.uuid4()
 
         test_session.add(Project(id=project_id))
+        await test_session.flush()
         test_session.add(Artifact(id=artifact_id, project_id=project_id, type="script_draft", content={}))
         await test_session.flush()
 
