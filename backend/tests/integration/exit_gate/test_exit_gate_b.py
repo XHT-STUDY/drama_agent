@@ -131,13 +131,21 @@ class TestExitGateB:
                     "logline": "Platform smoke test artifact",
                     "genre": "test",
                     "tone": [],
-                    "protagonist_seed": "smoke test",
-                    "conflict_seed": "smoke test",
-                    "source_type": "idea",
-                    "characters": [],
-                    "world_building": "",
-                    "opening_hook": "",
-                    "story_engine": "",
+                    "world_setting": "测试世界观",
+                    "protagonist": {
+                        "character_id": "char_test_pro",
+                        "name": "测试主角",
+                        "role": "主角",
+                        "visible_goal": "达成测试目标",
+                    },
+                    "antagonist": {
+                        "character_id": "char_test_ant",
+                        "name": "测试反派",
+                        "role": "反派",
+                        "visible_goal": "阻止主角成功",
+                    },
+                    "main_conflict": "测试冲突",
+                    "stakes": "测试代价",
                 },
                 prompt_version="smoke-1.0",
             )
@@ -248,7 +256,31 @@ class TestExitGateB:
                 artifact_type="script_draft",
                 content={
                     "title": "测试剧本 v1",
-                    "scenes": [{"id": "s1", "title": "开场", "dialogues": []}],
+                    "episode_number": 1,
+                    "opening_hook": "开场钩子 v1",
+                    "ending_hook": "结尾钩子 v1",
+                    "plain_text": "纯文本内容 v1",
+                    "referenced_outline_artifact_id": str(project_id),
+                    "scenes": [
+                        {
+                            "scene_number": 1,
+                            "location": "足球场",
+                            "time_of_day": "日",
+                            "characters": ["林峰"],
+                            "action": "林峰在球场上训练",
+                            "dialogue": [],
+                        },
+                        {
+                            "scene_number": 2,
+                            "location": "更衣室",
+                            "time_of_day": "夜",
+                            "characters": ["林峰", "陈教练"],
+                            "action": "陈教练告知林峰被开除",
+                            "dialogue": [
+                                {"speaker": "陈教练", "text": "你被淘汰了。"},
+                            ],
+                        },
+                    ],
                 },
             )
             a2 = await svc.create_validated_artifact(
@@ -257,9 +289,35 @@ class TestExitGateB:
                 artifact_type="script_draft",
                 content={
                     "title": "测试剧本 v2",
-                    "scenes": [{"id": "s1", "title": "开场修订", "dialogues": []}],
+                    "episode_number": 1,
+                    "opening_hook": "开场钩子 v2",
+                    "ending_hook": "结尾钩子 v2",
+                    "plain_text": "纯文本内容 v2",
+                    "referenced_outline_artifact_id": str(project_id),
+                    "scenes": [
+                        {
+                            "scene_number": 1,
+                            "location": "足球场",
+                            "time_of_day": "日",
+                            "characters": ["林峰"],
+                            "action": "林峰在球场上训练",
+                            "dialogue": [],
+                        },
+                        {
+                            "scene_number": 2,
+                            "location": "更衣室",
+                            "time_of_day": "夜",
+                            "characters": ["林峰"],
+                            "action": "林峰独自反思",
+                            "dialogue": [
+                                {"speaker": "林峰", "text": "我不会放弃。"},
+                            ],
+                        },
+                    ],
                 },
             )
+
+            await db.commit()
 
             # 验证版本递增
             assert a1.version == 1
@@ -322,5 +380,7 @@ class TestExitGateB:
             assert replay[1].id == e3.id
 
             # 无 Last-Event-ID 返回全部
+            # run.created 已由 RunService 在创建 Run 时自动发布
+            # 加上手动发布的 run.created / node.started / node.completed 共 4 个
             all_events = await pub.get_events_after(db, run_id, None)
-            assert len(all_events) == 3
+            assert len(all_events) == 4

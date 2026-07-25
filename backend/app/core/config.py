@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import PydanticBaseSettingsSource
+
+# .env 文件绝对路径（项目根目录）
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -19,9 +23,9 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE) if _ENV_FILE.exists() else None,
         env_file_encoding="utf-8",
-        extra="forbid",
+        extra="ignore",  # .env 含 docker-compose 共用字段，忽略未定义变量
     )
 
     # ---- 运行环境 ----
@@ -59,7 +63,7 @@ class Settings(BaseSettings):
     # ---- Embedding ----
     embedding_provider: str = ""
     embedding_model: str = ""
-    embedding_dimension: int = 0
+    embedding_dimension: int = 0  # 空字符串在 .env 中会被忽略（extra="ignore"）
 
     # ---- MVP 业务参数 ----
     mvp_outline_count: int = 10
@@ -72,10 +76,31 @@ class Settings(BaseSettings):
     upload_max_bytes: int = 10_485_760  # 10 MB
 
     # ---- CORS ----
-    cors_origins: list[str] = ["*"]
+    # 逗号分隔的允许来源列表；在 .env 中写作 "CORS_ORIGINS=*" 或 "CORS_ORIGINS=host1,host2"
+    cors_origins: str = "*"
+
+    def get_cors_origins(self) -> list[str]:
+        """将 cors_origins 字符串解析为列表。"""
+        if self.cors_origins.strip() == "*":
+            return ["*"]
+        return [h.strip() for h in self.cors_origins.split(",") if h.strip()]
 
     # ---- SSE ----
     sse_heartbeat_seconds: int = 15
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """条件性加载 .env 源：test 环境跳过，避免真实配置泄漏到测试中。"""
+        if os.environ.get("APP_ENV") == "test":
+            return (init_settings, env_settings, file_secret_settings)
+        return (init_settings, env_settings, dotenv_settings, file_secret_settings)
 
     def apply_env_overrides(self) -> "Settings":
         """根据 APP_ENV 施加环境特定的强制覆盖。

@@ -31,6 +31,7 @@ from app.domain.requirement import NeedsUserInput, NormalizedRequirement, Requir
 from app.domain.revision import RevisionOperation, RevisionPlan
 from app.domain.script import DialogueLine, EpisodeWriterInput, Scene, ScriptDraft
 from app.domain.story_bible import CharacterProfile, StoryBible, StoryBibleInput
+from app.domain.summary import SummaryInput, SummaryOutput
 
 __all__ = [
     # Enums
@@ -55,6 +56,9 @@ __all__ = [
     "Scene",
     "ScriptDraft",
     "EpisodeWriterInput",
+    # Summary
+    "SummaryInput",
+    "SummaryOutput",
     # Evaluation
     "EvaluationIssue",
     "EvaluationReport",

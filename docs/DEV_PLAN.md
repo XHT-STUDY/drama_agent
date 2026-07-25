@@ -2,7 +2,7 @@
 
 > 文档版本：v1.1  
 > 编制日期：2026-07-24  
-> 项目阶段：MVP — Phase C 进行中 (C-01 ~ C-05 已完成)  
+> 项目阶段：MVP — Phase C 进行中 (C-01 ~ C-06 已完成，OpenAICompatibleLLM 真实 LLM 客户端就绪，5 个 Skill 全部通过真实 LLM 验证)  
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -2900,7 +2900,8 @@ Prompt 必须区分：
 | C-03 | StoryBible Skill | 1d | C-02 | DONE | AI Agent | pytest 219/219 passed (含 14 skill tests); StoryBibleSkill + StoryBibleInput + CreationAgent; 角色校验质量门禁; golden fixture |
 | C-04 | Outline Skill | 1d | C-03 | DONE | AI Agent | pytest 219/219 passed (含 13 skill tests); OutlineSkill + OutlineInput; validate_characters + validate_sequence; golden fixture |
 | C-05 | Episode Writer 与文本工具 | 1.25d | C-04,B-07 | DONE | AI Agent | pytest 219/219 passed (含 25 C-05 tests); EpisodeWriterSkill + WordCountTool + DialogueRatioTool; 指标覆盖 + 角色追溯; Ruff/mypy clean |
-| C-06 | Continuity 与 Context 基础 | 1d | C-03..C-05 | TODO | - | - |
+| C-06 | Continuity 与 Context 基础 | 1d | C-03..C-05 | DONE | AI Agent | pytest 362/362 passed (48 个新测试), Ruff/mypy clean; ContinuityManager + ContextBuilder + SummarizerSkill |
+| — | OpenAICompatibleLLM + 测试脚本 | 0.5d | B-06,C-06 | DONE | AI Agent | pytest 362/362 passed, Ruff clean; 26 LLM 单元测试; 5 个 Skill 全部通过真实验证（qwen3.7-plus） |
 | C-07 | Creation Workflow | 1.25d | C-02..C-06,B-05 | TODO | - | - |
 | C-08 | Creation API 纵切 | 0.5d | C-07,B-03 | TODO | - | - |
 | D-01 | 知识分类与治理 | 0.5d | C Gate | TODO | - | - |

@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.workflow_event import WorkflowEvent
@@ -58,12 +58,16 @@ class EventPublisher:
         3. Redis PUBLISH（best effort）
         """
         # 原子分配 sequence
+        # 注意：asyncpg 不支持 SELECT MAX(...) FOR UPDATE，
+        # 改用 ORDER BY + LIMIT 1 锁定当前最大 sequence 行
         max_seq_result = await db.execute(
-            select(func.coalesce(func.max(WorkflowEvent.sequence), 0))
+            select(WorkflowEvent.sequence)
             .where(WorkflowEvent.run_id == run_id)
+            .order_by(WorkflowEvent.sequence.desc())
+            .limit(1)
             .with_for_update()
         )
-        max_seq: int = max_seq_result.scalar_one()
+        max_seq: int = max_seq_result.scalar_one_or_none() or 0
         next_sequence = max_seq + 1
 
         event = WorkflowEvent(

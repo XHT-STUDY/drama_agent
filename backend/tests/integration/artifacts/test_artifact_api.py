@@ -118,13 +118,21 @@ class TestArtifactCreation:
                 "logline": "一个被青训队抛弃的足球少年逆袭",
                 "genre": "都市/逆袭",
                 "tone": ["热血"],
-                "protagonist_seed": "被遗弃的天才",
-                "conflict_seed": "逆袭之路的阻碍",
-                "source_type": "idea",
-                "characters": [],
-                "world_building": "",
-                "opening_hook": "",
-                "story_engine": "",
+                "world_setting": "中国都市足球青训圈",
+                "protagonist": {
+                    "character_id": "char_protagonist",
+                    "name": "林峰",
+                    "role": "主角",
+                    "visible_goal": "成为职业足球运动员",
+                },
+                "antagonist": {
+                    "character_id": "char_antagonist",
+                    "name": "陈教练",
+                    "role": "反派",
+                    "visible_goal": "维护自己的权威",
+                },
+                "main_conflict": "天赋被埋没后重新证明自己",
+                "stakes": "失去足球生涯和家人的信任",
             }
             await svc.create_validated_artifact(
                 db,

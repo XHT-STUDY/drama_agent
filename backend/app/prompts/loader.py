@@ -93,6 +93,7 @@ def _auto_register_domain_schemas() -> None:
     from app.domain.revision import RevisionOperation, RevisionPlan  # noqa: F401
     from app.domain.script import DialogueLine, EpisodeWriterInput, Scene, ScriptDraft  # noqa: F401
     from app.domain.story_bible import CharacterProfile, StoryBible, StoryBibleInput  # noqa: F401
+    from app.domain.summary import SummaryInput, SummaryOutput  # noqa: F401
 
     # 注册核心 Schema
     register_schema("RequirementInput", RequirementInput)
@@ -118,6 +119,8 @@ def _auto_register_domain_schemas() -> None:
     register_schema("RelationshipChange", RelationshipChange)
     register_schema("TimelineEvent", TimelineEvent)
     register_schema("ContinuityState", ContinuityState)
+    register_schema("SummaryInput", SummaryInput)
+    register_schema("SummaryOutput", SummaryOutput)
 
 
 # ========================================================================

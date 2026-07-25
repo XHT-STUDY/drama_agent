@@ -37,7 +37,7 @@ class StoryLoop(BaseModel):
 
     loop_id: str = Field(..., description="伏笔唯一标识", min_length=1)
     description: str = Field(..., description="伏笔描述", min_length=1)
-    introduced_episode: int = Field(..., description="引入集号", ge=1)
+    introduced_episode: int = Field(..., description="引入集号（0 表示 StoryBible 阶段）", ge=0)
     resolved_episode: int | None = Field(
         default=None, description="回收集号，null 表示尚未回收", ge=1
     )
@@ -64,7 +64,7 @@ class CharacterState(BaseModel):
         default_factory=list, description="已知信息列表"
     )
     last_updated_episode: int = Field(
-        ..., description="最后更新集号", ge=1
+        ..., description="最后更新集号（0 表示 StoryBible 初始状态）", ge=0
     )
 
 
@@ -107,7 +107,7 @@ class ContinuityState(BaseModel):
     model_config = {"extra": "forbid"}
 
     through_episode: int = Field(
-        ..., description="已覆盖到第几集（含）", ge=1
+        ..., description="已覆盖到第几集（含，0 表示未完成任何集）", ge=0
     )
     episode_summaries: list[EpisodeSummary] = Field(
         default_factory=list, description="各集摘要"

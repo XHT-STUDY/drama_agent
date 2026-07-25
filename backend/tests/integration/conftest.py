@@ -21,6 +21,7 @@ from app.main import create_app
 
 # ---- 测试数据库 URL ----
 
+
 def _get_test_db_url() -> str:
     """获取测试数据库 URL。
 
@@ -34,6 +35,7 @@ def _get_test_db_url() -> str:
 
 
 # ---- 数据库引擎（session 级，所有集成测试共享） ----
+
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine() -> Any:
@@ -77,7 +79,24 @@ async def test_engine() -> Any:
     await engine.dispose()
 
 
+# ---- 数据库清理（每个测试函数自动执行） ----
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clean_db(test_engine: Any) -> AsyncGenerator[None, None]:
+    """每个测试函数前清空所有数据库表。
+
+    依赖 test_engine 确保只在需要数据库的测试中触发（health 测试不使用 test_engine）。
+    按 FK 依赖逆序删除保证无外键冲突。
+    """
+    async with test_engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            await conn.execute(table.delete())
+    yield
+
+
 # ---- HTTP 客户端（不需要数据库的轻量版） ----
+
 
 @pytest_asyncio.fixture
 async def async_client_no_db() -> AsyncGenerator[AsyncClient, None]:
@@ -91,3 +110,16 @@ async def async_client_no_db() -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+# ---- async_client 别名（供 tests/integration 根级测试使用） ----
+
+
+@pytest_asyncio.fixture
+async def async_client(async_client_no_db: AsyncClient) -> AsyncGenerator[AsyncClient, None]:
+    """async_client 别名，复用 async_client_no_db 的逻辑。
+
+    根级 integration 测试（如 test_health.py）不访问子目录 conftest，
+    此 fixture 确保它们能使用 async_client。
+    """
+    yield async_client_no_db

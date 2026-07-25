@@ -70,7 +70,7 @@ class BaseAgent:
         return await self.parser.parse(
             schema,
             messages,
-            model=model or self._default_model(),
+            model=model,  # 空字符串时由 LLMClient 自行决定模型
             temperature=temperature,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,

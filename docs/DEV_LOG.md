@@ -4,6 +4,136 @@
 
 ---
 
+## 2026-07-25 — OpenAICompatibleLLM 真实 LLM 客户端 + Skill 真实验证
+
+**任务 ID：** —（基础设施，非任务卡范围内）  
+**状态：** DONE  
+**日期：** 2026-07-25
+
+### 实现摘要
+
+- 创建 `app/llm/openai_compatible.py`：OpenAICompatibleLLM 实现 LLMClient 协议，支持所有 OpenAI 兼容 API（阿里云 MAAS 等）
+  - 从 Settings 读取 API 地址/密钥/模型名
+  - Schema 提示注入到 System Prompt（JSON mode）
+  - `_extract_json()` 自动剥离 LLM 输出的 ```json 标记
+  - 错误映射：超时→LLM_TIMEOUT、403→认证失败、404→模型不存在、429→限流
+  - 按 prompt_name 映射角色→模型名
+  - 记录每次调用的 token 用量和耗时
+- 创建 `scripts/test_real_llm.py`：CLI 测试脚本，支持 5 种 Skill 的真实 LLM 测试
+- 修复 Config 加载链路：绝对路径 `.env`、`extra="ignore"`、`cors_origins` 类型、test 环境跳过 `.env`
+- 修复 BaseAgent 模型透传：`_default_model()` 不再强制覆盖 LLMClient 的模型决策
+- 更新 Prompt 模板：story_bible.md 明确要求 `char_` 前缀
+- 编写 26 个单元测试
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `app/llm/openai_compatible.py` | 新建 | OpenAICompatibleLLM 客户端（280 行） |
+| `app/llm/__init__.py` | 修改 | 导出 OpenAICompatibleLLM、load_llm_client |
+| `app/core/config.py` | 修改 | 绝对路径 `.env`、`extra="ignore"`、`cors_origins: str`、`settings_customise_sources` |
+| `app/main.py` | 修改 | `settings.get_cors_origins()` |
+| `app/agents/base.py` | 修改 | 透传空 model 值给 LLMClient |
+| `app/prompts/templates/story_bible.md` | 修改 | 明确 character_id 必须 `char_` 前缀 |
+| `scripts/__init__.py` | 新建 | scripts 包入口 |
+| `scripts/test_real_llm.py` | 新建 | 真实 LLM CLI 测试脚本（438 行） |
+| `tests/unit/llm/test_openai_compatible.py` | 新建 | 26 个单元测试 |
+| `.env` | 修改 | LLM_API_BASE 前缀修复、模型名修正 |
+| `.env.example` | 修改 | （无变化） |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `uv run pytest -v` | 362 passed（零回归） |
+| `uv run ruff check app/ tests/ scripts/` | All checks passed |
+| `uv run mypy` | 9 pre-existing errors, 0 new |
+
+### 真实 LLM 端到端验收
+
+| Skill | 模型 | 耗时 | Tokens | 结果 |
+|---|---|---|---|---|
+| requirement | qwen3.7-plus | 39.9s | 3,416 | ✅ "逆风球王" |
+| story_bible | qwen3.7-plus | 95.2s | 7,478 | ✅ 完整世界观 + 4 角色 |
+| outline | qwen3.7-plus | 164.5s | 11,116 | ✅ 10 集分集大纲 |
+| write_episode | qwen3.7-plus | 50.4s | 5,471 | ✅ 第 1 集完整剧本 |
+| summarize_episode | qwen3.7-plus | 39.7s | 3,998 | ✅ 摘要 + 连续性数据 |
+
+### 调试过程中修复的关键问题
+
+1. `.env` 中缺少 `LLM_` 前缀导致 API_BASE 未加载
+2. `env_file` 相对路径从 `backend/` 运行时找不到 `.env`
+3. `cors_origins: list[str]` 导致 `*` 解析失败
+4. `extra="forbid"` 拒绝 docker compose 共用字段
+5. test 环境加载了真实 `.env` 污染测试
+6. OpenAI LLM 客户端追加 `/v1/chat/completions` 但 API_BASE 已含 `/v1`
+7. HTTP 404 被错误映射为 `INVALID_OUTPUT` 导致无意义重试
+8. `BaseAgent._default_model()` 覆盖了 LLMClient 的模型决策
+
+### 建议的下一任务
+
+- **C-07** LangGraph Creation Workflow
+
+---
+
+## 2026-07-25 — C-06 Continuity Manager 与 Context Builder 基础
+
+**任务 ID：** C-06  
+**状态：** DONE  
+**日期：** 2026-07-25
+
+### 实现摘要
+
+- 创建 `app/domain/summary.py`：SummaryInput + SummaryOutput Pydantic 模型，封装摘要生成与连续性更新数据
+- 创建 `app/memory/continuity.py`：ContinuityManager — 从 StoryBible 创建初始 ContinuityState；剧集后更新人物状态/伏笔/时间线；locked_facts 只增不减；为 ContextBuilder 提供连续性快照
+- 创建 `app/memory/context_builder.py`：ContextBuilder — 按 §9.3 预算分配（6 阶段按比例）组装上下文；超预算时按 5 级优先级裁剪（RAG → 连续性 → 用户请求 → 大纲 → 当前场景）；输出 ContextManifest 记录使用/裁剪的资产
+- 创建 `app/skills/summarizer.py`：SummarizerSkill — 从 ScriptDraft + ContinuityState 调用 LLM 生成 SummaryOutput（摘要+角色变化+伏笔+时间线）；内置校验器检查输出完整性
+- 更新 `app/prompts/templates/episode_summary.md`：重写 Prompt 模板匹配 SummaryOutput Schema
+- 更新 `app/domain/continuity.py`：StoryLoop.introduced_episode、CharacterState.last_updated_episode、ContinuityState.through_episode 允许 0（表示 StoryBible 初始状态）
+- 注册 SummaryInput/SummaryOutput 到 SchemaRegistry
+- 编写 48 个单元测试（23 continuity + 11 context_builder + 14 summarizer）
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `app/domain/summary.py` | 新建 | SummaryInput + SummaryOutput (67 行) |
+| `app/domain/__init__.py` | 修改 | 导出 SummaryInput、SummaryOutput |
+| `app/domain/continuity.py` | 修改 | introduced_episode/last_updated_episode/through_episode 改为 ge=0 |
+| `app/prompts/loader.py` | 修改 | 注册 SummaryInput、SummaryOutput Schema |
+| `app/prompts/templates/episode_summary.md` | 修改 | 重写匹配 SummaryOutput Schema |
+| `app/memory/__init__.py` | 新建 | Memory 包入口 |
+| `app/memory/continuity.py` | 新建 | ContinuityManager (328 行) |
+| `app/memory/context_builder.py` | 新建 | ContextBuilder + ContextManifest (220 行) |
+| `app/skills/summarizer.py` | 新建 | SummarizerSkill + 辅助函数 (222 行) |
+| `tests/unit/memory/__init__.py` | 新建 | 测试包入口 |
+| `tests/unit/memory/test_continuity.py` | 新建 | 23 个 ContinuityManager 测试 |
+| `tests/unit/memory/test_context_builder.py` | 新建 | 11 个 ContextBuilder 测试 |
+| `tests/unit/skills/test_summarizer.py` | 新建 | 14 个 SummarizerSkill 测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `uv run pytest tests/unit/memory/ tests/unit/skills/test_summarizer.py -v` | 48 passed |
+| `uv run pytest -v` | 336 passed（零回归） |
+| `uv run ruff check app/ tests/` | All checks passed |
+| `uv run mypy app/ tests/` | 9 pre-existing errors, 0 new |
+
+### 验收项
+
+- [x] 生成第 3 集时读取前两集摘要 — `get_context_for_episode(state, 3)` 包含第 1/2 集摘要但不包含第 3 集
+- [x] 开放和回收伏笔状态可追踪 — StoryLoop open/resolved 状态 + get_loop_summary 统计
+- [x] 超预算时按约定顺序裁剪 — §9.3 五级优先级裁剪，RAG → 连续性 → 用户请求 → 大纲 → 当前场景
+- [x] 不能静默截断当前目标场景 — current_target 被截断时 manifest.warnings 记录，has_current_target_cut() 检查
+- [x] context_manifest 可用于调试 — ContextManifest 包含 sections_used/cut/truncated + budget_total/remaining/estimated_tokens + warnings
+
+### 建议的下一任务
+
+- **C-07** LangGraph Creation Workflow（将 C-02~C-06 的 Skill 串联为完整创作流程）
+
+---
+
 ## 2026-07-24 — C-05 Episode Writer 与确定性文本工具
 
 **任务 ID：** C-05  
