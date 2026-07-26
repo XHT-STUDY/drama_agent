@@ -21,7 +21,7 @@ from app.skills.episode_writer import EpisodeWriterSkill
 from app.workflows.state import CreationState
 
 logger = logging.getLogger(__name__)
-_MVP_SCRIPT_COUNT = 3
+_MVP_DEFAULT_SCRIPT_COUNT = 3  # 默认值，实际从 workflow config 读取
 
 
 def _ctx() -> dict[str, Any]:
@@ -56,9 +56,19 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
     start_ep = state.get("current_episode", 1)
     completed_scripts: dict[str, str] = {}
 
+    # 从 workflow config 读取 script_count（兼容旧 config 无此字段）
+    script_count = ctx.get("script_count", _MVP_DEFAULT_SCRIPT_COUNT)
+    if script_count < 1:
+        script_count = _MVP_DEFAULT_SCRIPT_COUNT
+    logger.info(
+        "开始撰写剧本: 从第 %d 集到第 %d 集 (共 %d 集)",
+        start_ep, script_count, script_count - start_ep + 1,
+    )
+
     await publisher.publish(
         db, run_id=run_id, event_type="node.started",
-        payload={"node": "write_episodes", "start_episode": start_ep, "progress": 0.40},
+        payload={"node": "write_episodes", "start_episode": start_ep, "script_count": script_count, "progress": 0.40},
+        autocommit=True,
     )
     progress("write_episodes", "started", 0.40)
 
@@ -66,7 +76,7 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
         skill = EpisodeWriterSkill()
         prompt_version = prompt_loader.get("write_episode").version
 
-        for ep_num in range(start_ep, _MVP_SCRIPT_COUNT + 1):
+        for ep_num in range(start_ep, script_count + 1):
             if str(ep_num) in existing_scripts:
                 completed_scripts[str(ep_num)] = existing_scripts[str(ep_num)]
                 continue
@@ -91,10 +101,12 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                 rag_context=ctx.get("rag_context", ""),
             )
 
+            logger.info("正在调用 LLM 生成第 %d 集剧本…", ep_num)
             draft = await skill.execute({
                 "input": ew_input, "agent": agent, "prompt_loader": prompt_loader,
                 "outline_artifact_id": outline_aid,
             })
+            logger.info("第 %d 集 LLM 生成完成，开始后处理…", ep_num)
 
             content = draft.model_dump(mode="json")
             artifact = await artifact_svc.create_validated_artifact(
@@ -131,14 +143,16 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                     "progress": 0.40 + ep_num * 0.15,
                     "message": f"第 {ep_num} 集剧本已完成",
                 },
+                autocommit=True,
             )
             progress("write_episodes", f"ep_{ep_num}_done", 0.40 + ep_num * 0.15)
 
-        continuity_text = continuity_mgr.get_context_for_episode(continuity_state, _MVP_SCRIPT_COUNT + 1)
+        continuity_text = continuity_mgr.get_context_for_episode(continuity_state, script_count + 1)
 
         await publisher.publish(
             db, run_id=run_id, event_type="node.completed",
             payload={"node": "write_episodes", "episodes_written": len(completed_scripts), "progress": 0.85},
+            autocommit=True,
         )
         progress("write_episodes", "completed", 0.85)
 
@@ -153,6 +167,7 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
         await publisher.publish(
             db, run_id=run_id, event_type="node.failed",
             payload={"node": "write_episodes", "error": str(e)},
+            autocommit=True,
         )
         return {
             "status": "failed", "error_node": "write_episodes", "error_detail": str(e),

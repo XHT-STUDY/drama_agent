@@ -1,8 +1,8 @@
 """EventPublisher — 事件持久化与实时发布。
 
-- 事务内分配递增 sequence（SELECT MAX(sequence) FOR UPDATE）
-- INSERT workflow_event 到 PostgreSQL
-- Redis publish（best effort：失败不阻塞，不回滚 DB）
+- 使用调用方 DB 会话持久化事件
+- autocommit 模式：在调用方会话中 commit 事件，使 SSE 客户端可实时看到
+- Redis publish（best effort：失败不阻塞，不依赖 Redis）
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ class EventPublisher:
                 settings = Settings()
                 self._redis = aioredis.from_url(settings.redis_url)
             except Exception:
-                self._redis = False  # 标记不可用
+                self._redis = False
         return self._redis if self._redis is not False else None
 
     async def publish(
@@ -49,17 +49,39 @@ class EventPublisher:
         run_id: uuid.UUID,
         event_type: str,
         payload: dict[str, Any] | None = None,
+        autocommit: bool = False,
     ) -> WorkflowEvent:
         """持久化事件并尝试 Redis 实时推送。
 
-        步骤：
-        1. SELECT MAX(sequence) FOR UPDATE 锁定当前 run 的最大 sequence
-        2. INSERT 新事件（sequence = max + 1）
-        3. Redis PUBLISH（best effort）
+        Args:
+            db: 调用方的事务会话
+            run_id: 所属 Run UUID
+            event_type: 事件类型字符串
+            payload: 事件负载
+            autocommit: True = 立即 commit（使 SSE 可见）+ 重新 begin（继续后续操作）
         """
-        # 原子分配 sequence
-        # 注意：asyncpg 不支持 SELECT MAX(...) FOR UPDATE，
-        # 改用 ORDER BY + LIMIT 1 锁定当前最大 sequence 行
+        event = await self._insert_event(db, run_id, event_type, payload)
+
+        if autocommit:
+            # 仅在生产环境（有全局 session factory）执行 commit
+            # 测试环境使用显式事务管理，不 commit
+            from app.db.session import _async_session_factory
+            if _async_session_factory is not None:
+                await db.commit()
+                await db.begin()
+
+        # Redis 实时通知（best effort）
+        await self._try_redis_publish(event)
+        return event
+
+    async def _insert_event(
+        self,
+        db: AsyncSession,
+        run_id: uuid.UUID,
+        event_type: str,
+        payload: dict[str, Any] | None,
+    ) -> WorkflowEvent:
+        """执行事件 INSERT（含 sequence 原子分配）。"""
         max_seq_result = await db.execute(
             select(WorkflowEvent.sequence)
             .where(WorkflowEvent.run_id == run_id)
@@ -78,19 +100,19 @@ class EventPublisher:
         )
         db.add(event)
         await db.flush()
+        return event
 
-        # Redis 实时通知（best effort）
+    async def _try_redis_publish(self, event: WorkflowEvent) -> None:
+        """尝试通过 Redis 实时推送事件（best effort）。"""
         redis_client = self._get_redis()
         if redis_client:
             try:
                 from app.events.schemas import WorkflowEventSchema
 
                 msg = WorkflowEventSchema.from_orm(event).model_dump_json()
-                await redis_client.publish(f"run:{run_id}", msg)
+                await redis_client.publish(f"run:{event.run_id}", msg)
             except Exception:
-                pass  # Redis 故障不影响主流程
-
-        return event
+                pass
 
     async def get_events_after(
         self,
@@ -98,16 +120,12 @@ class EventPublisher:
         run_id: uuid.UUID,
         last_event_id: str | None,
     ) -> list[WorkflowEvent]:
-        """查询指定 Run 在 last_event_id 之后的所有事件。
-
-        用于 SSE 断线重连时的 Last-Event-ID 补发。
-        """
+        """查询指定 Run 在 last_event_id 之后的所有事件。"""
         stmt = select(WorkflowEvent).where(WorkflowEvent.run_id == run_id)
 
         if last_event_id:
             try:
                 last_uuid = uuid.UUID(last_event_id)
-                # 找到该事件的 sequence
                 ref_result = await db.execute(
                     select(WorkflowEvent.sequence).where(WorkflowEvent.id == last_uuid)
                 )
@@ -115,7 +133,7 @@ class EventPublisher:
                 if ref_seq is not None:
                     stmt = stmt.where(WorkflowEvent.sequence > ref_seq)
             except ValueError:
-                pass  # 无效 UUID，返回全部
+                pass
 
         stmt = stmt.order_by(WorkflowEvent.sequence.asc())
         result = await db.execute(stmt)

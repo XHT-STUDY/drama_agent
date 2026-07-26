@@ -42,6 +42,7 @@ async def outline_node(state: CreationState) -> dict[str, Any]:
     await publisher.publish(
         db, run_id=run_id, event_type="node.started",
         payload={"node": "outline", "progress": 0.25},
+        autocommit=True,
     )
     progress("outline", "started", 0.25)
 
@@ -50,13 +51,20 @@ async def outline_node(state: CreationState) -> dict[str, Any]:
         sb_artifact = await artifact_svc.get_version(db, uuid.UUID(sb_artifact_id))
         story_bible = StoryBible.model_validate(sb_artifact.content)
 
+        # 从 workflow config 读取大纲集数（默认 10，与 script_count 独立）
+        outline_count = ctx.get("outline_count", 10)
+        if outline_count < 1:
+            outline_count = 10
+        logger.info("正在调用 LLM 生成 %d 集大纲…", outline_count)
+
         ol_input = OutlineInput(
             story_bible=story_bible.model_dump(),
             rag_context=ctx.get("rag_context", ""),
-            outline_count=10,
+            outline_count=outline_count,
         )
 
         skill = OutlineSkill()
+        logger.info("正在调用 LLM 生成分集大纲…")
         episode_set = await skill.execute({
             "input": ol_input, "agent": agent, "prompt_loader": prompt_loader,
         })
@@ -74,6 +82,7 @@ async def outline_node(state: CreationState) -> dict[str, Any]:
         await publisher.publish(
             db, run_id=run_id, event_type="node.completed",
             payload={"node": "outline", "artifact_id": str(artifact.id), "progress": 0.40},
+            autocommit=True,
         )
         progress("outline", "completed", 0.40)
 
@@ -88,5 +97,6 @@ async def outline_node(state: CreationState) -> dict[str, Any]:
         await publisher.publish(
             db, run_id=run_id, event_type="node.failed",
             payload={"node": "outline", "error": str(e)},
+            autocommit=True,
         )
         return {"status": "failed", "error_node": "outline", "error_detail": str(e)}

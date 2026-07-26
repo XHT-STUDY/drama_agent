@@ -35,12 +35,14 @@ async def retrieve_node(state: CreationState) -> dict[str, Any]:
     await publisher.publish(
         db, run_id=run_id, event_type="node.started",
         payload={"node": "retrieve", "progress": 0.0},
+        autocommit=True,
     )
     progress("retrieve", "started", 0.0)
 
     await publisher.publish(
         db, run_id=run_id, event_type="node.completed",
         payload={"node": "retrieve", "doc_count": 0, "progress": 1.0},
+        autocommit=True,
     )
     progress("retrieve", "completed", 1.0)
 

@@ -1,8 +1,8 @@
 ﻿# DramaAgent AI Coding 项目开发执行文档
 
-> 文档版本：v1.1  
-> 编制日期：2026-07-24  
-> 项目阶段：MVP — Phase C 验收通过，准备进入 Phase D (RAG 知识库)  
+> 文档版本：v1.3  
+> 编制日期：2026-07-26  
+> 项目阶段：MVP — Phase H-05 完成，准备进入 H-06（修订/版本/Diff）  
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -2926,11 +2926,12 @@ Prompt 必须区分：
 | G-04 | Import 分类与路由 | 0.75d | G-03,C-02 | TODO | - | - |
 | G-05 | Markdown/DOCX Exporter | 1d | B-04,F-04 | TODO | - | - |
 | G-06 | 导入导出集成 | 0.75d | G-04,G-05 | TODO | - | - |
-| H-01 | 前端基座与 API 类型 | 0.5d | B-01 | TODO | - | - |
-| H-02 | 项目列表与创建 | 0.5d | H-01,B-03 | TODO | - | - |
-| H-03 | 对话、上传与 SSE | 1d | H-02,B-05,G-03 | TODO | - | - |
-| H-04 | StoryBible/大纲视图 | 0.5d | H-03,C-08 | TODO | - | - |
-| H-05 | 剧本与评估视图 | 0.75d | H-04,E Gate | TODO | - | - |
+| H-01 | 前端基座与 API 类型 | 0.5d | B-01 | DONE | AI Agent | 12 tests passed, ESLint/tsc clean; Tailwind CSS + TanStack Query + API Client + 布局 + 3 通用组件 |
+| H-02 | 项目列表与创建 | 0.5d | H-01,B-03 | DONE | AI Agent | 22 tests passed, ESLint/tsc clean; ProjectCard+StatusBadge+列表+创建表单, target_episode_count 类型对齐后端 |
+| H-03 | 对话、上传与 SSE | 1d | H-02,B-05,G-03 | DONE | AI Agent | 30 tests passed, ESLint/tsc clean; useRunEvents SSE hook + ChatInput + RunProgress + 项目工作台 |
+| H-04 | StoryBible/大纲视图 | 0.5d | H-03,C-08 | DONE | AI Agent | 71 tests passed, ESLint/tsc clean; CharacterCard+StoryBibleView+EpisodeCard+OutlineListView, locked facts视觉识别, 版本切换, 空字段占位 |
+| H-05 | 剧本编辑与评估视图 | 0.75d | H-04,E Gate | DONE | AI Agent | 122 tests passed, ESLint/tsc clean; EpisodeNav+ScriptView+ScoreBar+IssueCard+EvaluationPanel, 三栏布局, issue→scene定位, risk_flags明显展示, 评估四态覆盖, 阶段E Mock |
+| — | 🔧 SSE/日志/集数修复 | 0.5d | H-05 | DONE | AI Agent | SSE fetch→EventSource, event_type字段对齐, autocommit事件提交, DB轮询回退, 日志北京时区+彩色console, outline_count/script_count从config读取, 角色校验降级为日志, ChatInput集数选择器 |
 | H-06 | 修订/版本/Diff | 0.75d | H-05,F Gate | TODO | - | - |
 | H-07 | 导出与 E2E | 1d | H-06,G-06 | TODO | - | - |
 | I-01 | 恢复与成本保护 | 0.75d | H Gate | TODO | - | - |
@@ -3078,6 +3079,7 @@ Gate 未通过时，即使阶段任务都标 DONE，阶段状态仍为 REVIEW，
 3. 列出修改文件、验收项、验证命令和结果。
 4. 若无法完成，停止扩展范围并说明 blocker。
 5. 不要仅返回代码片段，要直接修改仓库文件。
+6. 完整后更新开发计划和开发日志
 ~~~
 
 ### 16.2 独立代码审查

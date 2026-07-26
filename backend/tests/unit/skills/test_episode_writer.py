@@ -267,20 +267,19 @@ class TestEpisodeWriterSkillValidation:
         assert isinstance(result, ScriptDraft)
         assert len(result.scenes) >= 2
 
-    async def test_unknown_character_rejected(
+    async def test_unknown_character_not_blocking(
         self,
         skill: EpisodeWriterSkill,
         agent: BaseAgent,
         prompt_loader: PromptLoader,
         fake_llm: FakeLLM,
     ) -> None:
-        """不可追溯的非临时角色 → EpisodeWriterValidationError."""
+        """未知角色不再阻断——仅记录日志，不抛出异常。"""
         sb = _football_story_bible()
         outline = _ep1_outline()
-        bad = _valid_script_draft()
-        # 添加一个完全不存在的角色名
-        bad.scenes[0].characters.append("神秘外星人X")
-        fake_llm.register("write_episode", bad)
+        draft_with_extra = _valid_script_draft()
+        draft_with_extra.scenes[0].characters.append("神秘外星人X")
+        fake_llm.register("write_episode", draft_with_extra)
 
         ew_input = EpisodeWriterInput(
             episode_number=1,
@@ -288,13 +287,14 @@ class TestEpisodeWriterSkillValidation:
             story_bible=sb,
         )
 
-        with pytest.raises((EpisodeWriterValidationError, ValueError)):
-            await skill.execute({
-                "input": ew_input,
-                "agent": agent,
-                "prompt_loader": prompt_loader,
-                "outline_artifact_id": uuid4(),
-            })
+        # 不应抛异常，正常返回 ScriptDraft
+        result = await skill.execute({
+            "input": ew_input,
+            "agent": agent,
+            "prompt_loader": prompt_loader,
+            "outline_artifact_id": uuid4(),
+        })
+        assert result.episode_number == 1
 
     async def test_ending_hook_correspondence(
         self,

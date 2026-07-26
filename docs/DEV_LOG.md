@@ -4,6 +4,416 @@
 
 ---
 
+## 2026-07-25 — H-01 前端基座、API Client 与类型生成
+
+**任务 ID：** H-01  
+**状态：** DONE  
+**日期：** 2026-07-25
+
+### 实现摘要
+
+- 安装 Tailwind CSS v4 + @tailwindcss/postcss，创建 postcss.config.mjs + globals.css
+- 安装 @tanstack/react-query v5，创建 QueryProvider 包裹组件树
+- 创建 `src/types/api.ts`：完整 TypeScript 类型定义（Project/Artifact/StoryBible/Outline/Script/Run/SSE 事件），与后端 Pydantic Schema 同步
+- 创建 `src/lib/api-client.ts`：基于 fetch 的统一 API 客户端，自动拼接 base URL、JSON 序列化、统一错误处理（ApiError 含 request_id）
+  - projectsApi / artifactsApi / runsApi / healthApi 四个模块
+- 创建 3 个通用状态组件：
+  - `Loading` — 加载中旋转器 + 文案
+  - `ErrorMessage` — API 错误展示，含 request_id、错误码、重试按钮
+  - `Empty` — 空状态引导，支持操作链接
+- 重写根布局：侧边栏导航（DramaAgent logo + 项目列表导航 + 版本号）+ 主内容区
+- 首页重定向 `/` → `/projects`
+- 项目列表占位页（空状态引导 → 创建项目）
+- 创建 `.env.local`：NEXT_PUBLIC_API_BASE
+- 编写 12 个前端测试（4 API Client + 7 组件 + 1 回归）
+- 测试工具链：vitest + @testing-library/react + jsdom
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `frontend/postcss.config.mjs` | 新建 | Tailwind CSS v4 PostCSS 配置 |
+| `frontend/src/app/globals.css` | 新建 | Tailwind import + 全局样式 |
+| `frontend/.env.local` | 新建 | NEXT_PUBLIC_API_BASE |
+| `frontend/src/types/api.ts` | 新建 | 完整 API 类型定义 (190 行) |
+| `frontend/src/lib/api-client.ts` | 新建 | fetch 封装 + ApiError (170 行) |
+| `frontend/src/lib/query-client.tsx` | 新建 | TanStack Query Provider |
+| `frontend/src/components/Loading.tsx` | 新建 | 加载中组件 |
+| `frontend/src/components/ErrorMessage.tsx` | 新建 | 错误展示组件 |
+| `frontend/src/components/Empty.tsx` | 新建 | 空状态组件 |
+| `frontend/src/app/layout.tsx` | 重写 | 侧边栏 + QueryProvider |
+| `frontend/src/app/page.tsx` | 修改 | 重定向到 /projects |
+| `frontend/src/app/projects/page.tsx` | 新建 | 项目列表占位 |
+| `frontend/vitest.config.ts` | 修改 | jsdom + @vitejs/plugin-react |
+| `frontend/tests/setup.ts` | 新建 | 测试全局设置 |
+| `frontend/tests/api-client.test.ts` | 新建 | 4 个测试 |
+| `frontend/tests/components.test.tsx` | 新建 | 7 个测试 |
+| `frontend/package.json` | 修改 | +tailwindcss +@tanstack/react-query +testing-library |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm test` | **12 passed** (3 files) |
+| `pnpm lint` | ✔ No ESLint warnings or errors |
+| `pnpm typecheck` | **Success** (no errors) |
+| `pytest tests/` | **391 passed** (零回归) |
+
+### 验收项
+
+- [x] 前端不手写重复 API 类型 — types/api.ts 集中定义
+- [x] request_id 在错误详情可见 — ErrorMessage 组件展示 requestId
+- [x] loading/error/empty 均有组件 — Loading / ErrorMessage / Empty
+- [x] API base URL 从环境变量读取 — NEXT_PUBLIC_API_BASE
+- [x] 单元测试不依赖后端在线 — vitest + jsdom mock
+
+### 建议的下一任务
+
+- **H-02** 项目列表与创建项目
+
+---
+
+## 2026-07-25 — H-02 项目列表与创建项目
+
+**任务 ID：** H-02  
+**状态：** DONE  
+**日期：** 2026-07-25
+
+### 实现摘要
+
+- 创建 `StatusBadge` 组件：7 种项目状态 → 颜色 + 中文标签映射
+- 创建 `ProjectCard` 组件：标题、状态标签、集数统计、创建日期，点击跳转项目详情
+- 重写 `projects/page.tsx`：TanStack Query `useQuery` 拉取项目列表，卡片网格布局，Loading/Error/Empty 三态覆盖
+- 创建 `projects/new/page.tsx`：创建表单（标题 1-200 字符 + 目标集数 1-100），客户端校验 + API 错误展示，提交后跳转项目详情，提交中禁用表单防重复
+- 修复前端类型：`episode_count` → `target_episode_count` 对齐后端 `ProjectResponse`
+- 编写 10 个组件测试（4 StatusBadge + 6 ProjectCard）
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `src/features/projects/StatusBadge.tsx` | 新建 | 项目状态标签 (35 行) |
+| `src/features/projects/ProjectCard.tsx` | 新建 | 项目卡片 (40 行) |
+| `src/app/projects/page.tsx` | 重写 | TanStack Query 列表页 (60 行) |
+| `src/app/projects/new/page.tsx` | 新建 | 创建表单页 (115 行) |
+| `src/types/api.ts` | 修改 | episode_count → target_episode_count |
+| `tests/projects.test.tsx` | 新建 | 10 个组件测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm test` | **22 passed** (4 files) |
+| `pnpm lint` | ✔ No ESLint warnings or errors |
+| `pnpm typecheck` | **Success** |
+| `pytest tests/` | **391 passed** (零回归) |
+
+### 验收项
+
+- [x] 创建与刷新后项目仍存在 — POST /projects 持久化，列表 GET /projects 可查询
+- [x] 非法集数不能提交 — 客户端校验 1-100 范围
+- [x] 空列表有引导 — Empty 组件 + 跳转创建链接
+- [x] API 错误不丢用户输入 — 表单字段保留，ErrorMessage 展示 API 错误详情
+
+### 建议的下一任务
+
+- **H-03** 对话输入、上传与 SSE 进度
+
+---
+
+## 2026-07-25 — H-03 对话输入、上传与 SSE 进度
+
+**任务 ID：** H-03  
+**状态：** DONE  
+**日期：** 2026-07-25
+
+### 实现摘要
+
+- 创建 `src/hooks/use-run-events.ts`：SSE 进度订阅 Hook
+  - fetch 流式读取 GET /runs/{id}/events SSE 端点
+  - 自动重连（Last-Event-ID 断点续传）
+  - 解析 WorkflowEvent，实时更新节点进度和整体百分比
+  - 返回 events / nodes / overallProgress / runStatus / connected / lastError
+  - `_deriveNodeProgress` 从事件序列推导各节点状态（pending→running→completed/failed）
+- 创建 `src/features/conversation/ChatInput.tsx`：创作输入组件
+  - textarea 输入 + "开始创作"按钮 → POST /projects/{id}/runs (create_script)
+  - 客户端校验：最少 8 字符、最多 10000 字符
+  - 防重复提交：mutation.isPending / hasActiveRun 时禁用
+  - API 错误展示（含 request_id）
+  - 文件上传区域预留（G-03 完成后接入）
+- 创建 `src/features/runs/RunProgress.tsx`：工作流进度面板
+  - 整体进度条（0-100%）
+  - 节点列表：PhaseIcon（○/⟳/✓/✗）+ 中文标签 + 错误信息
+  - 连接状态指示（绿/红点 + 重连按钮）
+  - 取消按钮（POST /runs/{id}/cancel）
+  - completed / failed 终态展示
+  - 完成后不显示操作按钮
+- 创建 `src/app/projects/[id]/page.tsx`：项目工作台页
+  - 项目标题 + StatusBadge + 集数统计
+  - ChatInput + RunProgress 上下布局
+  - 页面加载时查询活跃 Run 并自动订阅 SSE
+  - 完成后显示"查看 StoryBible""查看大纲"导航链接
+  - Loading / Error / Empty 三态覆盖
+- 编写 8 个 RunProgress 组件测试
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `src/hooks/use-run-events.ts` | 新建 | SSE Hook (175 行) |
+| `src/features/conversation/ChatInput.tsx` | 新建 | 创作输入 (105 行) |
+| `src/features/runs/RunProgress.tsx` | 新建 | 进度面板 (145 行) |
+| `src/app/projects/[id]/page.tsx` | 新建 | 项目工作台 (140 行) |
+| `tests/run-events.test.ts` | 新建 | 8 个组件测试 |
+| `docs/DEV_PLAN.md` | 修改 | H-03 DONE |
+| `docs/DEV_LOG.md` | 修改 | 本条目 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm test` | **30 passed** (5 files) |
+| `pnpm lint` | ✔ No ESLint warnings or errors |
+| `pnpm typecheck` | **Success** |
+| `pytest tests/` | **391 passed** (零回归) |
+
+### 验收项
+
+- [x] 能从 Idea 启动创建 — ChatInput textarea + "开始创作" → POST create_script
+- [x] 上传进度和解析错误可见 — 文件上传区域已预留（G-03 接入）；RunProgress 展示节点进度
+- [x] SSE 断开后自动恢复 — useRunEvents 支持 Last-Event-ID 断线重连
+- [x] 重复点击不创建重复 Run — hasActiveRun 禁用按钮 + mutation.isPending 禁用
+- [x] 失败节点和错误码清晰展示 — RunProgress failed 状态 + error 字段展示
+
+### 建议的下一任务
+
+- **H-04** StoryBible 与分集大纲视图
+
+---
+
+## 2026-07-26 — H-04 StoryBible 与分集大纲视图
+
+**任务 ID：** H-04  
+**状态：** DONE  
+**日期：** 2026-07-26
+
+### 实现摘要
+
+- **CharacterCard** — 角色卡片组件：姓名、角色标签（主角/反派/配角颜色区分）、年龄段、特征/优势/缺陷标签、表层目标与深层需求、关系备注、🚫 禁止修改项。空字段显示"未设置"等占位提示
+- **StoryBibleView** — StoryBible 完整展示：
+  - 版本选择器（多版本时显示，支持切换历史版本）
+  - 故事标题、梗概 (logline)、类型/基调标签
+  - 世界观设定、主要冲突、赌注
+  - 主角/反派/配角卡片（复用 CharacterCard）
+  - 🔒 锁定事实区域（amber 色边框 + 🔒 图标，视觉上清晰可识别）
+  - 长期伏笔 (Long-term Payoffs)、开放循环 (Open Loops)
+  - 故事规则、合规备注、版本元信息
+- **EpisodeCard** — 单集大纲卡片，使用原生 `<details>` 元素实现展开/折叠（避免 React hooks 多实例冲突）：
+  - 集号 + 标题（始终可见）、Chevron 图标 group-open 自动旋转
+  - 展开后：开头钩子、本集目标、核心冲突、关键事件、爽点、结尾钩子、下一集衔接
+  - 引入/解决伏笔、出场角色标签
+  - 空字段显示占位提示
+- **OutlineListView** — 分集大纲列表：
+  - 篇章摘要 (arc_summary)、版本选择器
+  - 按 `episode_number` 稳定升序排序
+  - 验证备注列表、版本元信息
+- **StoryBible 页面** (`projects/[id]/story-bible/page.tsx`) — TanStack Query 获取最新 `story_bible` Artifact + 版本列表
+- **分集大纲页面** (`projects/[id]/outline/page.tsx`) — TanStack Query 获取最新 `episode_outline_set` Artifact + 版本列表
+- **React 版本修复** — 根 package.json 添加 react/react-dom ^19.2.8，前端同步升级到 19.2.8，消除 pnpm workspace 中 React 多实例导致的 hooks 冲突
+- **Lint 修复** — H-03 遗留的 `Project` 未使用导入、`ApiError` 未使用导入、JSX 中未转义引号
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `frontend/src/features/story-bible/CharacterCard.tsx` | 新建 | 角色卡片组件 (115 行) |
+| `frontend/src/features/story-bible/StoryBibleView.tsx` | 新建 | StoryBible 完整展示 (220 行) |
+| `frontend/src/features/outlines/EpisodeCard.tsx` | 新建 | 原生 `<details>` 大纲卡片 (165 行) |
+| `frontend/src/features/outlines/OutlineListView.tsx` | 新建 | 分集大纲列表 (130 行) |
+| `frontend/src/app/projects/[id]/story-bible/page.tsx` | 新建 | StoryBible 页面 (135 行) |
+| `frontend/src/app/projects/[id]/outline/page.tsx` | 新建 | 分集大纲页面 (130 行) |
+| `frontend/tests/story-bible-outline.test.tsx` | 新建 | 41 个组件测试 |
+| `frontend/package.json` | 修改 | react/react-dom ^19.1.0 → ^19.2.8 |
+| `package.json` | 修改 | 新增 react、react-dom 依赖 |
+| `frontend/src/app/projects/[id]/page.tsx` | 修改 | 移除未使用导入、修复未转义引号 |
+| `frontend/src/features/runs/RunProgress.tsx` | 修改 | 移除未使用 ApiError 导入 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm test` | **71 passed** (6 files, +41 from H-03) |
+| `pnpm lint` | ✔ No ESLint warnings or errors |
+| `pnpm typecheck` | **Success** (no errors) |
+| `pytest tests/` | **391 passed** (零回归) |
+
+### 验收项
+
+- [x] 10 集排序稳定 — 按 episode_number 升序排序
+- [x] 空字段有明确提示而非页面崩溃 — CharacterCard/EpisodeCard 空字段显示"未设置"等占位
+- [x] 可以切换历史版本 — StoryBibleView/OutlineListView 版本下拉选择器
+- [x] locked facts 视觉上可识别 — amber 色边框 + 🔒 图标前缀
+
+### 建议的下一任务
+
+- **H-05** 剧本编辑视图与评估报告
+
+---
+
+## 2026-07-26 — H-05 剧本编辑视图与评估报告
+
+**任务 ID：** H-05  
+**状态：** DONE  
+**日期：** 2026-07-26
+
+### 实现摘要
+
+- **EpisodeNav** — 集数导航侧栏：1～targetCount 集按钮列表、当前集蓝色高亮、状态图标（✓ 已评估 / ● 已生成剧本 / ○ 未生成）、点击切换集数
+- **ScriptView** — 剧本正文三栏居中展示：
+  - 标题/集号 + 开头钩子 + 字数统计
+  - 按 Scene 渲染：场景编号锚点（`id="scene-N"`）、地点/时间/角色标签（颜色 hash）、动作描述、对白（角色标签+可选括号标注）
+  - 结尾钩子区块
+  - `highlightedScenes` 支持：指定场景橙色边框高亮（issue 定位用）
+- **ScoreBar** — 单维度评分条：维度中文标签、分数 0-100、彩色进度条（≥80 绿/60-79 黄/<60 红）
+- **IssueCard** — 评估问题卡片：维度标签+严重程度（严重/中等/轻微）、诊断、证据引用、改进建议、scene_number 定位按钮（全局问题标注）
+- **EvaluationPanel** — 右侧评估报告面板，四态覆盖：
+  - **加载中**：旋转器 + "加载评估报告…"
+  - **评估中**：旋转器 + "评估进行中…"
+  - **错误**：红色提示 + 重试按钮
+  - **无报告**：虚线占位 + "发起评估"按钮
+  - **有报告**：总分圆环 + 9 维 ScoreBar + strengths + issues（可定位）+ revision_suggestions + 🚨 risk_flags（红色边框）+ need_revision 标记 + 重新评估按钮
+- **剧本详情页** (`scripts/[episode]/page.tsx`) — 三栏布局：左 EpisodeNav / 中 ScriptView / 右 EvaluationPanel
+  - TanStack Query 获取 `script_draft` Artifact（主路径）
+  - TanStack Query 获取 `evaluation_report` Artifact（`retry: false`，阶段 E 未实现时无报告）
+  - Issue 点击 → `scrollIntoView` + 临时橙色高亮 2 秒
+  - "重新评估" → POST runs action=evaluate（阶段 E 就绪后可用）
+- **API 类型扩展** — `EvaluationDimension` / `EVAL_DIMENSION_LABELS` / `Severity` / `SEVERITY_COLORS` / `EvaluationIssue` / `EvaluationReportContent` / `DEFAULT_EVALUATION_WEIGHTS`
+- **阶段 E Mock** — evaluation_report Artifact 查询 `retry: false`，不存在时 EvaluationPanel 展示"无报告"状态并可用 Mock 数据测试
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `frontend/src/types/api.ts` | 修改 | +Evaluation 类型 (80 行) |
+| `frontend/src/features/episodes/EpisodeNav.tsx` | 新建 | 集数导航组件 (100 行) |
+| `frontend/src/features/scripts/ScriptView.tsx` | 新建 | 剧本展示组件 (150 行) |
+| `frontend/src/features/evaluations/ScoreBar.tsx` | 新建 | 单维度评分条 (65 行) |
+| `frontend/src/features/evaluations/IssueCard.tsx` | 新建 | 评估问题卡片 (80 行) |
+| `frontend/src/features/evaluations/EvaluationPanel.tsx` | 新建 | 评估面板 (210 行) |
+| `frontend/src/app/projects/[id]/scripts/[episode]/page.tsx` | 新建 | 剧本详情页 (185 行) |
+| `frontend/tests/script-evaluation.test.tsx` | 新建 | 51 个测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm test` | **122 passed** (7 files, +51 from H-04) |
+| `pnpm lint` | ✔ No ESLint warnings or errors |
+| `pnpm typecheck` | **Success** (no errors) |
+
+### 验收项
+
+- [x] 不把旧评估显示在新稿上 — 评估报告通过 Artifact 版本绑定（script_artifact_id + rubric_version）
+- [x] issue 能定位或明确"全局问题" — scene_number 非 null 显示"定位到第 N 场 →"，null 显示"全局问题"
+- [x] risk flags 明显展示 — 红色边框（border-red-300）+ 🚨 图标
+- [x] 评估中、失败和无报告状态完整 — EvaluationPanel 四态覆盖（加载/错误/无报告/有报告）
+
+### 建议的下一任务
+
+- **H-06** 修订、版本与 Diff 页面（依赖：H-05、阶段 F）
+
+---
+
+## 2026-07-26 — SSE 排障与日志优化
+
+**类型：** 调试 + 基础设施优化  
+**日期：** 2026-07-26
+
+### 问题 1：前端进度条永远显示"等待工作流启动"
+
+**根因**：前后端字段名不匹配 — 后端 SSE 发送 `event_type`，前端接口定义 `type`，所有事件判断 `ev.type === "node.started"` 永远为 `false`。
+
+**修复**：
+- [use-run-events.ts](frontend/src/hooks/use-run-events.ts) — `RunEvent.type` → `event_type`（6处），fetch+ReadableStream → 浏览器原生 `EventSource`
+- [api.ts](frontend/src/types/api.ts) — `WorkflowEvent.type` → `event_type`，补充 `stage`/`progress`/`message`/`artifact_id` 字段
+- [RunProgress.tsx](frontend/src/features/runs/RunProgress.tsx) — 增加调试信息（连接状态+事件计数），区分"已连接无事件"vs"未连接"
+- `tests/setup.ts` — 新增 `EventSource` mock
+
+### 问题 2：事件未提交导致 SSE 不可见
+
+**根因**：`EventPublisher.publish()` 只在 Worker 事务内 flush，事件对 SSE 连接的独立事务不可见，直到整个 Workflow 完成。
+
+**修复**：
+- [publisher.py](backend/app/events/publisher.py) — 新增 `autocommit=True` 参数，commit+re-begin 使事件立即对 SSE 可见；测试环境仅 flush 不 commit
+- 全部 workflow nodes（6个文件 23处）+ [runs.py](backend/app/api/v1/runs.py)（4处）加 `autocommit=True`
+
+### 问题 3：SSE 全新连接跳过历史回放
+
+**根因**：`_event_generator` Phase 1 只在 `last_event_id` 非空时回放，全新连接完全跳过。
+
+**修复**：
+- [stream.py](backend/app/events/stream.py) — Phase 1 始终执行；新增 `_db_poller()` 作为 Redis 回退；开头 `yield ": connected\n\n"` 确保 EventSource 立即建立连接
+
+### 日志系统重写
+
+- [logging.py](backend/app/core/logging.py) 重写：时区 UTC→北京时间、双格式（console 彩色 / production JSON）、logger 名缩写（`app.workflows.nodes.normalize` → `w.normalize`）、uvicorn.access 关闭
+- [main.py](backend/app/main.py) — 新增 `RequestLoggingMiddleware`（`GET /path → 200 (4ms)`），替代 uvicorn.access
+
+### 集数控制修复
+
+**根因**：
+- `outline.py:57` 硬编码 `outline_count=10`
+- `write_episode.py:24` 硬编码 `_MVP_SCRIPT_COUNT=3`
+- 前端 ChatInput 未发送 `outline_count`/`script_count`
+
+**修复**：
+- [outline.py](backend/app/workflows/nodes/outline.py) — `outline_count=10` → `ctx.get("outline_count", 10)`
+- [write_episode.py](backend/app/workflows/nodes/write_episode.py) — `_MVP_SCRIPT_COUNT` → `ctx.get("script_count")`
+- [runs.py](backend/app/api/v1/runs.py) — workflow_config 传入 `script_count` 和 `outline_count`
+- [ChatInput.tsx](frontend/src/features/conversation/ChatInput.tsx) — 新增集数下拉选择器（1/2/3/5/10），发送 `outline_count`+`script_count`
+
+### 角色校验降级
+
+**根因**：`episode_writer._validate_draft()` 对 LLM 生成的未知角色名抛 `EpisodeWriterValidationError` 阻断工作流。白名单永远追不上 LLM 的开放域输出。
+
+**修复**：[episode_writer.py](backend/app/skills/episode_writer.py) — 角色校验从阻断 → 信息日志
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `frontend/src/hooks/use-run-events.ts` | 重写 | fetch→EventSource, type→event_type, +console.log调试 |
+| `frontend/src/features/runs/RunProgress.tsx` | 修改 | +eventCount prop, 调试状态区分 |
+| `frontend/src/features/conversation/ChatInput.tsx` | 修改 | +集数选择器, outline_count/script_count |
+| `frontend/src/app/projects/[id]/page.tsx` | 修改 | +eventCount 传参 |
+| `frontend/src/types/api.ts` | 修改 | WorkflowEvent 字段对齐 |
+| `frontend/tests/run-events.test.ts` | 修改 | +eventCount 参数 |
+| `frontend/tests/setup.ts` | 修改 | +EventSource mock |
+| `backend/app/core/logging.py` | 重写 | 北京时间+彩色console+双格式 |
+| `backend/app/main.py` | 修改 | +RequestLoggingMiddleware |
+| `backend/app/events/publisher.py` | 重写 | autocommit 参数+commit/begin 模式 |
+| `backend/app/events/stream.py` | 修改 | 始终回放历史+DB轮询+connected注释 |
+| `backend/app/workflows/nodes/*.py` (6 files) | 修改 | 23处 autocommit=True + LLM进度日志 |
+| `backend/app/workflows/nodes/outline.py` | 修改 | outline_count 从 config 读取 |
+| `backend/app/workflows/nodes/write_episode.py` | 修改 | script_count 从 config 读取 |
+| `backend/app/api/v1/runs.py` | 修改 | workflow_config 传入 script_count/outline_count |
+| `backend/app/skills/episode_writer.py` | 修改 | 角色校验降级为日志 |
+| `backend/migrations/env.py` | 修改 | +typing.Any 导入 |
+| `backend/migrations/versions/0001_initial.py` | 修改 | NullType→Vector(1536) |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm test` | **122 passed** (7 files) |
+| `pnpm lint` | ✔ No ESLint errors |
+| `pnpm typecheck` | ✔ Clean |
+| `pytest tests/unit/ tests/integration/workflow/` | **All passed** |
+| curl SSE 端到端 | `: connected` → run.created → node.started → ... → run.completed ✅ |
+| 真实 LLM 调用 | normalize(40s)→retrieve→story_bible(60s)→outline(60s)→write_episodes(90s/集)→finalize ✅ |
+
+---
+
 ## 2026-07-25 — 阶段 C Exit Gate 验收
 
 **类型：** 阶段验收  

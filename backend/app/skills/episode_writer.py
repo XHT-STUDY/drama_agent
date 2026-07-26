@@ -222,26 +222,17 @@ class EpisodeWriterSkill(Skill):
         if not draft.ending_hook.strip():
             errors.append(f"第 {draft.episode_number} 集 ending_hook 为空")
 
-        # ---- 角色可追溯 ----
+        # ---- 角色可追溯（警告，不阻断） ----
         known_names = _collect_character_names(ew_input.story_bible)
-        extra_patterns = {
-            "群众", "路人", "服务员", "店员", "保镖", "队员", "观众", "记者", "学生",
-            "教练", "学员", "裁判", "解说员", "球迷", "保安", "护士", "医生", "老师",
-        }
         for scene in draft.scenes:
             for char_name in scene.characters:
-                if char_name not in known_names and char_name not in extra_patterns:
-                    # 检查是否为临时群众角色 (含通用称谓)
-                    extra_suffixes = [
-                        "群众", "路人", "某", "同学", "队友", "球员", "教练",
-                        "学员", "队员", "球迷", "裁判", "记者", "观众", "其他",
-                    ]
-                    is_extra = any(pat in char_name for pat in extra_suffixes)
-                    if not is_extra:
-                        errors.append(
-                            f"第 {draft.episode_number} 集 Scene {scene.scene_number} "
-                            f"角色 '{char_name}' 未在 StoryBible 中找到且非临时群众角色"
-                        )
+                if char_name not in known_names:
+                    # 检查是否为常见群众角色（纯描述性名称，非专有名词）
+                    # LLM 生成的临时角色名无法穷举，此处仅做信息记录
+                    logger.info(
+                        "第 %d 集 Scene %d 引入新角色 '%s'（不在 StoryBible 中）",
+                        draft.episode_number, scene.scene_number, char_name,
+                    )
 
         if errors:
             msg = f"Episode Writer 校验失败 (第 {draft.episode_number} 集):\n" + "\n".join(

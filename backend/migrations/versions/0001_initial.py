@@ -17,6 +17,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers
@@ -171,12 +172,10 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="最后更新时间（UTC）"),
         sa.Column("document_id", postgresql.UUID(), sa.ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, comment="所属知识文档 ID"),
         sa.Column("content", sa.Text(), server_default="", nullable=False, comment="Chunk 文本内容"),
-        sa.Column("embedding", sa.NullType(), nullable=True, comment="向量嵌入（pgvector，在下一步中修改类型）"),
+        sa.Column("embedding", Vector(1536), nullable=True, comment="向量嵌入（pgvector）"),
         sa.Column("metadata", postgresql.JSONB(), nullable=True, comment="Chunk 元数据"),
         sa.Column("chunk_index", sa.Integer(), server_default="0", nullable=False, comment="Chunk 在文档内的序号"),
     )
-    # 将 embedding 列设为 pgvector 类型
-    op.execute("ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE vector(1536)")
     op.create_index("ix_knowledge_chunks_document_id", "knowledge_chunks", ["document_id"])
 
     # ---- llm_calls ----

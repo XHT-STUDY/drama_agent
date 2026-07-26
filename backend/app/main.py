@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -25,8 +26,7 @@ from app.core.logging import get_logger, setup_logging
 logger = get_logger(__name__)
 
 
-# ---- Request ID 中间件 ----
-
+# ---- 中间件 ----
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """为每个 HTTP 请求分配唯一 ID。
@@ -47,6 +47,25 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """精简请求日志中间件（替代 uvicorn.access）。
+
+    格式: METHOD /path → STATUS (XXms)
+    """
+
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        start = time.monotonic()
+        response = await call_next(request)
+        elapsed_ms = round((time.monotonic() - start) * 1000)
+        logger.info(
+            "%s %s → %s (%dms)",
+            request.method, request.url.path, response.status_code, elapsed_ms,
+        )
+        return response
+
+
 # ---- 生命周期 ----
 
 
@@ -58,7 +77,8 @@ async def lifespan(app: FastAPI) -> Any:
     关闭：释放 DB 连接池资源。
     """
     settings: Settings = app.state.settings
-    setup_logging(settings.log_level)
+    log_fmt = "json" if settings.app_env == "production" else "console"
+    setup_logging(settings.log_level, fmt=log_fmt)
 
     # 初始化数据库引擎
     from app.db.session import init_db
@@ -127,6 +147,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Request ID 中间件（CORS 内层，确保所有请求都有 request_id）
     app.add_middleware(RequestIDMiddleware)
+
+    # 请求日志中间件（最内层，精确计时）
+    app.add_middleware(RequestLoggingMiddleware)
 
     # ---- 注册异常处理器 ----
     register_exception_handlers(app)

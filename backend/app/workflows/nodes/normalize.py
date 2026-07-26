@@ -59,6 +59,7 @@ async def normalize_node(state: CreationState) -> dict[str, Any]:
     await publisher.publish(
         db, run_id=run_id, event_type="node.started",
         payload={"node": "normalize", "progress": 0.0},
+        autocommit=True,
     )
     progress("normalize", "started", 0.0)
 
@@ -91,6 +92,7 @@ async def normalize_node(state: CreationState) -> dict[str, Any]:
                     "missing_fields": result.missing_fields,
                     "progress": 1.0,
                 },
+                autocommit=True,
             )
             return {
                 "needs_user_input": True,
@@ -116,6 +118,7 @@ async def normalize_node(state: CreationState) -> dict[str, Any]:
                 "artifact_type": "normalized_requirement",
                 "progress": 1.0,
             },
+            autocommit=True,
         )
         progress("normalize", "completed", 1.0)
 
@@ -135,6 +138,7 @@ async def normalize_node(state: CreationState) -> dict[str, Any]:
         await publisher.publish(
             db, run_id=run_id, event_type="node.failed",
             payload={"node": "normalize", "error": str(e)},
+            autocommit=True,
         )
         return {
             "status": "failed",

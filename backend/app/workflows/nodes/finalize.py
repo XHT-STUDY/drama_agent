@@ -33,6 +33,7 @@ async def finalize_node(state: CreationState) -> dict[str, Any]:
     await publisher.publish(
         db, run_id=run_id, event_type="node.started",
         payload={"node": "finalize", "progress": 0.90},
+        autocommit=True,
     )
     progress("finalize", "started", 0.90)
 
@@ -50,6 +51,7 @@ async def finalize_node(state: CreationState) -> dict[str, Any]:
                 "prompt_versions": state.get("prompt_versions", {}),
                 "progress": 1.0,
             },
+            autocommit=True,
         )
         progress("finalize", "completed", 1.0)
 
@@ -62,5 +64,6 @@ async def finalize_node(state: CreationState) -> dict[str, Any]:
         await publisher.publish(
             db, run_id=run_id, event_type="node.failed",
             payload={"node": "finalize", "error": str(e)},
+            autocommit=True,
         )
         return {"status": "failed", "error_node": "finalize", "error_detail": str(e)}

@@ -42,6 +42,7 @@ async def story_bible_node(state: CreationState) -> dict[str, Any]:
     await publisher.publish(
         db, run_id=run_id, event_type="node.started",
         payload={"node": "story_bible", "progress": 0.1},
+        autocommit=True,
     )
     progress("story_bible", "started", 0.1)
 
@@ -56,6 +57,7 @@ async def story_bible_node(state: CreationState) -> dict[str, Any]:
         )
 
         skill = StoryBibleSkill()
+        logger.info("正在调用 LLM 生成 StoryBible…")
         story_bible = await skill.execute({
             "input": sb_input, "agent": agent, "prompt_loader": prompt_loader,
         })
@@ -73,6 +75,7 @@ async def story_bible_node(state: CreationState) -> dict[str, Any]:
         await publisher.publish(
             db, run_id=run_id, event_type="node.completed",
             payload={"node": "story_bible", "artifact_id": str(artifact.id), "progress": 0.25},
+            autocommit=True,
         )
         progress("story_bible", "completed", 0.25)
 
@@ -86,5 +89,6 @@ async def story_bible_node(state: CreationState) -> dict[str, Any]:
         await publisher.publish(
             db, run_id=run_id, event_type="node.failed",
             payload={"node": "story_bible", "error": str(e)},
+            autocommit=True,
         )
         return {"status": "failed", "error_node": "story_bible", "error_detail": str(e)}

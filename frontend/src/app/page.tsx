@@ -1,8 +1,19 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+
+/** 首页 — 重定向到项目列表 */
 export default function Home() {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace("/projects");
+  }, [router]);
+
   return (
-    <main>
-      <h1>DramaAgent</h1>
-      <p>面向中文短剧创作的对话型 Agent 系统</p>
-    </main>
+    <div className="flex items-center justify-center py-20">
+      <p className="text-gray-400">跳转中…</p>
+    </div>
   );
 }

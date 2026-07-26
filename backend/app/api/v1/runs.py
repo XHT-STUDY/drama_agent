@@ -289,7 +289,7 @@ async def _execute_workflow(
     from app.db.session import _async_session_factory
     assert _async_session_factory is not None, "DB not initialized"
 
-    async with _async_session_factory() as db, db.begin():
+    async with _async_session_factory() as db:
         try:
             # 验证 Run 存在且状态正确
             run = await run_svc.get_run(db, run_id)
@@ -303,6 +303,7 @@ async def _execute_workflow(
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.completed",
                     payload={"message": f"action={action} 完成", "progress": 1.0},
+                    autocommit=True,
                 )
                 return
 
@@ -346,6 +347,8 @@ async def _execute_workflow(
                     "event_publisher": publisher,
                     "user_input": user_input,
                     "source_type": options.get("source_type", "idea"),
+                    "script_count": options.get("script_count", 3),
+                    "outline_count": options.get("outline_count", 10),
                     "rag_context": "",
                     "progress_callback": progress_callback,
                     "progress_log": progress_log,
@@ -363,6 +366,7 @@ async def _execute_workflow(
                         "error_node": final_state.get("error_node"),
                         "error_detail": final_state.get("error_detail"),
                     },
+                    autocommit=True,
                 )
 
             if final_state.get("needs_user_input"):
@@ -370,6 +374,7 @@ async def _execute_workflow(
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.needs_review",
                     payload={"reason": "用户输入不完整，需要补充信息"},
+                    autocommit=True,
                 )
 
         except Exception as e:
@@ -381,6 +386,7 @@ async def _execute_workflow(
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.failed",
                     payload={"error": str(e)},
+                    autocommit=True,
                 )
             except Exception:
                 pass
