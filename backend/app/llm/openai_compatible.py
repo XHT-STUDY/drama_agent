@@ -271,7 +271,7 @@ class OpenAICompatibleLLM(LLMClient):
             error_msg = f"认证失败 (HTTP {status})"
         elif status == 404:
             error_code = LLMErrorCode.PROVIDER_ERROR
-            error_msg = f"端点或模型不存在 (HTTP 404)"
+            error_msg = "端点或模型不存在 (HTTP 404)"
         elif 400 <= status < 500:
             error_code = LLMErrorCode.INVALID_OUTPUT
             error_msg = f"请求参数错误 (HTTP {status})"

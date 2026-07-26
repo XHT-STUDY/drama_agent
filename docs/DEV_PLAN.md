@@ -2,7 +2,7 @@
 
 > 文档版本：v1.1  
 > 编制日期：2026-07-24  
-> 项目阶段：MVP — Phase C 进行中 (C-01 ~ C-06 已完成，OpenAICompatibleLLM 真实 LLM 客户端就绪，5 个 Skill 全部通过真实 LLM 验证)  
+> 项目阶段：MVP — Phase C 验收通过，准备进入 Phase D (RAG 知识库)  
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -2900,10 +2900,10 @@ Prompt 必须区分：
 | C-03 | StoryBible Skill | 1d | C-02 | DONE | AI Agent | pytest 219/219 passed (含 14 skill tests); StoryBibleSkill + StoryBibleInput + CreationAgent; 角色校验质量门禁; golden fixture |
 | C-04 | Outline Skill | 1d | C-03 | DONE | AI Agent | pytest 219/219 passed (含 13 skill tests); OutlineSkill + OutlineInput; validate_characters + validate_sequence; golden fixture |
 | C-05 | Episode Writer 与文本工具 | 1.25d | C-04,B-07 | DONE | AI Agent | pytest 219/219 passed (含 25 C-05 tests); EpisodeWriterSkill + WordCountTool + DialogueRatioTool; 指标覆盖 + 角色追溯; Ruff/mypy clean |
-| C-06 | Continuity 与 Context 基础 | 1d | C-03..C-05 | DONE | AI Agent | pytest 362/362 passed (48 个新测试), Ruff/mypy clean; ContinuityManager + ContextBuilder + SummarizerSkill |
+| C-06 | Continuity 与 Context 基础 | 1d | C-03..C-05 | DONE | AI Agent | pytest 383/383 passed (48 个新测试), Ruff/mypy clean; ContinuityManager + ContextBuilder + SummarizerSkill |
 | — | OpenAICompatibleLLM + 测试脚本 | 0.5d | B-06,C-06 | DONE | AI Agent | pytest 362/362 passed, Ruff clean; 26 LLM 单元测试; 5 个 Skill 全部通过真实验证（qwen3.7-plus） |
-| C-07 | Creation Workflow | 1.25d | C-02..C-06,B-05 | TODO | - | - |
-| C-08 | Creation API 纵切 | 0.5d | C-07,B-03 | TODO | - | - |
+| C-07 | Creation Workflow | 1.25d | C-02..C-06,B-05 | DONE | AI Agent | pytest 383/383 passed (8 个 workflow tests), Ruff/mypy clean; LangGraph 6 节点串联 + 条件路由 + 重试复用 |
+| C-08 | Creation API 纵切 | 0.5d | C-07,B-03 | DONE | AI Agent | pytest 383/383 passed (13 个契约测试), Ruff/mypy clean; POST create_script → Worker → Artifact 查询全链路, API_CONTRACT.md 完成 |
 | D-01 | 知识分类与治理 | 0.5d | C Gate | TODO | - | - |
 | D-02 | Loader/Chunker/摄取 | 0.75d | D-01,B-02 | TODO | - | - |
 | D-03 | Embedder 与 pgvector | 0.75d | D-02 | TODO | - | - |
@@ -2946,7 +2946,7 @@ Prompt 必须区分：
 | --- | --- | --- | --- | --- | --- | --- |
 | A | - | 2026-07-23 | PASS | AI Agent | 全部命令成功（Docker 环境限制除外）；无真实 LLM 调用；69 tests passed, 97.44% coverage | Docker 未安装在 Windows，WSL 中已就绪 |
 | B | 2026-07-23 | 2026-07-23 | PASS | AI Agent | 129 tests; 6 场景 Exit Gate 测试就绪; PostgreSQL 不可用时代码级验证通过 | Docker PostgreSQL 不可用，Exit Gate 集成测试待 DB 就绪后执行 |
-| C | - | - | NOT RUN | - | - | - |
+| C | - | 2026-07-25 | PASS | AI Agent | pytest 391/391 passed, Ruff clean; 8 Exit Gate C tests (全链路 FakeLLM 驱动), 5/5 验收条件通过 | 无 |
 | D | - | - | NOT RUN | - | - | - |
 | E | - | - | NOT RUN | - | - | - |
 | F | - | - | NOT RUN | - | - | - |

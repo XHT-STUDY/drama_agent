@@ -22,6 +22,8 @@ dependencies = [
     "pgvector>=0.4",
     # C-01: Prompt Loader 与 Manifest（YAML 解析）
     "pyyaml>=6",
+    # C-07: LangGraph 工作流引擎
+    "langgraph>=0.2",
 ]
 
 [project.optional-dependencies]

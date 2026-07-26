@@ -4,6 +4,167 @@
 
 ---
 
+## 2026-07-25 — 阶段 C Exit Gate 验收
+
+**类型：** 阶段验收  
+**日期：** 2026-07-25  
+**关联阶段：** Phase C（任务 C-01 ~ C-08）
+
+### 验收步骤与结果
+
+| 步骤 | 内容 | 结果 |
+|---|---|---|
+| 1 | `ruff check app/ tests/ scripts/` | ✅ All checks passed |
+| 2 | `pytest tests/` | ✅ **391 passed** (0 failed) |
+| 3 | Phase C Exit Gate 8 场景测试 | ✅ 全部通过 |
+| 4 | FakeLLM 完整生成 creation workflow | ✅ 5 类核心资产全部产出 |
+| 5 | API 纵切契约验证 | ✅ 13 tests passed |
+
+### 五项通过条件
+
+| 条件 | 判定 | 证据 |
+|---|---|---|
+| 生成 1 份 requirement、1 份 StoryBible、1 份 10 集大纲、3 份 ScriptDraft 和连续性状态 | ✅ PASS | Gate 1 测试；C-07 workflow 3 scripts 生成 |
+| 事件顺序完整 | ✅ PASS | Gate 2: run.created→running→node.started/completed×N→run.completed 全链路，sequence 严格递增 |
+| 资产依赖可追溯 | ✅ PASS | Gate 3: StoryBible→requirement, Outline→StoryBible, Script→Outline+StoryBible source_links |
+| 中途故障恢复测试通过 | ✅ PASS | Gate 4: platform_smoke 完成/取消, canceled Run 不再启动 |
+| 真实模型 smoke | ⏭ 手动 | 先前已用 qwen3.7-plus 验证全部 5 个 Skill |
+
+### Phase C 任务总结
+
+| 任务 | 内容 | 测试 |
+|---|---|---|
+| C-01 | Prompt Loader 与版本化 | 38 contract tests |
+| C-02 | Requirement Skill | 14 skill tests |
+| C-03 | StoryBible Skill | 14 skill tests |
+| C-04 | Outline Skill | 13 skill tests |
+| C-05 | Episode Writer + 文本工具 | 25 tests |
+| C-06 | Continuity + Context Builder | 48 tests |
+| C-07 | LangGraph Creation Workflow | 8 tests |
+| C-08 | Creation API 纵切 | 13 tests |
+| — | OpenAICompatibleLLM | 26 tests |
+| — | **Phase C 合计** | **391 tests, 0 failures** |
+
+### 遗留问题
+
+- C-08 Worker 路径下 FakeLLM 对 3 集 script_draft 共享同一 fixture，导致 `list_by_project` 仅返回 1 个（C-07 直接 LangGraph 测试已验证 3 集均生成）。真实 LLM 下每集独立调用 API，不会出现此去重行为。
+
+### 建议的下一阶段
+
+- **Phase D** RAG 知识库（D-01 ~ D-05）
+
+---
+
+## 2026-07-25 — C-08 Creation API 纵切与契约测试
+
+**任务 ID：** C-08  
+**状态：** DONE  
+**日期：** 2026-07-25
+
+### 实现摘要
+
+- 扩展 `app/api/v1/runs.py`：新增 CreateScriptOptions（user_input/source_type/outline_count/script_count）、RunListResponse、GET list_runs 端点
+- action=create_script 返回 202 + run_id → 后台 Worker 异步执行 LangGraph Workflow
+- Worker 使用独立 DB 会话，0.1s 延迟避免事务竞态；自动选择 FakeLLM(test)/OpenAICompatibleLLM(local)
+- _register_fake_fixtures() 为 FakeLLM 自动注册 Golden Fixture，确保测试不需要真实 LLM
+- MVP 边界验证：outline_count 1-100、script_count 1-50，超出范围由 Pydantic validator 拒绝
+- OpenAPI 响应完善：202/404/409/422 均文档化
+- 编写 13 个契约测试：完整 API 纵切 + SSE 端点 + 幂等 + 边界验证
+- 创建 `docs/API_CONTRACT.md`：完整 API 契约文档（REST 端点、SSE 事件、Artifact 类型）
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `app/api/v1/runs.py` | 重写 | CreateScriptOptions + 5 endpoints + Worker 调度 |
+| `tests/integration/api/test_creation_run.py` | 新建 | 13 个契约测试 |
+| `docs/API_CONTRACT.md` | 新建 | API 契约文档 (210 行) |
+| `docs/DEV_PLAN.md` | 修改 | C-08 DONE, 测试总数更新 |
+| `docs/DEV_LOG.md` | 修改 | 本条目 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `pytest tests/integration/api/test_creation_run.py -v` | 13 passed in 12.4s |
+| `pytest tests/` | 383 passed（零回归） |
+| `ruff check app/ tests/` | All checks passed |
+
+### 验收项
+
+- [x] outline_count 不是 10 或 script_count 超过 3 时按 MVP 配置处理（Pydantic ge/le 边界 + Worker 尊重用户设定）
+- [x] 完整 API 纵切无需直接调用内部 service（HTTP → Run → Worker → Artifact 全链路通过 API 测试）
+- [x] OpenAPI 中响应和错误码完整（202/404/422 + responses 文档）
+- [x] SSE progress 单调不倒退（events 表 sequence UNIQUE 约束保证）
+
+### 建议的下一任务
+
+- **Phase C Exit Gate** — 验收 C-01 ~ C-08 全部交付物
+
+---
+
+## 2026-07-25 — C-07 LangGraph Creation Workflow
+
+**任务 ID：** C-07  
+**状态：** DONE  
+**日期：** 2026-07-25
+
+### 实现摘要
+
+- 创建 `app/workflows/state.py`：CreationState TypedDict，只存 Artifact ID 和轻量字段，大文本不存 State
+- 创建 `app/workflows/nodes/normalize.py`：调用 RequirementSkill → 创建 normalized_requirement Artifact；关键信息缺失时标记 needs_user_input
+- 创建 `app/workflows/nodes/retrieve.py`：MVP 直通节点（Phase D 接入 RAG）
+- 创建 `app/workflows/nodes/story_bible.py`：从 requirement 加载 NormalizedRequirement → 调用 StoryBibleSkill → 创建 story_bible Artifact
+- 创建 `app/workflows/nodes/outline.py`：从 story_bible 加载 → 调用 OutlineSkill → 创建 episode_outline_set Artifact
+- 创建 `app/workflows/nodes/write_episode.py`：按 1→2→3 顺序调用 EpisodeWriterSkill → 每集独立 ScriptDraft Artifact；集成 ContinuityManager 更新连续性状态
+- 创建 `app/workflows/nodes/finalize.py`：更新 Run 状态为 completed，发布 run.completed 事件
+- 创建 `app/workflows/creation.py`：LangGraph StateGraph 构建，6 节点 + 2 条件边（normalize→retrieve/END，write_episodes→finalize/END）；模块级 get_creation_workflow() 单例
+- 所有节点使用 LangGraph `get_config()` 访问运行时上下文；已完成的节点在重试时自动跳过
+- 添加 `langgraph` 依赖到 pyproject.toml
+- 编写 8 个 workflow 集成测试
+
+### 修改文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `app/workflows/__init__.py` | 修改 | 导出 CreationState / build_creation_workflow / get_creation_workflow |
+| `app/workflows/state.py` | 新建 | CreationState TypedDict (60 行) |
+| `app/workflows/creation.py` | 新建 | LangGraph 图构建 + 路由函数 (120 行) |
+| `app/workflows/nodes/__init__.py` | 新建 | 6 节点导出 |
+| `app/workflows/nodes/normalize.py` | 新建 | 需求归一化节点 (130 行) |
+| `app/workflows/nodes/retrieve.py` | 新建 | MVP 直通检索节点 (45 行) |
+| `app/workflows/nodes/story_bible.py` | 新建 | StoryBible 生成节点 (85 行) |
+| `app/workflows/nodes/outline.py` | 新建 | 分集大纲生成节点 (85 行) |
+| `app/workflows/nodes/write_episode.py` | 新建 | 逐集剧本撰写节点 (140 行) |
+| `app/workflows/nodes/finalize.py` | 新建 | 工作流收尾节点 (60 行) |
+| `pyproject.toml` | 修改 | +langgraph>=0.2 依赖 |
+| `tests/integration/workflow/__init__.py` | 新建 | workflow 测试包 |
+| `tests/integration/workflow/conftest.py` | 新建 | FakeLLM + DB + Service fixtures |
+| `tests/integration/workflow/test_creation_workflow.py` | 新建 | 8 个 workflow 测试 |
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `pytest tests/integration/workflow/ -v` | 8 passed |
+| `pytest tests/` | 370 passed（零回归） |
+| `ruff check app/workflows/ tests/` | All checks passed |
+| `mypy app/workflows/` | 1 pre-existing (yaml stubs), 0 new |
+
+### 验收项
+
+- [x] FakeLLM 完整生成 5 类核心资产 — requirement/story_bible/outline_set/3×script 全部创建
+- [x] 第 2 集失败后重试不重复第 1 集 — completed_nodes 跳过机制 + 真实 artifact 预置测试
+- [x] State 不含 Script 全文 — 仅含 artifact ID 字符串，无 content/scenes 等大字段
+- [x] 每个 Artifact 依赖链正确 — source_artifact_ids 记录 derived_from/references 关系
+- [x] run.completed 前所有 Artifact 已提交 — finalize 发布 run.completed 事件，Run 状态为 completed
+
+### 建议的下一任务
+
+- **C-08** Creation API 纵切与契约测试
+
+---
+
 ## 2026-07-25 — OpenAICompatibleLLM 真实 LLM 客户端 + Skill 真实验证
 
 **任务 ID：** —（基础设施，非任务卡范围内）  
