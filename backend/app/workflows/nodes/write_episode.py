@@ -108,7 +108,13 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             })
             logger.info("第 %d 集 LLM 生成完成，开始后处理…", ep_num)
 
+            # 1. 序列化
+            logger.debug("第 %d 集: model_dump…", ep_num)
             content = draft.model_dump(mode="json")
+            logger.debug("第 %d 集: model_dump 完成 (%d 字段)", ep_num, len(content))
+
+            # 2. 持久化 Artifact
+            logger.info("第 %d 集: 存入 Artifact…", ep_num)
             artifact = await artifact_svc.create_validated_artifact(
                 db, project_id=project_id, artifact_type="script_draft",
                 episode_number=ep_num, content=content, prompt_version=prompt_version,
@@ -125,6 +131,7 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                     },
                 ],
             )
+            logger.info("第 %d 集: Artifact 已保存 (id=%s)", ep_num, str(artifact.id)[:12])
             completed_scripts[str(ep_num)] = str(artifact.id)
 
             ep_summary = EpSummary(
@@ -135,6 +142,8 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             )
             continuity_state = continuity_mgr.update_after_episode(continuity_state, ep_summary)
 
+            # 3. 发布事件 + 提交
+            logger.info("第 %d 集: 发布 artifact.created 事件…", ep_num)
             await publisher.publish(
                 db, run_id=run_id, event_type="artifact.created",
                 payload={
@@ -145,6 +154,7 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                 },
                 autocommit=True,
             )
+            logger.info("第 %d 集: 事件已发布", ep_num)
             progress("write_episodes", f"ep_{ep_num}_done", 0.40 + ep_num * 0.15)
 
         continuity_text = continuity_mgr.get_context_for_episode(continuity_state, script_count + 1)

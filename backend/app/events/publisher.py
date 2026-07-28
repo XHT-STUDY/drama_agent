@@ -63,12 +63,26 @@ class EventPublisher:
         event = await self._insert_event(db, run_id, event_type, payload)
 
         if autocommit:
-            # 仅在生产环境（有全局 session factory）执行 commit
-            # 测试环境使用显式事务管理，不 commit
             from app.db.session import _async_session_factory
             if _async_session_factory is not None:
-                await db.commit()
-                await db.begin()
+                try:
+                    await db.commit()
+                except Exception as e:
+                    import logging
+                    logging.getLogger("app.events.publisher").error(
+                        "事件 autocommit 失败 (run=%s, seq=%d): %s",
+                        str(run_id)[:12], event.sequence, e,
+                    )
+                    raise
+                try:
+                    await db.begin()
+                except Exception as e:
+                    import logging
+                    logging.getLogger("app.events.publisher").error(
+                        "autocommit 后 begin() 失败 (run=%s, seq=%d): %s",
+                        str(run_id)[:12], event.sequence, e,
+                    )
+                    raise
 
         # Redis 实时通知（best effort）
         await self._try_redis_publish(event)

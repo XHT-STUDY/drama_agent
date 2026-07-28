@@ -25,6 +25,9 @@ export default function ProjectDetailPage() {
   const params = useParams();
   const projectId = String(params.id);
 
+  // 最新 Run 的状态（用于刷新后展示结果）
+  const [latestRun, setLatestRun] = useState<{ run_id: string; status: string } | null>(null);
+
   // 当前活跃的 runId（null 表示无运行中的 Run）
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
@@ -40,16 +43,22 @@ export default function ProjectDetailPage() {
     queryFn: () => projectsApi.get(projectId),
   });
 
-  // 页面加载时检查是否有活跃 Run
+  // 页面加载时检查 Run 历史
   useQuery({
     queryKey: ["project-runs", projectId],
     queryFn: async () => {
       const result = await runsApi.listByProject(projectId);
+      // 查找活跃 Run（queued / running）
       const active = result.items.find(
         (r) => r.status === "queued" || r.status === "running",
       );
       if (active) {
         setActiveRunId(active.run_id);
+      }
+      // 查找最新完成的 Run（刷新后展示结果用）
+      const latest = result.items[0];
+      if (latest && !active) {
+        setLatestRun({ run_id: latest.run_id, status: latest.status });
       }
       return result;
     },
@@ -143,16 +152,56 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {/* 无活跃 Run 时的提示 */}
+      {/* 无活跃 Run 时的展示 */}
       {!activeRunId && (
-        <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
-          <p className="text-sm text-gray-500">
-            在上方输入创作 Idea，点击「开始创作」启动 AI 创作流程。
-          </p>
-          <p className="mt-1 text-xs text-gray-400">
-            系统将依次执行：需求归一化 → 故事设定 → 分集大纲 → 剧本撰写
-          </p>
-        </div>
+        <>
+          {/* 上次运行已完成 → 显示结果入口 */}
+          {latestRun?.status === "completed" && (
+            <div className="mb-6 rounded-lg border border-green-200 bg-green-50 p-5">
+              <h3 className="mb-2 text-sm font-semibold text-green-800">✅ 上次创作已完成</h3>
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  href={`/projects/${projectId}/story-bible`}
+                  className="rounded-lg border border-green-300 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-blue-300 hover:text-blue-600 transition-colors"
+                >
+                  📖 查看 StoryBible
+                </Link>
+                <Link
+                  href={`/projects/${projectId}/outline`}
+                  className="rounded-lg border border-green-300 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-blue-300 hover:text-blue-600 transition-colors"
+                >
+                  📋 查看分集大纲
+                </Link>
+                <Link
+                  href={`/projects/${projectId}/scripts/1`}
+                  className="rounded-lg border border-green-300 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-blue-300 hover:text-blue-600 transition-colors"
+                >
+                  📝 查看剧本
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {/* 上次运行失败 → 显示失败信息 */}
+          {latestRun?.status === "failed" && (
+            <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-5">
+              <h3 className="mb-1 text-sm font-semibold text-red-700">⚠️ 上次创作未完成</h3>
+              <p className="text-xs text-red-500">Run ID: {latestRun.run_id.slice(0, 8)}…</p>
+            </div>
+          )}
+
+          {/* 没有任何 Run → 引导提示 */}
+          {!latestRun && (
+            <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
+              <p className="text-sm text-gray-500">
+                在上方输入创作 Idea，点击「开始创作」启动 AI 创作流程。
+              </p>
+              <p className="mt-1 text-xs text-gray-400">
+                系统将依次执行：需求归一化 → 故事设定 → 分集大纲 → 剧本撰写
+              </p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

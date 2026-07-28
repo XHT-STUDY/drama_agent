@@ -289,6 +289,17 @@ function _deriveNodeProgress(events: RunEvent[]): NodeProgress[] {
     }
   }
 
+  // run.completed → 将所有 running 节点标记为 completed
+  const hasRunCompleted = events.some((ev) => ev.event_type === "run.completed");
+  if (hasRunCompleted) {
+    for (const np of nodeMap.values()) {
+      if (np.status === "running") {
+        np.status = "completed";
+        np.progress = 100;
+      }
+    }
+  }
+
   // 按固定顺序排列
   const order = ["normalize", "retrieve", "story_bible", "outline", "write_episodes", "finalize"];
   return order

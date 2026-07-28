@@ -43,6 +43,13 @@ async def finalize_node(state: CreationState) -> dict[str, Any]:
 
         await run_svc.transition_status(db, run_id, "completed")
 
+        # 先发 node.completed，再发 run.completed（前端依赖此顺序）
+        await publisher.publish(
+            db, run_id=run_id, event_type="node.completed",
+            payload={"node": "finalize", "progress": 1.0},
+            autocommit=True,
+        )
+
         await publisher.publish(
             db, run_id=run_id, event_type="run.completed",
             payload={
