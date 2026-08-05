@@ -58,7 +58,12 @@ class EventPublisher:
             run_id: 所属 Run UUID
             event_type: 事件类型字符串
             payload: 事件负载
-            autocommit: True = 立即 commit（使 SSE 可见）+ 重新 begin（继续后续操作）
+            autocommit: 是否立即 commit + re-begin。
+                **工作流节点（在 _execute_workflow 的长会话中）必须传 True**，
+                因为 async with session 退出时 AsyncSession.close() 会回滚未提交的事务。
+                API 端点（使用 get_db() 的会话）则依赖 Depends 的自动 commit，
+                应传 False（默认值）。
+                ***遗漏 autocommit=True 会导致工作流节点的所有数据在会话关闭时丢失！***
         """
         event = await self._insert_event(db, run_id, event_type, payload)
 

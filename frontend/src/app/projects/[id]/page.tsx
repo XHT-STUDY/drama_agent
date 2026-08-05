@@ -9,7 +9,7 @@
  * - 页面刷新后恢复活跃 Run
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -20,16 +20,11 @@ import { StatusBadge } from "@/features/projects/StatusBadge";
 import { ChatInput } from "@/features/conversation/ChatInput";
 import { RunProgress } from "@/features/runs/RunProgress";
 import { useRunEvents } from "@/hooks/use-run-events";
+import type { Run } from "@/types/api";
 
 export default function ProjectDetailPage() {
   const params = useParams();
   const projectId = String(params.id);
-
-  // 最新 Run 的状态（用于刷新后展示结果）
-  const [latestRun, setLatestRun] = useState<{ run_id: string; status: string } | null>(null);
-
-  // 当前活跃的 runId（null 表示无运行中的 Run）
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
   // 加载项目信息
   const {
@@ -44,31 +39,55 @@ export default function ProjectDetailPage() {
   });
 
   // 页面加载时检查 Run 历史
-  useQuery({
+  const {
+    data: runsData,
+    isLoading: runsLoading,
+    isError: runsError,
+    error: runsErr,
+    refetch: refetchRuns,
+  } = useQuery({
     queryKey: ["project-runs", projectId],
-    queryFn: async () => {
-      const result = await runsApi.listByProject(projectId);
-      // 查找活跃 Run（queued / running）
-      const active = result.items.find(
-        (r) => r.status === "queued" || r.status === "running",
-      );
-      if (active) {
-        setActiveRunId(active.run_id);
-      }
-      // 查找最新完成的 Run（刷新后展示结果用）
-      const latest = result.items[0];
-      if (latest && !active) {
-        setLatestRun({ run_id: latest.run_id, status: latest.status });
-      }
-      return result;
-    },
+    queryFn: () => runsApi.listByProject(projectId),
   });
+
+  // runs 是否已加载完成（非 loading 且有数据或确定为空）
+  const runsReady = !runsLoading;
+
+  // 手动触发的 runId（创建 Run 后立即显示进度，不等 runsData 刷新）
+  const [pendingRunId, setPendingRunId] = useState<string | null>(null);
+
+  // 从 runsData 派生 activeRunId（不在 queryFn 中 setState，避免 staleTime 导致丢失）
+  const activeRunId: string | null = useMemo(() => {
+    // 优先取 runsData 中的活跃 Run
+    if (runsData?.items?.length) {
+      const active = runsData.items.find(
+        (r: Run) => r.status === "queued" || r.status === "running",
+      );
+      if (active) return active.run_id;
+      // runsData 中无活跃 Run，清除 pending
+      return null;
+    }
+    // runsData 尚未加载 → 信任 pendingRunId（刚创建 Run 时）
+    if (pendingRunId) return pendingRunId;
+    return null;
+  }, [runsData, pendingRunId]);
+
+  // 从 runsData 派生 latestRun（不在 queryFn 中 setState，避免 staleTime 导致丢失）
+  const latestRun: { run_id: string; status: string } | null = useMemo(() => {
+    if (!runsData?.items?.length) return null;
+    const active = runsData.items.find(
+      (r: Run) => r.status === "queued" || r.status === "running",
+    );
+    if (active) return null;
+    const latest = runsData.items[0];
+    return { run_id: latest.run_id, status: latest.status };
+  }, [runsData]);
 
   // SSE 进度订阅
   const runEvents = useRunEvents(activeRunId);
 
   const handleRunCreated = useCallback((runId: string) => {
-    setActiveRunId(runId);
+    setPendingRunId(runId);
   }, []);
 
   if (projLoading) {
@@ -115,6 +134,7 @@ export default function ProjectDetailPage() {
           projectId={projectId}
           onRunCreated={handleRunCreated}
           hasActiveRun={!!activeRunId && !runEvents.runStatus}
+          scriptCount={project.target_episode_count}
         />
       </div>
 
@@ -155,6 +175,35 @@ export default function ProjectDetailPage() {
       {/* 无活跃 Run 时的展示 */}
       {!activeRunId && (
         <>
+          {/* runs 数据加载中 → 显示轻量加载指示器（避免闪现空状态） */}
+          {!runsReady && (
+            <div className="mb-6 rounded-lg border border-gray-200 bg-white p-5">
+              <div className="flex items-center gap-3">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+                <span className="text-sm text-gray-500">正在检查创作历史…</span>
+              </div>
+            </div>
+          )}
+
+          {/* runs 加载失败 → 显示错误 + 重试 */}
+          {runsReady && runsError && (
+            <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-5">
+              <h3 className="mb-2 text-sm font-semibold text-red-700">⚠️ 加载创作历史失败</h3>
+              <p className="mb-3 text-xs text-red-500">
+                {(runsErr as Error)?.message || "无法获取 Run 列表，请检查后端服务是否正常运行。"}
+              </p>
+              <button
+                onClick={() => refetchRuns()}
+                className="rounded border border-red-300 bg-white px-3 py-1 text-xs text-red-600 hover:bg-red-50 transition-colors"
+              >
+                重试
+              </button>
+            </div>
+          )}
+
+          {/* runs 加载完成且无错误 → 根据 latestRun 状态展示 */}
+          {runsReady && !runsError && (
+          <>
           {/* 上次运行已完成 → 显示结果入口 */}
           {latestRun?.status === "completed" && (
             <div className="mb-6 rounded-lg border border-green-200 bg-green-50 p-5">
@@ -200,6 +249,8 @@ export default function ProjectDetailPage() {
                 系统将依次执行：需求归一化 → 故事设定 → 分集大纲 → 剧本撰写
               </p>
             </div>
+          )}
+            </>
           )}
         </>
       )}

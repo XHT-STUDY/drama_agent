@@ -101,17 +101,26 @@ class BaseRepository:
         *,
         offset: int = 0,
         limit: int = 100,
+        order_by: Any | None = None,
         **filters: Any,
     ) -> list[Any]:
         """分页列表查询。
 
         使用 offset/limit 分页；
         关键字参数自动转为 WHERE 等值过滤条件。
+
+        Args:
+            offset: 偏移量
+            limit: 每页数量
+            order_by: 排序表达式，如 Model.created_at.desc()
+            **filters: 等值过滤条件
         """
         stmt: Any = select(self.model_class)
         for key, value in filters.items():
             if hasattr(self.model_class, key):
                 stmt = stmt.where(getattr(self.model_class, key) == value)
+        if order_by is not None:
+            stmt = stmt.order_by(order_by)
         stmt = stmt.offset(offset).limit(limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

@@ -41,6 +41,20 @@ async def finalize_node(state: CreationState) -> dict[str, Any]:
         scripts = state.get("script_artifact_ids", {})
         total = 1 + 1 + 1 + len(scripts)  # req + sb + outline + scripts
 
+        # 更新项目的 current_episode_count
+        from app.db.models.project import Project as ProjectModel
+        _project_id = uuid.UUID(state["project_id"])
+        project = await db.get(ProjectModel, _project_id)
+        if project is not None:
+            scripts_count = len(scripts)
+            if scripts_count > project.current_episode_count:
+                old_count = project.current_episode_count
+                project.current_episode_count = scripts_count
+                logger.info(
+                    "更新项目 %s current_episode_count: %d → %d",
+                    str(_project_id)[:12], old_count, scripts_count,
+                )
+
         await run_svc.transition_status(db, run_id, "completed")
 
         # 先发 node.completed，再发 run.completed（前端依赖此顺序）

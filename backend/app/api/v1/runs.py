@@ -377,6 +377,11 @@ async def _execute_workflow(
                     autocommit=True,
                 )
 
+            # 兜底提交：确保所有变更已持久化
+            # （各节点通过 publisher.publish(autocommit=True) 分段提交，
+            #   此处作为最终安全网，防止因异常路径导致数据丢失）
+            await db.commit()
+
         except Exception as e:
             import logging
             _logger = logging.getLogger(__name__)

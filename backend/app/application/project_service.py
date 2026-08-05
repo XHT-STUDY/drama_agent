@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import func
+from sqlalchemy import select as _select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
@@ -88,14 +90,28 @@ class ProjectService:
         offset: int = 0,
         limit: int = 20,
     ) -> ProjectListResponse:
-        """分页查询项目列表（不含已软删除）。"""
+        """分页查询项目列表（不含已软删除），按创建时间倒序。"""
         repo = self._get_repo(db)
-        items = await repo.list(offset=offset, limit=limit)
+
+        # 获取真实总数（不含软删除）
+        count_stmt = (
+            _select(func.count())
+            .select_from(Project)
+            .where(Project.deleted_at.is_(None))
+        )
+        count_result = await db.execute(count_stmt)
+        real_total: int = count_result.scalar_one()
+
+        items = await repo.list(
+            offset=offset,
+            limit=limit,
+            order_by=Project.created_at.desc(),
+        )
         # 过滤软删除的项目
         active = [p for p in items if p.deleted_at is None]
         return ProjectListResponse(
             items=[_to_response(p) for p in active],
-            total=len(active),
+            total=real_total,
             offset=offset,
             limit=limit,
         )

@@ -92,15 +92,18 @@ export function ChatInput({ projectId, onRunCreated, hasActiveRun, scriptCount =
         {/* 生成集数选择 */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500">生成集数：</span>
-          <select
+          <input
+            type="number"
+            min={1}
+            max={50}
             value={episodeCount}
-            onChange={(e) => setEpisodeCount(Number(e.target.value))}
-            className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700"
-          >
-            {[1, 2, 3, 5, 10].map((n) => (
-              <option key={n} value={n}>{n} 集</option>
-            ))}
-          </select>
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (v >= 1 && v <= 50) setEpisodeCount(v);
+            }}
+            className="w-20 rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700"
+          />
+          <span className="text-xs text-gray-400">集</span>
         </div>
 
         {/* 客户端校验错误 */}
