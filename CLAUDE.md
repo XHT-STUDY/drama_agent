@@ -1,205 +1,107 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件是 Claude Code 在本仓库工作时的操作手册。**权威开发契约见 [docs/DEV_PLAN.md](docs/DEV_PLAN.md)**,遇到与本文件冲突时以 DEV_PLAN.md 为准。
 
-## Project Overview
+## 项目简介
 
-DramaAgent is a conversational agent system for Chinese short-drama creation. It is NOT a single-prompt generator — it's a stateful, multi-stage workflow with memory, retrieval, evaluation, revision, versioning, and export capabilities.
+DramaAgent 是一个面向中文短剧创作的对话型 Agent 系统 —— 不是单次 Prompt 生成器,而是有状态、多阶段的工作流,含记忆、检索、评估、修订、版本与导出能力。
 
-**MVP scope**: Idea/Outline/TXT/DOCX → StoryBible → 10-episode outline → 3 full scripts → per-episode evaluation → auto-revise the lowest-scored episode → continuity check + re-evaluation → version diff → Markdown/DOCX export.
+**MVP 主路径**:Idea / Outline / TXT / DOCX → 需求归一化 → StoryBible → 10 集大纲 → 前 3 集剧本 → 逐集评估 → 自动修订最低分集(最多 1 轮)→ 连续性检查 + 重评 → 版本 Diff → Markdown / DOCX 导出。
 
-## Development Guide
+## 文档地图
 
-The authoritative development document is [docs/DEV_PLAN.md](docs/DEV_PLAN.md). **Always read relevant sections before starting any task.** Every AI Coding task must follow the execution principles in Section 0.1 of DEV_PLAN.md. The project is brand new — code under `backend/` and `frontend/` does not exist yet and must be created from scratch.
+| 文档 | 用途 | 何时写 |
+| --- | --- | --- |
+| [docs/DEV_PLAN.md](docs/DEV_PLAN.md) | 权威开发计划、任务卡、进度总表(§13) | 每个任务改状态 / 验收时更新 §13 |
+| [docs/DEV_LOG.md](docs/DEV_LOG.md) | 开发日志(做了什么 / 为什么 / 学到什么) | 每次开发或修复完成后追加 |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 问题排查经验(症状 / 原因 / 解决 / 学习) | 每次 fix bug 后追加 |
+| docs/PROMPT_GUIDE.md / API_CONTRACT.md / TEST_PLAN.md | 按需参考 | 相应变更时同步 |
 
-### Task-Based Development
+## 开发工作流
 
-All work is organized by task IDs (A-01 through I-06) defined in DEV_PLAN.md Section 12. Each task card specifies:
-- Estimated effort, dependencies, files to modify
-- Concrete implementation requirements
-- Acceptance criteria (checkbox list)
-- Test commands
+所有工作按任务 ID(A-01 ~ I-06)推进,执行原则见 DEV_PLAN.md §0.1。核心规则:
 
-**Rules for task execution** (from DEV_PLAN.md §0.1):
-1. Implement only one task ID at a time
-2. Read `## 0. AI Coding 的执行原则`, the current phase section, the task card, and dependency implementations before starting
-3. Do NOT refactor across modules or implement future phases without task card authorization
-4. Every task must deliver: implementation code, unit/integration tests, config/migrations, doc updates, and reproducible verification commands
-5. Task statuses: TODO → DOING → BLOCKED → REVIEW → DONE
-6. Mark DONE only when ALL acceptance criteria are met
-7. Use **FakeLLM** for automated tests — never call real LLMs in CI
-8. All LLM output must pass structured Pydantic v2 schema validation before writing to any Artifact
-9. Artifacts are immutable — revisions create new versions, never overwrite
-10. Update the progress tracker (Section 13) after every task
+1. 一次只做一个任务;开工前先读 §0.1、当前阶段、任务卡与依赖实现
+2. 未经授权不跨模块重构、不提前实现后续阶段
+3. CI 与自动化测试一律用 FakeLLM,禁止真实 LLM 调用
+4. LLM 输出必须先过结构化 Pydantic v2 校验,才能写入 Artifact
+5. Artifact 不可变 —— 修订必须产生新版本,绝不原地覆盖
+6. 状态流转仅允许:TODO → DOING → BLOCKED → REVIEW → DONE
+7. 只有任务卡验收条件**全部**满足,才能标记 DONE
 
-### Definition of Done (§0.3)
+### ★ 开发收尾清单(每次开发 / 修复完成后必须执行)
 
-A task is complete only when ALL of:
-- Code matches task boundaries
-- All new/modified tests pass
-- Ruff, typecheck, frontend lint: zero new errors
-- DB changes include Alembic migration
-- API changes sync OpenAPI + frontend types
-- LLM Schema/Prompt changes include version number + fixed examples
-- Logs contain no API keys, full uploads, or complete prompts
-- No existing Artifacts overwritten
-- Acceptance evidence written to progress table
-- No unexplained TODOs left behind
+1. **更新进度表**:在 DEV_PLAN.md §13 更新对应任务的状态与验收证据
+2. **写开发日志**:在 DEV_LOG.md 末尾按模板追加条目,必须覆盖:
+   - **做了什么** —— 实现摘要、修改文件、验证命令与结果
+   - **为什么这么做** —— 决策动机、备选方案取舍
+   - **学到了什么** —— 可复用的经验 / 教训
+3. **记录问题排查**:本次若涉及 bug fix 或疑难问题解决,必须在 TROUBLESHOOTING.md 追加一条:
+   - 症状 → 产生原因 → 解决方案 → **应该学习到什么**
 
-## Tech Stack
+### Definition of Done
 
-| Layer | Technology |
-|---|---|
-| Backend | Python, FastAPI, Pydantic v2 |
-| Workflow | LangGraph (stateful nodes, conditional branches, checkpoint) |
-| ORM/Migration | SQLAlchemy 2 (async), Alembic |
-| Primary DB | PostgreSQL + pgvector |
-| Transient state | Redis (SSE pub/sub, short-term memory, rate limiting) |
-| File storage | Local filesystem (interface reserved for object storage) |
-| Background exec | In-process Worker abstraction |
-| Frontend | Next.js, React, TypeScript |
-| Frontend state | TanStack Query + local state |
-| Styling | Tailwind CSS |
-| Testing | pytest, Vitest, Playwright |
-| Tooling | uv, Ruff, mypy, pnpm |
+见 DEV_PLAN.md §0.3:新增/修改测试全绿、Ruff / mypy / 前端 lint 零新增错误、DB 变更含 Alembic migration、API 变更同步 OpenAPI 与前端类型、LLM Schema / Prompt 变更带版本号与固定样例、不覆盖既有 Artifact、验收证据写入进度表、无遗留未说明的 TODO。
 
-## Common Commands
+## 技术栈
 
-These are defined in the Makefile (to be created in A-01):
+| 层 | 技术 |
+| --- | --- |
+| 后端 | Python, FastAPI, Pydantic v2 |
+| 工作流 | LangGraph(有状态节点、条件分支、checkpoint) |
+| ORM / 迁移 | SQLAlchemy 2(async), Alembic |
+| 主库 | PostgreSQL + pgvector |
+| 瞬态 | Redis(SSE pub/sub、短期记忆、限流) |
+| 前端 | Next.js, React, TypeScript;TanStack Query;Tailwind CSS |
+| 测试 | pytest, Vitest, Playwright |
+| 工具 | uv, Ruff, mypy, pnpm |
+
+## 常用命令
 
 ```bash
-make install      # Install all dependencies (uv sync + pnpm install)
-make lint         # Run all linters (Ruff + ESLint)
-make typecheck    # Run all type checkers (mypy + tsc)
-make test         # Run all tests
-make ci           # Full CI pipeline (lint + typecheck + test)
-make up           # Start Docker Compose (PostgreSQL + Redis)
-make down         # Stop Docker Compose
-make doctor       # Verify environment health (DB, Redis, config)
-make e2e          # Run Playwright end-to-end tests
-make perf         # Run performance tests
+make install      # 安装依赖(uv sync + pnpm install)
+make lint         # Ruff + ESLint
+make typecheck    # mypy + tsc
+make test         # 全部测试
+make up / down    # 启动 / 停止 Docker Compose(PostgreSQL + Redis)
+make doctor       # 环境健康检查(DB、Redis、配置)
 ```
 
-Run specific test subsets:
-```bash
-pytest -m unit                                  # Unit tests only
-pytest -m integration                           # Integration tests only
-pytest -m workflow                              # Workflow tests only
-pytest -m contract                              # Contract tests only
-pytest backend/tests/unit/skills/test_story_bible.py  # Single test file
-pnpm test -- projects                           # Frontend: run specific test suite
-pnpm playwright test                            # E2E tests
-```
+常用子集:`pytest -m unit|integration|workflow|contract`(后端按标记)、`pnpm test`(前端)。
 
-## Architecture
+## 架构要点
 
-### Logical Layers (top → bottom, §3.1)
+- **分层**(§3.1):Next.js 工作台 → FastAPI → Application Services → Run / Event → LangGraph Workflows → Agents + Skills → Repositories → PostgreSQL + pgvector
+- **模块边界**(§4.1):`api` / `application` / `domain` / `workflows` / `agents` / `skills` / `tools` / `repositories` / `artifacts` 各模块的允许与禁止操作见 DEV_PLAN.md,未经授权不跨层
+- **关键决策**(核心 5 条,其余见 §2.2):
+  1. **PostgreSQL 是唯一事实源**,Redis 丢失不得造成资产损失
+  2. **Artifact 不可变版本模型**;LangGraph State 只存 ID 与轻量结构,大文本放 Artifact
+  3. Real LLM 与 FakeLLM 实现同一协议,自动化测试默认 FakeLLM
+  4. API 立即返回 `run_id`,进度经 SSE 观察
+  5. 自动修订按确定性代码选最低分集(平局取最小 `episode_number`)
 
-1. **Next.js workspace** → FastAPI API — user interaction, progress, asset display
-2. **FastAPI API** → Application Services — params, auth boundary, error contracts
-3. **Application Services** → Run Service / Repositories — use-case orchestration, transaction boundaries
-4. **Run / Event Service** → LangGraph Workflows — async execution, events, recovery
-5. **LangGraph Workflows** → Agents + Skills — state nodes, conditional branches
-6. **Agents + Skills** → LLM / RAG / Tools / Memory — single business capability
-7. **Repositories** → PostgreSQL + pgvector — persistent state, vector search
+## 当前进度
 
-Side dependencies: Run Service uses Redis for real-time notifications; Application Services use Local File Store for uploads/exports. Neither replaces PostgreSQL as the source of truth.
+- **已验收**:Phase A(工程基线)、B(后端基础设施)、C(创作能力)全部 DONE
+- **初步跑通**:H-01~05(前端项目 / 对话 / SSE 进度 / StoryBible / 大纲 / 剧本 / 评估视图),真实 LLM 全链路可运行
+- **未开始**:H-06~07、Phase D(RAG)、E(评估)、F(修订)、G(记忆 / 导入导出)、I(发布加固)
 
-### Module Boundaries (§4.1)
+最新进度以 [docs/DEV_PLAN.md](docs/DEV_PLAN.md) §13 进度总表为准。
 
-| Module | Allowed | Forbidden |
-|---|---|---|
-| `api` | Param parsing, auth, call application service | Direct LLM calls, direct ORM writes |
-| `application` | Use-case orchestration, transaction boundaries | Storing prompt templates, implementing DB details |
-| `domain` | Schemas, enums, pure rules | Network, DB, LLM calls |
-| `workflows` | Node wiring, state transitions, recovery | Long prompts, raw SQL |
-| `agents` | Compose generic Skills, provide business role entry points | Deciding the main workflow freely |
-| `skills` | Single reusable task, assemble context + output schema | Direct frontend or HTTP operations |
-| `tools` | Deterministic capabilities (stats, parsing, diff) | Implicit LLM calls |
-| `repositories` | Data persistence | Business scoring, control flow |
-| `artifacts` | Immutable versions, dependencies, diff | Modifying historical versions |
-
-### Key Architectural Decisions (§2.2)
-
-1. **PostgreSQL is the single source of truth** for all persistent state. Redis loss must not cause project asset loss.
-2. **pgvector** shares the PostgreSQL instance — no separate Vector DB in MVP.
-3. **Artifacts use an immutable version model**. Updates create new records.
-4. **LangGraph State stores only IDs and lightweight structures** — large text lives in Artifacts to avoid checkpoint bloat.
-5. **BaseAgent** handles generic calling, validation, retries, and tracing. Business logic lives in Skills.
-6. **Orchestrator** deterministically selects workflows — agents do not freely converse to decide control flow.
-7. **Real LLM and FakeLLM implement the same protocol** — all automated tests default to FakeLLM.
-8. **Prompts are versioned code assets**. Every generation records prompt_version, model, params, and input Artifact IDs.
-9. **API returns `run_id` immediately** for long tasks; progress observed via SSE.
-10. **Auto-revision selects by deterministic code**: lowest `overall_score`; tiebreak by smallest `episode_number`.
-11. **Evaluation scores are signals only** — revision acceptance also checks structure, continuity, locked facts, and compliance risks.
-
-### Domain Model Rules (§5.1)
-
-- IDs use UUID; times use UTC with ISO 8601 output
-- All schemas set `extra=forbid`
-- `episode_number` starts at 1; score range 0–100
-- JSONB business content must pass Pydantic schema validation before storage
-- Artifact content is never UPDATEd; status only transitions `draft → valid` or `draft → invalid`
-- `content_schema_version` and `prompt_version` are tracked separately
-- All list fields return explicit empty arrays, never null
-- Body text allows Markdown but must never execute HTML/scripts server-side
-
-### Creation Workflow (§7.2)
-
-```
-normalize → retrieve → story_bible → outline → write episodes 1..3
-→ evaluate episodes 1..3 → select + plan → revise
-→ continuity_check → re-evaluate → done
-```
-
-Each node writes `node.started` / `node.completed` events. Node failures follow retry policy; after exhausting retries, write `node.failed` + `run.failed`. Already-created Artifacts are never rolled back or deleted.
-
-### Model Roles (§2.3)
-
-| Role | Default Use | Required Output |
-|---|---|---|
-| `normalizer` | Requirement normalization, file classification | NormalizedRequirement / ImportClassification |
-| `planner` | StoryBible, episode outlines | StoryBible / EpisodeOutlineSet |
-| `writer` | Single-episode scripts, revision | ScriptDraft / RevisedScript |
-| `evaluator` | Scoring, issue diagnosis, revision planning | EvaluationReport / RevisionPlan |
-| `summarizer` | Conversation & episode summaries | ConversationSummary / EpisodeSummary |
-| `embedding` | Knowledge base vectors | float vector |
-
-Constraints: max 2 retries on structured output failure, 180s node timeout, soft cap of 18 LLM calls per complete Demo run.
-
-### FakeLLM Rules (§10.2)
-
-All automated tests use FakeLLM which:
-- Returns legal objects from fixtures/golden by `prompt_name`
-- Can be configured to timeout, rate-limit, or output invalid JSON at specific call indices
-- Records call sequence and input Artifact IDs
-- Supports deterministic seeding
-- E2E fixed data must include one low-scored episode to ensure the revision branch is exercised
-
-## Project Status
-
-Currently at **Phase A** (Engineering baseline) — all tasks are TODO. The repository has only the DEV_PLAN.md, README.md, LICENSE, .gitignore, and .vscode/settings.json. No backend or frontend code exists yet.
-
-The first task is **A-01**: Initialize monorepo with dev commands (Makefile, pyproject.toml, package.json, empty test suites).
-
-## Environment Setup
+## 环境与运行
 
 ```bash
-cp .env.example .env    # Edit as needed (do NOT commit .env)
-make install            # Install all dependencies
-make up                 # Start PostgreSQL + Redis via Docker Compose
-make doctor             # Verify everything is healthy
+cp .env.example .env   # 按需修改,不提交 .env
+make install
+make up                # PostgreSQL + pgvector、Redis
+make doctor
 ```
 
-Required services for local development: Docker Compose (PostgreSQL 15+ with pgvector, Redis 7+).
+## 关键约束
 
-## Key Constraints
-
-- MVP outline count: exactly 10 episodes; script count: first 3 episodes
-- MAX_REVISION_ROUNDS=1 (never auto-revise more than once)
-- Upload max: 10 MB; TXT/DOCX only
-- API p95 < 300ms (excluding LLM calls); first SSE event within 1s of Run creation
-- Core domain/workflow/artifact test coverage ≥ 85%; overall backend ≥ 75%
-- `.env` never committed; `.env.example` contains no real keys
-- All configurable results-affecting values written to `WorkflowRun.config_snapshot`
-- Function and class comments in Chinese ( explain intent, not restate code)
+- 集数:默认 10 集大纲 / 前 3 集剧本;前端可配置 1/2/3/5/10(非硬编码)
+- MAX_REVISION_ROUNDS=1;上传 ≤ 10 MB,TXT / DOCX 仅
+- API p95 < 300ms(不含 LLM 调用);首个 SSE 事件在 Run 创建后 1s 内
+- 覆盖率:核心 domain / workflow / artifact ≥ 85%,后端整体 ≥ 75%
+- `.env` 永不提交;`.env.example` 无真实密钥
+- 函数 / 类注释用中文,解释意图而非复述代码

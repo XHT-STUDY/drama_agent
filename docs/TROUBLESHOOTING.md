@@ -1,6 +1,6 @@
 # DramaAgent 问题排查记录
 
-按时间倒序记录开发过程中遇到的问题及其排查过程。每条记录包含**症状**、**分析**、**处理**三部分。
+按时间倒序记录开发过程中遇到的问题及其排查过程。每条记录包含**症状**、**产生原因**、**解决方案**、**学习收获**四部分 —— 其中「学习收获」记录本次排查应该沉淀的经验，方便日后避免重蹈覆辙。
 
 > 模板：
 > ```markdown
@@ -8,9 +8,11 @@
 >
 > **症状**：
 >
-> **分析**：
+> **产生原因**：
 >
-> **处理**：
+> **解决方案**：
+>
+> **学习收获**：（我应该学习到什么）
 > ```
 
 ---
@@ -24,6 +26,8 @@
 **处理**：将角色校验从阻断改为信息日志（warning），允许 LLM 创建非白名单角色，同时保留日志用于人工审核。
 
 修改文件：[episode_writer.py](backend/app/skills/episode_writer.py)
+
+**学习收获**：对 LLM 的开放域输出，白名单 / 黑名单这类"封闭集合校验"会持续误伤——生成侧的不确定性应靠"警告 + 人工审核"而不是"硬阻断"；硬校验只应施加在确定性数据上。
 
 ---
 
@@ -44,6 +48,8 @@
 
 修改文件：[outline.py](backend/app/workflows/nodes/outline.py)、[write_episode.py](backend/app/workflows/nodes/write_episode.py)、[runs.py](backend/app/api/v1/runs.py)、[ChatInput.tsx](frontend/src/features/conversation/ChatInput.tsx)
 
+**学习收获**："看起来是常量"的数量常会成为业务参数，硬编码魔法数字会让前端配置形同虚设。开发时先问"这个值该不该由调用方控制"，再决定用常量还是从 config 读取。
+
 ---
 
 ## 2026-07-26 — 前端进度条永远显示"等待工作流启动"
@@ -62,6 +68,8 @@
 - [RunProgress.tsx](frontend/src/features/runs/RunProgress.tsx): 增加调试信息（连接状态 + 事件计数）
 - `tests/setup.ts`: 新增 `EventSource` mock
 
+**学习收获**：前后端共享的类型定义（TS 类型 / OpenAPI）是防止字段名漂移的第一道防线；重命名字段时要用 grep 全量排查，不能只改调用点。
+
 ---
 
 ## 2026-07-26 — SSE 新连接看不到已有事件
@@ -77,6 +85,8 @@
 - [stream.py](backend/app/events/stream.py): Phase 1 始终执行，不再检查 `last_event_id` 是否为空
 - 新增 `_db_poller()` 作为 Redis Pub/Sub 的数据库回退
 - 开头 `yield ": connected\n\n"` 确保 EventSource 立即建立连接
+
+**学习收获**：流式 / 重连类功能要单独验证"全新连接"与"断线重连"两条路径，不能只测"长连接正常"这一个场景。
 
 ---
 
@@ -94,6 +104,8 @@
 - 测试环境仅 flush 不 commit，避免破坏测试事务隔离
 - 全部 workflow nodes（6 文件 23 处）+ runs.py（4 处）加 `autocommit=True`
 
+**学习收获**：同一事务内的写入对其他事务不可见——SSE / 异步消费者需要主动 commit 才能让事件"实时"可见。遇到"延迟才可见"的问题，优先怀疑事务边界，而不是网络。
+
 ---
 
 ## 2026-07-25 — OpenAI API Base URL 重复拼接
@@ -108,6 +120,8 @@
 **处理**：HTTP 404 不应被映射为 `INVALID_OUTPUT` 导致无意义重试。修复错误映射：404 → 模型/端点不存在，区别于 Schema 校验失败。
 
 修改文件：[openai_compatible.py](backend/app/llm/openai_compatible.py)
+
+**学习收获**：对接外部 SDK 时，先确认 base URL 与 SDK 自动追加路径的拼接规则；HTTP 404 应区分"端点不存在"与"输出非法"，避免把 404 映射成校验失败而触发无意义重试。
 
 ---
 
@@ -126,3 +140,5 @@
 - [config.py](backend/app/core/config.py): env_file 使用绝对路径、`extra="ignore"`、`cors_origins: str`、test 环境跳过 `.env`
 - [main.py](backend/app/main.py): `settings.get_cors_origins()` 解析逗号分隔字符串
 - `.env`: 所有变量加 `LLM_` 前缀，API_BASE 去掉末尾 `/v1`
+
+**学习收获**：环境变量排查按"前缀 → 路径 → 解析类型 → extra 策略 → 环境隔离"逐层排查；`extra="forbid"` 会让未声明的共享变量直接报错，在共享环境变量多的场景是隐患。

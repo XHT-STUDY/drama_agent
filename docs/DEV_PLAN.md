@@ -1,6 +1,6 @@
 ﻿# DramaAgent AI Coding 项目开发执行文档
 
-> 文档版本：v1.3  
+> 文档版本：v1.4  
 > 编制日期：2026-07-26  
 > 项目阶段：MVP — Phase H-05 完成，准备进入 H-06（修订/版本/Diff）  
 > 依据文档：《DramaAgent 项目开发计划》  
@@ -34,7 +34,10 @@
 7. 真实 LLM 调用不能作为自动化测试的唯一依据；CI 默认使用确定性的 FakeLLM。
 8. 所有 LLM 输出必须先通过结构化 Schema 校验，校验失败不得写入正式 Artifact。
 9. 所有正式 Artifact 不可原地覆盖；修订必须产生新版本。
-10. 每完成一个任务，都要更新第 13 节的进度总表和开发日志。
+10. 每完成一个任务（或一次修复、一次非计划性开发），都必须做三件事：
+    1. 更新第 13 节的进度总表（状态 + 验收证据）；
+    2. 在 docs/DEV_LOG.md 末尾追加开发日志，至少覆盖：做了什么、**为什么这么做**、**学到了什么**、验证命令与结果；
+    3. 涉及 bug fix / 疑难问题解决时，在 docs/TROUBLESHOOTING.md 追加：症状、产生原因、解决方案、**应该学习到什么**。
 
 ### 0.2 单任务交付格式
 
@@ -47,12 +50,18 @@ AI Coding Agent 完成任务后，统一返回：
 实现摘要：
 - ...
 
+为什么这么做：
+- ...（决策动机、备选方案取舍）
+
 修改文件：
 - ...
 
 验证结果：
 - 命令：
 - 结果：
+
+学习收获：
+- ...（可复用的经验 / 教训）
 
 验收项：
 - [x] ...
@@ -2932,6 +2941,7 @@ Prompt 必须区分：
 | H-04 | StoryBible/大纲视图 | 0.5d | H-03,C-08 | DONE | AI Agent | 71 tests passed, ESLint/tsc clean; CharacterCard+StoryBibleView+EpisodeCard+OutlineListView, locked facts视觉识别, 版本切换, 空字段占位 |
 | H-05 | 剧本编辑与评估视图 | 0.75d | H-04,E Gate | DONE | AI Agent | 122 tests passed, ESLint/tsc clean; EpisodeNav+ScriptView+ScoreBar+IssueCard+EvaluationPanel, 三栏布局, issue→scene定位, risk_flags明显展示, 评估四态覆盖, 阶段E Mock |
 | — | 🔧 SSE/日志/集数修复 | 0.5d | H-05 | DONE | AI Agent | SSE fetch→EventSource, event_type字段对齐, autocommit事件提交, DB轮询回退, 日志北京时区+彩色console, outline_count/script_count从config读取, 角色校验降级为日志, ChatInput集数选择器 |
+| — | 📐 文档工作流与 CLAUDE.md 精简 | 0.25d | - | DONE | AI Agent | CLAUDE.md 精简+状态修正; 「开发收尾清单」固化; DEV_PLAN 模板补"为什么/学到什么"; TROUBLESHOOTING 模板升级并回填 7 条学习经验 |
 | H-06 | 修订/版本/Diff | 0.75d | H-05,F Gate | TODO | - | - |
 | H-07 | 导出与 E2E | 1d | H-06,G-06 | TODO | - | - |
 | I-01 | 恢复与成本保护 | 0.75d | H Gate | TODO | - | - |
@@ -2962,11 +2972,15 @@ Prompt 必须区分：
 
 - 当前任务：C-04
 - 状态：DOING
-- 今日完成：
+- 今日完成（做了什么）：
+  - ...
+- 为什么这么做：
   - ...
 - 测试：
   - 命令：
   - 结果：
+- 学习收获：
+  - ...（可复用的经验 / 教训）
 - 决策：
   - ...
 - Blocker：
