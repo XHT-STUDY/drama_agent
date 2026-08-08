@@ -19,6 +19,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.workflows.nodes import (
+    evaluate_episodes_node,
     finalize_node,
     normalize_node,
     outline_node,
@@ -47,13 +48,28 @@ def _should_continue_after_normalize(state: CreationState) -> Literal["retrieve"
     return "retrieve"
 
 
-def _should_finalize(state: CreationState) -> Literal["finalize", "__end__"]:
-    """write_episodes 后的路由决策。
+def _should_evaluate(state: CreationState) -> Literal["evaluate_episodes", "__end__"]:
+    """write_episodes 后的路由决策 (E-04)。
 
-    预留 evaluate_after_creation 分支（Phase E 实现）。
+    剧本写完后自动进入逐集评估。
     """
     if state.get("status") == "failed":
         logger.warning("write_episodes 失败，工作流终止")
+        return "__end__"
+    return "evaluate_episodes"
+
+
+def _should_finalize_after_eval(state: CreationState) -> Literal["finalize", "__end__"]:
+    """evaluate_episodes 后的路由决策 (E-04)。
+
+    - 存在需修订的集 → 暂停在修订决策点（Phase F 实现实际修订）
+    - 否则 → finalize（Run 完成）
+    """
+    if state.get("needs_revision_decision"):
+        logger.info("存在需修订的集，暂停在修订决策点，等待 Phase F")
+        return "__end__"
+    if state.get("status") == "failed":
+        logger.warning("评估失败，工作流终止")
         return "__end__"
     return "finalize"
 
@@ -64,12 +80,11 @@ def build_creation_workflow() -> CompiledStateGraph:
     图结构:
         normalize
           ├─ (needs_user_input / failed) → END
-          └─ (ok) → retrieve
-                       └─ story_bible
-                            └─ outline
-                                 └─ write_episodes
-                                      ├─ (failed) → END
-                                      └─ (ok) → finalize → END
+          └─ (ok) → retrieve → story_bible → outline → write_episodes
+               ├─ (failed) → END
+               └─ (ok) → evaluate_episodes
+                          ├─ (需修订) → END（暂停在修订决策点）
+                          └─ (否则) → finalize → END
 
     Returns:
         已编译的 LangGraph StateGraph
@@ -82,6 +97,7 @@ def build_creation_workflow() -> CompiledStateGraph:
     builder.add_node("story_bible", story_bible_node)
     builder.add_node("outline", outline_node)
     builder.add_node("write_episodes", write_episodes_node)
+    builder.add_node("evaluate_episodes", evaluate_episodes_node)
     builder.add_node("finalize", finalize_node)
 
     # 设置入口
@@ -98,7 +114,12 @@ def build_creation_workflow() -> CompiledStateGraph:
     builder.add_edge("outline", "write_episodes")
     builder.add_conditional_edges(
         "write_episodes",
-        _should_finalize,
+        _should_evaluate,
+        {"evaluate_episodes": "evaluate_episodes", "__end__": END},
+    )
+    builder.add_conditional_edges(
+        "evaluate_episodes",
+        _should_finalize_after_eval,
         {"finalize": "finalize", "__end__": END},
     )
     builder.add_edge("finalize", END)

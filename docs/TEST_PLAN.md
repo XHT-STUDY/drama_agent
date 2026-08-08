@@ -223,3 +223,15 @@ def test_real_llm_story_bible() -> None: ...
 10. 上传伪装成 DOCX 的文件被拒绝（G-03）
 11. 导出失败不影响原有剧本资产（G-05）
 12. checkpoint 后重试不重复生成已完成的前两集（C-07）
+13. 评估报告 9 维齐全且 overall_score 由服务端计算，不被 LLM 自报带偏（E-05）
+14. 低分维度（<70）必有对应 issue，缺口由服务端自动补全（E-02/E-05）
+15. 低分剧本触发 need_revision → 工作流进入修订决策点（E-04）
+16. 同一剧本版本重复评估复用已有报告，不产生新版本（E-03）
+17. 修订后新剧本版本生成新评估，原稿评估不被覆盖（E-03）
+18. 跨项目评估其他项目的 Artifact 被拒绝（E-03）
+
+## 10. 评估（Phase E）专项说明
+
+- **契约不变量**：`backend/tests/contract/test_evaluation_invariants.py` 对 high/medium/low 三个固定剧本 case 验证评估结构不变量（9 维齐全、overall/need_revision 服务端回填、低分维度必有 issue、FakeLLM 确定性）。
+- **Golden case**：`backend/tests/golden/evaluation_cases/{high,medium,low}.json` 每个含 `expected` 字段声明预期分支（need_revision）。
+- **真实模型 smoke**：`backend/scripts/evaluate_rubric_smoke.py` 对三个 case 重复调用真实 evaluator，输出各维度分均值/标准差与问题交集，用于人工诊断评估稳定性。**不进 CI**，发布前人工执行；脚本从 `.env` 读取密钥且不打印 API Key。

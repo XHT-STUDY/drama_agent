@@ -25,7 +25,7 @@ from app.domain.script import EpisodeWriterInput, ScriptDraft
 from app.domain.story_bible import StoryBible
 from app.llm.fake import FakeLLM
 from app.prompts.loader import PromptLoader
-from app.skills.episode_writer import EpisodeWriterSkill, EpisodeWriterValidationError
+from app.skills.episode_writer import EpisodeWriterSkill
 from app.skills.registry import SkillRegistry
 
 GOLDEN_DIR = Path(__file__).resolve().parents[2] / "golden"

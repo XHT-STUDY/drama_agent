@@ -275,9 +275,11 @@ async def _execute_workflow(
     from app.agents.base import BaseAgent
     from app.application.artifact_service import ArtifactService
     from app.application.run_service import RunService
+    from app.artifacts.store import ArtifactStore
     from app.events.publisher import EventPublisher
     from app.prompts.loader import PromptLoader
     from app.workflows.creation import build_creation_workflow
+    from app.workflows.evaluation import build_evaluation_workflow
     from app.workflows.state import CreationState
 
     agent = BaseAgent(name="planner", llm=llm_client)
@@ -297,8 +299,8 @@ async def _execute_workflow(
                 return
             await run_svc.transition_status(db, run_id, "running")
 
-            # platform_smoke / 非 create_script → 直接完成
-            if action != "create_script":
+            # platform_smoke / revise（Phase F 实现）→ 直接完成
+            if action not in ("create_script", "evaluate"):
                 await run_svc.transition_status(db, run_id, "completed")
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.completed",
@@ -307,30 +309,10 @@ async def _execute_workflow(
                 )
                 return
 
-            # create_script → 执行完整 Creation Workflow
             options: dict[str, Any] = config_snapshot.get("options", {})
             user_input = options.get("user_input", "")
             if not user_input:
                 user_input = "一个被青训队抛弃的足球少年逆袭故事"
-
-            initial_state: CreationState = {
-                "run_id": str(run_id),
-                "project_id": str(run.project_id),
-                "action": action,
-                "requirement_artifact_id": None,
-                "story_bible_artifact_id": None,
-                "outline_set_artifact_id": None,
-                "script_artifact_ids": {},
-                "continuity_state_text": "",
-                "current_episode": 1,
-                "status": "running",
-                "needs_user_input": False,
-                "error_node": None,
-                "error_detail": None,
-                "completed_nodes": [],
-                "input_hashes": {},
-                "prompt_versions": {},
-            }
 
             progress_log: list[dict[str, Any]] = []
 
@@ -355,7 +337,56 @@ async def _execute_workflow(
                 },
             }
 
-            workflow = build_creation_workflow()
+            initial_state: CreationState
+            if action == "create_script":
+                # 完整 Creation Workflow（写完后自动进入评估）
+                initial_state = {
+                    "run_id": str(run_id),
+                    "project_id": str(run.project_id),
+                    "action": action,
+                    "requirement_artifact_id": None,
+                    "story_bible_artifact_id": None,
+                    "outline_set_artifact_id": None,
+                    "script_artifact_ids": {},
+                    "evaluation_artifact_ids": {},
+                    "needs_revision_decision": False,
+                    "continuity_state_text": "",
+                    "current_episode": 1,
+                    "status": "running",
+                    "needs_user_input": False,
+                    "error_node": None,
+                    "error_detail": None,
+                    "completed_nodes": [],
+                    "input_hashes": {},
+                    "prompt_versions": {},
+                }
+                workflow = build_creation_workflow()
+            else:
+                # action=evaluate → 收集项目已有剧本（每集最新 valid），走独立评估工作流
+                store = ArtifactStore()
+                scripts = await store.list_by_project(
+                    db, run.project_id, "script_draft", offset=0, limit=1000
+                )
+                latest_per_episode: dict[int, str] = {}
+                for a in scripts:
+                    if a.status == "valid" and a.episode_number not in latest_per_episode:
+                        latest_per_episode[a.episode_number] = str(a.id)
+                initial_state = {
+                    "run_id": str(run_id),
+                    "project_id": str(run.project_id),
+                    "action": action,
+                    "script_artifact_ids": {
+                        str(ep): sid for ep, sid in latest_per_episode.items()
+                    },
+                    "evaluation_artifact_ids": {},
+                    "needs_revision_decision": False,
+                    "status": "running",
+                    "completed_nodes": [],
+                    "input_hashes": {},
+                    "prompt_versions": {},
+                }
+                workflow = build_evaluation_workflow()
+
             final_state = await workflow.ainvoke(initial_state, workflow_config)
 
             if final_state.get("status") == "failed":
@@ -374,6 +405,34 @@ async def _execute_workflow(
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.needs_review",
                     payload={"reason": "用户输入不完整，需要补充信息"},
+                    autocommit=True,
+                )
+
+            if final_state.get("needs_revision_decision"):
+                # 存在需修订的集 → 暂停在修订决策点（Phase F 实现实际修订）
+                await run_svc.transition_status(db, run_id, "needs_review")
+                await publisher.publish(
+                    db, run_id=run_id, event_type="run.needs_revision_decision",
+                    payload={
+                        "message": "存在需修订的集，等待修订决策",
+                        "evaluation_artifact_ids": final_state.get("evaluation_artifact_ids", {}),
+                    },
+                    autocommit=True,
+                )
+
+            # action=evaluate 且无修订决策 → 直接完成（evaluation workflow 无 finalize 节点）
+            if (
+                action == "evaluate"
+                and not final_state.get("needs_revision_decision")
+                and final_state.get("status") != "failed"
+            ):
+                await run_svc.transition_status(db, run_id, "completed")
+                await publisher.publish(
+                    db, run_id=run_id, event_type="run.completed",
+                    payload={
+                        "message": "评估完成",
+                        "evaluation_count": len(final_state.get("evaluation_artifact_ids", {})),
+                    },
                     autocommit=True,
                 )
 
@@ -422,6 +481,7 @@ def _register_fake_fixtures(llm: Any) -> None:
             return data["expected_output"]
         return data
 
+    from app.domain.evaluation import EvaluationReport
     from app.domain.outline import EpisodeOutlineSet
     from app.domain.requirement import NormalizedRequirement
     from app.domain.script import ScriptDraft
@@ -431,3 +491,5 @@ def _register_fake_fixtures(llm: Any) -> None:
     llm.register("story_bible", StoryBible.model_validate(_load("story_bible_football")))
     llm.register("outline", EpisodeOutlineSet.model_validate(_load("outline_set_valid")))
     llm.register("write_episode", ScriptDraft.model_validate(_load("script_draft_valid")))
+    # 评估 fixture：使用 golden 高分报告（服务端回填 need_revision=False → 走 finalize/completed）
+    llm.register("evaluate_episode", EvaluationReport.model_validate(_load("evaluation_report_valid")))

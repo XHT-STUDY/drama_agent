@@ -1709,3 +1709,202 @@ CLAUDE.md 是 Claude Code 每次会话都会加载的操作手册,内容过时�
 ### 建议的下一任务
 
 - 恢复主线开发:H-06 修订 / 版本 / Diff 视图(依赖 Phase F),或按依赖先推进 D / E 阶段
+
+---
+
+## 2026-08-08 — E-01 Rubric 配置与确定性指标
+
+**任务 ID：** E-01
+**状态：** DONE
+**日期：** 2026-08-08
+
+### 做了什么
+
+- 新建 [knowledge/rubric/mvp_v1.yaml](../knowledge/rubric/mvp_v1.yaml):9 维评估标准,含权重(与 enums 一致,和=1)、1/3/5 三档锚点、评分触发规则(revision_threshold=75 / compliance_threshold=60)
+- 新建 [rubric.py](../backend/app/domain/rubric.py):`Rubric`/`RubricDimension`/`RubricScoreRules` 模型 + 校验(权重和=1、9 维齐全、锚点完整、无重复)+ `load_rubric()` + `ensure_weights_match_enums()`
+- 新建 [script_structure.py](../backend/app/tools/script_structure.py):`ScriptStructureTool` 客观辅助特征(场景数/去重角色数/对白行数/对白占比/钩子存在性与长度)
+- 复用既有 `domain/evaluation.py` 的 `compute_overall_score`/`compute_need_revision`(确认已完整)
+- 新建 `tests/unit/evaluation/test_rubric.py`:25 个测试
+
+### 为什么这么做
+
+E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标准资产:权重与锚点必须集中管理并校验(权重和=1 防止评分漂移),同时用客观特征工具佐证模型判断、但不替代维度分。跳过 RAG 的 Rubric 配置内联到本任务。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/evaluation/ -q` | 25 passed |
+| `uv run ruff check`(新文件) | All checks passed |
+| `uv run mypy`(新文件) | Success: no issues |
+| 全量 pytest / mypy | 8 个失败 / 38 个错误与 HEAD 基线**完全相同**,零新增 |
+
+### 学习收获
+
+- **评估契约三件套**:维度枚举、权重、锚点分属 enums.py / rubric YAML / 模型校验,变更必须三处同步 —— 用 `ensure_weights_match_enums` 回归测试锁住一致性。
+- **辅助特征与 LLM 维度分要隔离**:工具只输出客观 dict(不含 dimension_scores),测试显式断言"不替代",防止客观指标悄悄混入模型评分。
+- **存量失败要对比 HEAD 基线**:全量测试有 8 个存量失败(日志格式 + workflow 事务),用 `git stash -u` 对比确认非本次引入,避免误判为回归。
+
+### 建议的下一任务
+
+- **E-02** Evaluation Skill 与 Prompt(基于已就绪的 `evaluate_episode.md` 模板与 golden fixture)
+
+---
+
+## 2026-08-08 — E-02 Evaluation Skill 与 Prompt
+
+**任务 ID：** E-02
+**状态：** DONE
+**日期：** 2026-08-08
+
+### 做了什么
+
+- 新建 [skills/evaluator.py](../backend/app/skills/evaluator.py):`EvaluationSkill`(prompt_name=`evaluate_episode`)——加载 Rubric、计算客观特征、调用 LLM、**服务端回填** overall/need_revision、低分维度自动补 issue、evidence 限长 200、scene_number 超范围降级 null
+- 新建 [agents/evaluation.py](../backend/app/agents/evaluation.py):`EvaluationAgent`(包装 Evaluator 角色)
+- [domain/evaluation.py](../backend/app/domain/evaluation.py) 新增 `EvaluationInput`(剧本/大纲/StoryBible/特征)
+- 重写 [evaluate_episode.md](../backend/app/prompts/templates/evaluate_episode.md) v1.0→**v1.1.0**:输出与 EvaluationReport 对齐、issue 必带 evidence/diagnosis/suggestion、rubric 锚点与客观特征注入、明确不输出 overall/need_revision
+- 同步 manifest.yaml(1.1.0)、PromptLoader schema 注册(EvaluationInput)、哈希快照测试
+- 新建 `tests/unit/skills/test_evaluator.py`:8 个测试
+
+### 为什么这么做
+
+评估的"契约层"(schema/golden/prompt)已就绪但无逻辑。本任务补上逻辑层:Skill 负责组装+调用+后校验,服务端用确定性规则回填 overall/need_revision(验收核心:总分不被 LLM 自报带偏)。对 LLM 的开放域输出采取"自动补全+降级"而非"硬阻断"(低分维度漏报就补 issue,scene 超界就置 null),延续角色校验降级的经验。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/skills/test_evaluator.py` | 8 passed |
+| `uv run ruff check`(新文件) | All checks passed |
+| `uv run mypy`(新文件) | Success: no issues |
+| 全量 pytest | 8 个存量失败与 HEAD 基线一致,零新增(升级模板哈希后回到 8) |
+
+### 学习收获
+
+- **模板版本升级要三处同步**:模板 frontmatter、manifest.yaml、哈希快照测试——漏一处就报 `PromptLoadError` 或 `test_hash_snapshot_regression`。
+- **服务端回填优于信任自报**:LLM 自报 overall(77.6)与服务端重算(77.3)不同,用测试锁住"不被带偏"。评分权威必须来自确定性代码。
+- **mypy 的 `tests.*` override 失效**(unused section)导致测试参数缺注解被报错:环境配置与代码质量要分开对待,新文件先保证自身干净。
+- **Pydantic `model_dump()` 保留 UUID 类型**:序列化 JSON 必须 `model_dump(mode="json")`,否则 json.dumps 抛 TypeError。
+
+### 建议的下一任务
+
+- **E-03** Evaluation Service 与报告查询(复用 ArtifactService,`runs.py` 处理 `action=evaluate`)
+
+---
+
+## 2026-08-08 — E-03 Evaluation Service 与报告查询
+
+**任务 ID：** E-03
+**状态：** DONE
+**日期：** 2026-08-08
+
+### 做了什么
+
+- 新建 [evaluation_service.py](../backend/app/application/evaluation_service.py):`evaluate_script`(跨项目防护、幂等复用、版本绑定、追溯 outline/story_bible 上下文)、`evaluate_many`(按集排序)、`list_project_evaluations`、`get_evaluation_for_script`
+- 新建 [evaluations.py](../backend/app/api/v1/evaluations.py):GET `/projects/{id}/evaluations` + GET `/projects/{id}/evaluations/for-script/{sid}`(注册进 router)
+- [repositories/artifacts.py](../backend/app/db/repositories/artifacts.py) 新增 `find_evaluation_for_script`:按 content.script_artifact_id(JSONB)查询,修订后新剧本版本指向新 id,原稿评估不被覆盖
+- 新建 `tests/integration/api/test_evaluations.py`:7 个测试(编排/幂等/跨项目/evaluate_many/查询 API)
+
+### 为什么这么做
+
+评估的"查询与编排"是 E 阶段的后端骨架。关键设计:幂等复用复用 ArtifactStore 的 input_hash 机制(source_artifact_ids 哈希),版本绑定用 content.script_artifact_id 字段而非关系表,这样"修订后不覆盖原稿评估"天然成立。跨项目防护放在 service 层(而非 API 层),让 workflow(E-04)复用同一防线。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/integration/api/test_evaluations.py` | 7 passed |
+| `uv run ruff check`(新文件) | All checks passed |
+| `uv run mypy`(新文件) | Success: no issues |
+| 全量 pytest | 8 个存量失败与 HEAD 基线一致,零新增 |
+
+### 学习收获
+
+- **幂等不需要自造**:ArtifactStore.create 已按 input_hash(由 source_artifact_ids 计算)去重,service 只需先查"该剧本版本是否已有评估"即可天然复用——避免重复造轮子。
+- **版本绑定优先用内容字段而非关系表**:评估报告的 script_artifact_id 就在 content 里,JSONB 查询(`content["script_artifact_id"].astext`)比遍历 source_links 简单得多。
+- **集成测试用 test_engine 独立 session**:直接依赖全局 `_async_session_factory` 有 fixture 时序风险(None),从 conftest 的 test_engine 建 session 更稳。
+
+### 建议的下一任务
+
+- **E-04** Evaluation Workflow 与创建链路分支(workflow + 节点 + state + FakeLLM fixture + `runs.py` action=evaluate)
+
+---
+
+## 2026-08-08 — E-04 Evaluation Workflow 与创建链路分支
+
+**任务 ID：** E-04
+**状态：** DONE
+**日期：** 2026-08-08
+
+### 做了什么
+
+- 新建 [workflows/evaluation.py](../backend/app/workflows/evaluation.py):独立 `build_evaluation_workflow`(action=evaluate 用)
+- 新建 [nodes/evaluate_episode.py](../backend/app/workflows/nodes/evaluate_episode.py):`evaluate_episodes_node`——逐集评估、发布 SSE 事件、按 State 集号记录、低分集置 `needs_revision_decision`
+- [state.py](../backend/app/workflows/state.py):`CreationState` 增加 `evaluation_artifact_ids`、`needs_revision_decision`
+- [creation.py](../backend/app/workflows/creation.py):write_episodes 后自动进入评估,低分→暂停修订决策点,高分→finalize
+- [runs.py](../backend/app/api/v1/runs.py):`action=evaluate` 走独立评估工作流;`action=create_script` 自动评估;`needs_revision_decision`→run 转 needs_review + 事件;FakeLLM 注册 evaluate_episode
+- 修复 [workflow conftest](../backend/tests/integration/workflow/conftest.py) 的 `session.begin()` 事务冲突(**连带修复存量 6 个 test_creation_workflow 失败**)
+- 修正 [script_draft_valid.json](../backend/tests/golden/script_draft_valid.json) 的 plain_text(30字占位→完整剧本),使 DialogueRatioTool 计算合法
+- 新建测试 5 个(test_evaluation_workflow 3 + test_creation_evaluation_branch 2)
+
+### 为什么这么做
+
+让"写完后自动评估 + 低分暂停待修订"成为创建链路的一部分,同时提供独立的 action=evaluate 入口。**关键经验**:FakeLLM 的 write_episode fixture 固定 episode=1,导致多集评估集号混乱——所以集号一律取 State 的 key 而非 report.content,并让 evaluate_many 保持输入顺序(调用方负责排序)。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/integration/workflow/` | 20 passed(含存量 test_creation_workflow 修复) |
+| 全量 pytest | **434 passed / 2 failed**(仅 test_health 存量日志) |
+| `uv run ruff check app/ tests/` | All checks passed |
+| `uv run mypy app/` | 14 错误 = HEAD 14,零新增 |
+
+### 学习收获
+
+- **`session.begin()` 与 publisher autocommit 冲突是存量 6 个失败的根因**:EventPublisher 的 autocommit 执行 commit+re-begin,与嵌套事务上下文冲突。测试 fixture 用普通 session 即可。
+- **不要从 report.content 推断集号**:FakeLLM fixture 固定集号时,集号应取 State 的 key;evaluate_many 保持输入顺序,排序由调用方负责。
+- **golden 必须是合法数据**:script_draft_valid 的 plain_text 是占位符,导致 DialogueRatioTool 算出 >1 的 ratio——评估会重新 model_validate 暴露它。golden 修复遵循契约测试(固定 word_count=1250)。
+- **改 FakeLLM fixture 前想好分支策略**:高分 fixture 让现有 creation 测试走 finalize 不变;低分场景用独立测试覆盖修订决策分支。
+
+### 建议的下一任务
+
+- **E-05** 评估一致性与 Golden 回归(契约不变量 + 高/中/低 fixture + 真实 smoke)
+
+---
+
+## 2026-08-08 — E-05 评估一致性与 Golden 回归
+
+**任务 ID：** E-05
+**状态：** DONE
+**日期：** 2026-08-08
+
+### 做了什么
+
+- 新建 [evaluation_cases/](../backend/tests/golden/evaluation_cases/)：high / medium / low 三个固定剧本，含 `expected` 分支声明
+- 新建 [test_evaluation_invariants.py](../backend/tests/contract/test_evaluation_invariants.py)：15 个契约测试——报告结构完整、overall/need_revision 服务端回填、低分维度必有 issue、高分不自动补、FakeLLM 确定性、case 预期分支一致
+- 新建 [evaluate_rubric_smoke.py](../backend/scripts/evaluate_rubric_smoke.py)：真实 LLM 手工 smoke，对三个 case 重复评估输出均值/标准差/问题交集，无密钥
+- [TEST_PLAN.md](../docs/TEST_PLAN.md)：新增 §10 评估专项说明
+
+### 为什么这么做
+
+评估的"确定性"是 F 阶段(修订闭环)的前提——必须证明报告结构稳定、总分不被 LLM 带偏、低分判定可复现。用高/中/低三档固定剧本把"质量→预期分支"固化成契约,任何回归都能被 CI 捕获。真实 smoke 留在人工诊断(不进 CI)。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/contract/test_evaluation_invariants.py` | 15 passed |
+| 全量 pytest | **449 passed / 2 failed**(仅 test_health 存量日志) |
+| `uv run ruff check app/ tests/ scripts/` | All checks passed |
+| `uv run mypy app/` | 14 错误 = HEAD 14,零新增 |
+
+### 学习收获
+
+- **契约不变量是"质量分支"的保险丝**:把 case 的 expected 分支写进 fixture 文件,CI 自动验证"低分剧本必触发修订"——F 阶段选集逻辑可以直接信任评估的确定性。
+- **固定样例比动态断言更能锁回归**:FakeLLM 确定性测试(同 case 两次结果一致)比"分数范围"断言更能暴露意外的不确定性来源。
+- **真实 smoke 与自动化测试分工**:smoke 只做人工诊断(均值/标准差/问题交集),自动化只验证结构不变量——两者互补,不让真实 LLM 进 CI。
+
+### 建议的下一任务
+
+- **Phase E Exit Gate 已 PASS**。下一步:**F-01 确定性选集与 RevisionPlan**(评估→选最低分集→修订计划),随后 H-06 修订/版本/Diff 前端视图

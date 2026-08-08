@@ -1,0 +1,57 @@
+{
+  "name": "low",
+  "script_draft": {
+    "episode_number": 1,
+    "title": "平淡的一天",
+    "opening_hook": "林峰起床，洗漱，吃早餐。",
+    "scenes": [
+      {
+        "scene_number": 1,
+        "location": "家里",
+        "time_of_day": "早晨",
+        "characters": [
+          "林峰",
+          "林母"
+        ],
+        "action": "林峰安静地吃着早饭，林母在一旁收拾碗筷。",
+        "dialogue": [
+          {
+            "speaker": "林母",
+            "text": "今天去上课吗？"
+          },
+          {
+            "speaker": "林峰",
+            "text": "嗯。"
+          },
+          {
+            "speaker": "林母",
+            "text": "路上小心。"
+          },
+          {
+            "speaker": "林峰",
+            "text": "好。"
+          }
+        ]
+      },
+      {
+        "scene_number": 2,
+        "location": "教室",
+        "time_of_day": "上午",
+        "characters": [
+          "林峰"
+        ],
+        "action": "林峰在教室里坐了一上午，没有发生任何事情。",
+        "dialogue": []
+      }
+    ],
+    "ending_hook": "林峰收拾书包回家。",
+    "plain_text": "林峰起床，洗漱，吃早餐。林峰安静地吃着早饭。今天去上课吗？嗯。路上小心。好。林峰在教室里坐了一上午。林峰收拾书包回家。",
+    "word_count": 60,
+    "dialogue_ratio": 0.35,
+    "referenced_outline_artifact_id": "00000000-0000-0000-0000-000000000001"
+  },
+  "expected": {
+    "need_revision": true,
+    "dimension_ceiling": 60
+  }
+}

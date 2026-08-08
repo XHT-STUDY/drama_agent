@@ -13,6 +13,7 @@ import pytest_asyncio
 from app.agents.base import BaseAgent
 from app.application.artifact_service import ArtifactService
 from app.application.run_service import RunService
+from app.domain.evaluation import EvaluationReport
 from app.domain.outline import EpisodeOutlineSet
 from app.domain.requirement import NormalizedRequirement
 from app.domain.script import ScriptDraft
@@ -41,6 +42,8 @@ def fake_llm() -> FakeLLM:
     llm.register("outline", EpisodeOutlineSet.model_validate(_load_golden("outline_set_valid")))
     script_draft = ScriptDraft.model_validate(_load_golden("script_draft_valid"))
     llm.register("write_episode", script_draft)
+    # 评估 fixture：高分 golden（服务端回填 need_revision=False → creation 走 finalize）
+    llm.register("evaluate_episode", EvaluationReport.model_validate(_load_golden("evaluation_report_valid")))
     return llm
 
 
@@ -71,11 +74,16 @@ def event_publisher() -> EventPublisher:
 
 @pytest_asyncio.fixture
 async def db_session(test_engine: Any) -> AsyncGenerator[Any, None]:
-    """为工作流测试提供 DB 会话（事务隔离 + 测试后回滚）。"""
+    """为工作流测试提供 DB 会话。
+
+    注意：不使用 session.begin() 包裹——EventPublisher 的 autocommit
+    会执行 commit + re-begin，与嵌套事务上下文冲突
+    （此前导致 "Can't operate on closed transaction" 存量失败）。
+    """
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session, session.begin():
+    async with factory() as session:
         yield session
         await session.rollback()
 

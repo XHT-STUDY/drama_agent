@@ -48,12 +48,12 @@ prompts:
 
   # ---- 剧集评估 ----
   - name: evaluate_episode
-    version: "1.0.0"
+    version: "1.1.0"
     input_schema: EvaluationInput
     output_schema: EvaluationReport
     owner: evaluator
     template: evaluate_episode.md
-    changelog: "初始版本：九维度评估单集剧本，输出评分、诊断与改进建议"
+    changelog: "v1.1: 输出与 EvaluationReport 对齐，issue 必带 evidence/diagnosis/suggestion 且定位场景，overall/need_revision 由服务端回填，注入 rubric 锚点与客观特征"
 
   # ---- 剧集摘要 ----
   - name: summarize_episode

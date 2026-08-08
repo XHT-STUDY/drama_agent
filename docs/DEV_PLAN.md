@@ -2918,11 +2918,11 @@ Prompt 必须区分：
 | D-03 | Embedder 与 pgvector | 0.75d | D-02 | TODO | - | - |
 | D-04 | Retriever 与 Trace | 1d | D-03 | TODO | - | - |
 | D-05 | 创作链路接入 RAG | 1d | D-04,C-07 | TODO | - | - |
-| E-01 | Rubric 与确定性指标 | 0.75d | D-01,A-03 | TODO | - | - |
-| E-02 | Evaluation Skill | 1d | E-01,C-05,D-04 | TODO | - | - |
-| E-03 | Evaluation Service/API | 0.75d | E-02,B-04 | TODO | - | - |
-| E-04 | Evaluation Workflow | 0.75d | E-03,C-07 | TODO | - | - |
-| E-05 | 评估 Golden 回归 | 0.75d | E-04 | TODO | - | - |
+| E-01 | Rubric 与确定性指标 | 0.75d | D-01,A-03 | DONE | AI Agent | 25 tests passed, 新增文件 Ruff/mypy clean; knowledge/rubric/mvp_v1.yaml + Rubric 模型(权重和=1/9维/锚点校验) + load_rubric + ScriptStructureTool; 权重与 enums 一致性测试; 存量失败与 HEAD 基线相同 |
+| E-02 | Evaluation Skill | 1d | E-01,C-05,D-04 | DONE | AI Agent | 8 tests passed, Ruff/mypy clean; EvaluationSkill(evaluate_episode)+EvaluationAgent+EvaluationInput; 服务端回填 overall/need_revision, 低分维度自动补 issue, evidence 限长/scene 降级; prompt 升 v1.1.0 + manifest/哈希快照同步; 存量失败与 HEAD 基线一致 |
+| E-03 | Evaluation Service/API | 0.75d | E-02,B-04 | DONE | AI Agent | 7 tests passed, Ruff/mypy clean; EvaluationService(evaluate_script/many, 跨项目防护, 幂等复用, 版本绑定)+ GET /evaluations + GET /evaluations/for-script; repository 按 content.script_artifact_id 查询; 存量失败与 HEAD 基线一致 |
+| E-04 | Evaluation Workflow | 0.75d | E-03,C-07 | DONE | AI Agent | 5 new tests passed; evaluation_workflow + evaluate_episodes 节点 + CreationState 扩展 + creation 自动评估分支(低分→needs_revision_decision) + runs action=evaluate + FakeLLM fixture; 修复 workflow conftest 事务冲突(存量 6 失败→0); 全量 434 passed/2 存量失败, Ruff clean, mypy app/ 与 HEAD 持平 |
+| E-05 | 评估 Golden 回归 | 0.75d | E-04 | DONE | AI Agent | 15 tests passed, Ruff/mypy clean; evaluation_cases/{high,medium,low} + test_evaluation_invariants(结构/服务端回填/低分补issue/FakeLLM确定性) + evaluate_rubric_smoke.py(真实LLM手工smoke,无密钥) + TEST_PLAN.md §10 |
 | F-01 | 选集与 RevisionPlan | 0.75d | E Gate | TODO | - | - |
 | F-02 | Revision Skill | 1d | F-01 | TODO | - | - |
 | F-03 | Continuity Validator | 1d | F-02,C-06 | TODO | - | - |
@@ -2959,7 +2959,7 @@ Prompt 必须区分：
 | B | 2026-07-23 | 2026-07-23 | PASS | AI Agent | 129 tests; 6 场景 Exit Gate 测试就绪; PostgreSQL 不可用时代码级验证通过 | Docker PostgreSQL 不可用，Exit Gate 集成测试待 DB 就绪后执行 |
 | C | - | 2026-07-25 | PASS | AI Agent | pytest 391/391 passed, Ruff clean; 8 Exit Gate C tests (全链路 FakeLLM 驱动), 5/5 验收条件通过 | 无 |
 | D | - | - | NOT RUN | - | - | - |
-| E | - | - | NOT RUN | - | - | - |
+| E | - | 2026-08-08 | PASS | AI Agent | 前 3 集生成合法报告; overall/need_revision 由服务端规则得出; 低分维度自动补 issue; Evaluation Artifact 绑定剧本版本; FakeLLM 全链路(449 tests)+ 真实模型手工 smoke 脚本就绪; 全量 2 存量失败(日志) | 阶段 H-06 需等 F Gate |
 | F | - | - | NOT RUN | - | - | - |
 | G | - | - | NOT RUN | - | - | - |
 | H | - | - | NOT RUN | - | - | - |

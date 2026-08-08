@@ -16,7 +16,6 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
 
 from app.core.config import Settings
 from app.db.models.workflow_event import WorkflowEvent

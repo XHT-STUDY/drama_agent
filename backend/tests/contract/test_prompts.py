@@ -768,8 +768,8 @@ class TestRealManifest:
                 "outline", "1.0.0").template_content),
             "write_episode:1.0.0": _sha256(loader.get(
                 "write_episode", "1.0.0").template_content),
-            "evaluate_episode:1.0.0": _sha256(loader.get(
-                "evaluate_episode", "1.0.0").template_content),
+            "evaluate_episode:1.1.0": _sha256(loader.get(
+                "evaluate_episode", "1.1.0").template_content),
             "summarize_episode:1.0.0": _sha256(loader.get(
                 "summarize_episode", "1.0.0").template_content),
         }

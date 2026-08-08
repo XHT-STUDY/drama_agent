@@ -1,4 +1,4 @@
-"""剧本评估模型 — EvaluationIssue 与 EvaluationReport（§5.8）。
+"""剧本评估模型 — EvaluationIssue 与 EvaluationReport（§5.8, Phase E）。
 
 评估服务端负责：
 - 计算 weighted overall_score（不采用 LLM 自报总分）；
@@ -6,6 +6,7 @@
 - 记录 rubric_version 以支持评估标准演进。
 """
 
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -15,6 +16,30 @@ from app.domain.enums import (
     EvaluationDimension,
     Severity,
 )
+from app.domain.script import ScriptDraft
+
+
+class EvaluationInput(BaseModel):
+    """Evaluation Skill 的输入模型 (E-02)。
+
+    封装单集剧本、本集大纲、StoryBible 与可选客观特征。
+    评估器不注入其他集的评估结论。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    episode_number: int = Field(..., description="被评估的集号", ge=1)
+    script_draft: ScriptDraft = Field(..., description="待评估的单集剧本")
+    episode_outline: dict[str, Any] = Field(
+        default_factory=dict, description="本集大纲（EpisodeOutline 的 dict 表示）"
+    )
+    story_bible: dict[str, Any] = Field(
+        default_factory=dict, description="StoryBible 的 dict 表示（必要设定）"
+    )
+    script_features: dict[str, Any] = Field(
+        default_factory=dict,
+        description="客观辅助特征（场景数/对白占比/钩子等），可预先计算传入",
+    )
 
 
 class EvaluationIssue(BaseModel):

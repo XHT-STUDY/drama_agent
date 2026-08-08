@@ -67,7 +67,12 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
 
     await publisher.publish(
         db, run_id=run_id, event_type="node.started",
-        payload={"node": "write_episodes", "start_episode": start_ep, "script_count": script_count, "progress": 0.40},
+        payload={
+            "node": "write_episodes",
+            "start_episode": start_ep,
+            "script_count": script_count,
+            "progress": 0.40,
+        },
         autocommit=True,
     )
     progress("write_episodes", "started", 0.40)

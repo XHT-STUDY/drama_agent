@@ -81,6 +81,31 @@ class ArtifactRepository(BaseRepository):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def find_evaluation_for_script(
+        self,
+        project_id: uuid.UUID,
+        script_artifact_id: uuid.UUID,
+    ) -> Artifact | None:
+        """查找绑定到指定 Script 版本的评估报告 (E-03)。
+
+        评估报告 content.script_artifact_id 记录被评估的剧本版本，
+        通过 JSONB 字段匹配返回最新 valid 版本。修订后产生新剧本版本
+        时会指向新的 script_artifact_id，因此原稿评估不会被覆盖。
+        """
+        stmt: Any = (
+            select(Artifact)
+            .where(
+                Artifact.project_id == project_id,
+                Artifact.type == "evaluation_report",
+                Artifact.status == "valid",
+                Artifact.content["script_artifact_id"].astext == str(script_artifact_id),
+            )
+            .order_by(Artifact.version.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def list_by_project(
         self,
         project_id: uuid.UUID,

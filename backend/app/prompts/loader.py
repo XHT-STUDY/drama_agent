@@ -87,7 +87,7 @@ def _auto_register_domain_schemas() -> None:
         EvaluationDimension,
         ProjectStatus,
     )
-    from app.domain.evaluation import EvaluationIssue, EvaluationReport  # noqa: F401
+    from app.domain.evaluation import EvaluationInput, EvaluationIssue, EvaluationReport  # noqa: F401
     from app.domain.outline import EpisodeOutline, EpisodeOutlineSet, OutlineInput  # noqa: F401
     from app.domain.requirement import NeedsUserInput, NormalizedRequirement, RequirementInput  # noqa: F401
     from app.domain.revision import RevisionOperation, RevisionPlan  # noqa: F401
@@ -109,6 +109,7 @@ def _auto_register_domain_schemas() -> None:
     register_schema("DialogueLine", DialogueLine)
     register_schema("EpisodeWriterInput", EpisodeWriterInput)
     register_schema("ScriptDraft", ScriptDraft)
+    register_schema("EvaluationInput", EvaluationInput)
     register_schema("EvaluationIssue", EvaluationIssue)
     register_schema("EvaluationReport", EvaluationReport)
     register_schema("RevisionOperation", RevisionOperation)

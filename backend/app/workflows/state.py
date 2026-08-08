@@ -33,10 +33,16 @@ class CreationState(TypedDict, total=False):
     """分集大纲 Artifact UUID 字符串。"""
     script_artifact_ids: dict[str, str]
     """集号 → ScriptDraft Artifact UUID 字符串映射。例: {"1": "uuid1", "2": "uuid2"}。"""
+    evaluation_artifact_ids: dict[str, str]
+    """集号 → EvaluationReport Artifact UUID 字符串映射（Phase E）。例: {"1": "uuidE1"}。"""
 
     # ---- 连续性（轻量文本，非全文）----
     continuity_state_text: str
     """当前连续性状态的文本快照，由 ContinuityManager 生成。仅存文本摘要，非完整结构。"""
+
+    # ---- 评估与修订决策 ----
+    needs_revision_decision: bool
+    """3 集评估完成后为 True：存在需修订的集，等待修订决策（Phase F 处理）。"""
 
     # ---- 流程控制 ----
     current_episode: int
