@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     llm_planner_model: str = ""
     llm_writer_model: str = ""
     llm_evaluator_model: str = ""
+    llm_reviser_model: str = ""
     llm_summarizer_model: str = ""
 
     # ---- Embedding ----

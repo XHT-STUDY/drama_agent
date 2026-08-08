@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from app.domain.continuity import (
@@ -23,6 +24,8 @@ from app.domain.continuity import (
     StoryLoop,
     TimelineEvent,
 )
+from app.domain.revision import ContinuityViolation, ContinuityWarning
+from app.domain.script import ScriptDraft
 from app.domain.story_bible import StoryBible
 
 logger = logging.getLogger(__name__)
@@ -326,3 +329,278 @@ class ContinuityManager:
                 for loop in state.resolved_loops
             ],
         }
+
+    # ---- 连续性规则检查（F-03） ----
+
+    @staticmethod
+    def run_rule_checks(
+        *,
+        episode_number: int,
+        script_draft: ScriptDraft,
+        original_script_draft: ScriptDraft | None,
+        episode_outline: dict[str, Any],
+        story_bible: dict[str, Any],
+        locked_facts: list[str],
+    ) -> tuple[list[ContinuityViolation], list[ContinuityWarning], list[str]]:
+        """运行确定性规则检查（F-03 规则优先原则）。
+
+        三类规则:
+        1. locked_facts_preserved —— 仅当锁定事实在原稿中出现时，要求其
+           在新稿中仍然保留（防止修订误删既有事实，容忍轻微措辞改变）;
+        2. required_events_present —— 本集大纲 key_events 必须体现在新稿中;
+        3. required_characters_present —— 本集大纲 required_characters
+           必须在新稿场景中出场。
+
+        Args:
+            episode_number: 被检查的集号
+            script_draft: 修订后的新稿
+            original_script_draft: 修订前的原稿（None 时跳过锁定事实回归检查）
+            episode_outline: 本集大纲 dict
+            story_bible: StoryBible dict（角色 ID→名称）
+            locked_facts: 本次修订必须遵守的锁定事实
+
+        Returns:
+            (violations, warnings, checks_run)
+            violations 均为 source="rule"；任何规则违规都阻断（检查失败）。
+        """
+        violations: list[ContinuityViolation] = []
+        warnings: list[ContinuityWarning] = []
+        checks_run: list[str] = []
+
+        revised_text = script_draft.plain_text
+        original_text = original_script_draft.plain_text if original_script_draft else ""
+
+        # 1. 锁定事实回归检查
+        checks_run.append("locked_facts_preserved")
+        if original_script_draft is not None:
+            for fact in locked_facts:
+                if not fact:
+                    continue
+                in_original, _ = fact_preserved_in_text(fact, original_text)
+                if not in_original:
+                    # 原稿就没有该事实 → 本集修订不涉及，规则不判缺失
+                    continue
+                in_revised, coverage = fact_preserved_in_text(fact, revised_text)
+                if not in_revised:
+                    violations.append(
+                        ContinuityViolation(
+                            kind="locked_fact_missing",
+                            target=fact,
+                            expected="原稿中已有的锁定事实应在修订稿中保留",
+                            actual=f"修订稿中未找到该事实（内容字符覆盖率 {coverage:.0%}）",
+                            evidence=_script_excerpt_for(revised_text, fact),
+                            source="rule",
+                        )
+                    )
+
+        # 2. 大纲关键事件检查
+        checks_run.append("required_events_present")
+        key_events = episode_outline.get("key_events") or []
+        for event in key_events:
+            if not event:
+                continue
+            in_revised, coverage = fact_preserved_in_text(str(event), revised_text)
+            if not in_revised:
+                violations.append(
+                    ContinuityViolation(
+                        kind="required_event_missing",
+                        target=str(event),
+                        expected="本集大纲声明的关键事件应体现在修订稿中",
+                        actual=f"修订稿中未找到该事件（内容字符覆盖率 {coverage:.0%}）",
+                        evidence=_script_excerpt_for(revised_text, str(event)),
+                        source="rule",
+                    )
+                )
+
+        # 3. 大纲必需角色检查
+        checks_run.append("required_characters_present")
+        scene_characters: set[str] = {
+            c for scene in script_draft.scenes for c in scene.characters
+        }
+        required_ids = episode_outline.get("required_characters") or []
+        for char_id in required_ids:
+            if not char_id:
+                continue
+            name = character_name_by_id(story_bible, str(char_id))
+            if name is None:
+                warnings.append(
+                    ContinuityWarning(
+                        kind="required_character_missing",
+                        target=str(char_id),
+                        message=(
+                            f"无法将角色 ID {char_id} 映射为姓名，"
+                            "跳过确定性出场检查（由语义检查兜底）"
+                        ),
+                        source="rule",
+                    )
+                )
+                continue
+            if name not in scene_characters:
+                violations.append(
+                    ContinuityViolation(
+                        kind="required_character_missing",
+                        target=str(char_id),
+                        expected=f"大纲要求的角色 {name}（{char_id}）应在修订稿中出场",
+                        actual=f"修订稿场景中未出现角色「{name}」",
+                        evidence="场景出场角色: " + ("、".join(sorted(scene_characters)) or "（无）"),
+                        source="rule",
+                    )
+                )
+
+        if violations:
+            logger.warning(
+                "第 %d 集规则检查发现 %d 个违规（含 %d 个锁定事实回归）",
+                episode_number, len(violations),
+                sum(1 for v in violations if v.kind == "locked_fact_missing"),
+            )
+        return violations, warnings, checks_run
+# 连续性规则检查（F-03，确定性纯逻辑）
+# ========================================================================
+#
+# 规则检查只做"确定能判"的判断，优先于语义检查（规则优先原则）:
+# - 锁定事实回归: 原稿中存在的事实，新稿不得移除（容忍轻微措辞改变）;
+# - 大纲关键事件: 本集大纲声明的 key_events 必须体现在新稿中;
+# - 大纲必需角色: 本集大纲声明的 required_characters 必须出场。
+# 反转 / 状态变化 / 伏笔一致性等需要语义判断的部分，由独立 Skill 检查。
+
+# 内容字符覆盖率阈值（低于视为事实丢失）。
+# 0.5 意味着允许接近一半的措辞调整，避免"轻微措辞改变被误判为事实丢失"。
+_CONTENT_CHAR_MIN_COVERAGE = 0.5
+
+# 中文停用词（不参与匹配的内容字符提取）。
+# 只收录纯虚词 / 代词——避免误伤常见复合词（如「能」在「超能力」「能力」中，
+# 「要」在「重要」「要求」中，「有」在「有效」「所有」中），
+# 否则会把轻微措辞改变误判为事实丢失。
+_CHECK_STOPWORDS = frozenset(
+    {
+        "是", "的", "了", "在", "和", "与", "及", "或", "把", "被", "让",
+        "对", "从", "向", "而", "但", "却", "并", "也", "都", "就", "才",
+        "只", "还", "又", "再", "这", "那", "你", "我", "他", "她", "它",
+        "不", "没", "个", "之", "其", "所", "着", "过",
+    }
+)
+
+
+def normalize_check_text(text: str) -> str:
+    """去除空白与标点，仅保留汉字/字母/数字，用于连续性模糊匹配。
+
+    轻微措辞改变（加入标点、调整虚词）不影响匹配。
+
+    Args:
+        text: 原文
+
+    Returns:
+        归一化后的匹配文本
+    """
+    return re.sub(r"[\s\W_]+", "", text, flags=re.UNICODE)
+
+
+def extract_content_chars(text: str) -> str:
+    """提取用于匹配的内容字符（去除停用词后的字符序列）。
+
+    中文无现成分词，这里按字符粒度过滤停用词——对"轻微措辞改变"
+    足够宽容（换词不换义的虚词不参与覆盖度计算）。
+
+    Args:
+        text: 原文
+
+    Returns:
+        保序的内容字符序列
+    """
+    normalized = normalize_check_text(text)
+    return "".join(ch for ch in normalized if ch not in _CHECK_STOPWORDS)
+
+
+def fact_preserved_in_text(fact: str, text: str) -> tuple[bool, float]:
+    """判断事实是否保留在剧本文本中（容忍轻微措辞改变）。
+
+    判定规则（由宽松到严格）:
+    1. 归一化后整段子串命中 → (True, 1.0)；
+    2. 内容字符覆盖率 >= 阈值 → (True, coverage)；
+    3. 否则 → (False, coverage)。
+
+    内容字符覆盖率 = 文本中出现的"事实内容字符" / 事实全部内容字符。
+    本函数只判断"是否仍出现"，不判断"是否被语义反转"——
+    反转 / 矛盾由语义检查（独立 Skill）发现。
+
+    Args:
+        fact: 待检查的事实 / 事件描述
+        text: 剧本文本（plain_text）
+
+    Returns:
+        (是否保留, 内容字符覆盖率)
+    """
+    fact_normalized = normalize_check_text(fact)
+    if not fact_normalized:
+        # 空事实无可判 → 视为保留（由语义层兜底），避免误判
+        return True, 1.0
+
+    text_normalized = normalize_check_text(text)
+    if fact_normalized in text_normalized:
+        return True, 1.0
+
+    fact_chars = extract_content_chars(fact)
+    if not fact_chars:
+        # 全部由停用词构成的事实无法确定性判定 → 视为保留
+        return True, 1.0
+
+    text_chars = set(text_normalized)
+    hit = sum(1 for ch in fact_chars if ch in text_chars)
+    coverage = hit / len(fact_chars)
+    return coverage >= _CONTENT_CHAR_MIN_COVERAGE, coverage
+
+
+def character_name_by_id(story_bible: dict[str, Any], character_id: str) -> str | None:
+    """通过 StoryBible 将角色 ID 映射为角色名。
+
+    Args:
+        story_bible: StoryBible 的 dict 表示
+        character_id: 角色 ID（如 char_protagonist_001）
+
+    Returns:
+        角色名；找不到映射时返回 None。
+    """
+    profiles: list[dict[str, Any]] = []
+    for key in ("protagonist", "antagonist"):
+        ch = story_bible.get(key)
+        if ch and isinstance(ch, dict):
+            profiles.append(ch)
+    supporting = story_bible.get("supporting_characters") or []
+    profiles.extend(ch for ch in supporting if isinstance(ch, dict))
+
+    for ch in profiles:
+        if ch.get("character_id") == character_id:
+            name = ch.get("name")
+            if name:
+                return str(name)
+    return None
+
+
+def _script_excerpt_for(text: str, target: str) -> str:
+    """从剧本文本中提取与目标相关的简短片段作为违规证据。
+
+    优先取覆盖目标内容字符的行；无命中时回退到首行前 80 字。
+
+    Args:
+        text: 剧本文本
+        target: 目标事实 / 事件
+
+    Returns:
+        用于证据的文本片段（限长）
+    """
+    fact_chars = set(extract_content_chars(target))
+    best = ""
+    best_hit = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        hit = sum(1 for ch in fact_chars if ch in line)
+        if hit > best_hit:
+            best = line
+            best_hit = hit
+            if fact_chars and hit >= len(fact_chars):
+                break
+    if not best:
+        best = text.strip()[:80]
+    return best[:120]

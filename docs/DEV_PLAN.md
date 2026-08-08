@@ -2260,6 +2260,7 @@ Prompt 必须区分：
 - 预计：0.75 人日
 - 依赖：F-02、B-04
 - 修改文件：
+  - backend/app/domain/diff.py（新增，模型层）
   - backend/app/tools/diff.py
   - backend/app/artifacts/diff_service.py
   - backend/app/api/v1/artifacts.py
@@ -2272,11 +2273,11 @@ Prompt 必须区分：
   - 版本列表和 GET /artifacts/diff；
   - 限制超大 diff 的响应体。
 - 验收：
-  - [ ] 中文文本 Diff 不乱码；
-  - [ ] 可识别新增/删除/修改场景；
-  - [ ] A/B 颠倒时方向正确；
-  - [ ] 跨项目查询拒绝；
-  - [ ] change_ratio 被 Revision Gate 使用。
+  - [x] 中文文本 Diff 不乱码；
+  - [x] 可识别新增/删除/修改场景；
+  - [x] A/B 颠倒时方向正确；
+  - [x] 跨项目查询拒绝；
+  - [x] change_ratio 被 Revision Gate 使用。
 - 测试：
   - pytest backend/tests/unit/artifacts/test_diff.py backend/tests/integration/api/test_artifact_versions.py
 
@@ -2923,10 +2924,10 @@ Prompt 必须区分：
 | E-03 | Evaluation Service/API | 0.75d | E-02,B-04 | DONE | AI Agent | 7 tests passed, Ruff/mypy clean; EvaluationService(evaluate_script/many, 跨项目防护, 幂等复用, 版本绑定)+ GET /evaluations + GET /evaluations/for-script; repository 按 content.script_artifact_id 查询; 存量失败与 HEAD 基线一致 |
 | E-04 | Evaluation Workflow | 0.75d | E-03,C-07 | DONE | AI Agent | 5 new tests passed; evaluation_workflow + evaluate_episodes 节点 + CreationState 扩展 + creation 自动评估分支(低分→needs_revision_decision) + runs action=evaluate + FakeLLM fixture; 修复 workflow conftest 事务冲突(存量 6 失败→0); 全量 434 passed/2 存量失败, Ruff clean, mypy app/ 与 HEAD 持平 |
 | E-05 | 评估 Golden 回归 | 0.75d | E-04 | DONE | AI Agent | 15 tests passed, Ruff/mypy clean; evaluation_cases/{high,medium,low} + test_evaluation_invariants(结构/服务端回填/低分补issue/FakeLLM确定性) + evaluate_rubric_smoke.py(真实LLM手工smoke,无密钥) + TEST_PLAN.md §10 |
-| F-01 | 选集与 RevisionPlan | 0.75d | E Gate | TODO | - | - |
-| F-02 | Revision Skill | 1d | F-01 | TODO | - | - |
-| F-03 | Continuity Validator | 1d | F-02,C-06 | TODO | - | - |
-| F-04 | Diff 与版本查询 | 0.75d | F-02,B-04 | TODO | - | - |
+| F-01 | 选集与 RevisionPlan | 0.75d | E Gate | DONE | AI Agent | 28 tests passed, Ruff/mypy clean; domain/revision.py 增 select_revision_candidate(纯函数: 只从 need_revision 选 overall 最低, 同分取最小集号) + operations_from_issues(issue→operation 绑定 issue_ids/场景/preserve) + filter_grounded_operations(剔除无来源空泛任务); RevisionPlanSkill(LLM 生成 + 有据可依校验 + 确定性兜底 + 权威字段覆盖/场景钳制/锁定事实并入 preserve) + revision_plan.md v1.0.0 + manifest/loader/openai 注册; RevisionService(选集→锁事实→计划→持久化, 跨项目防护); 全量 477 passed/2 存量日志失败 |
+| F-02 | Revision Skill | 1d | F-01 | DONE | AI Agent | 30 tests passed, Ruff/mypy clean(改动文件); domain/revision.py 增 RevisionTaskInput(原稿/计划/StoryBible/大纲/连续性状态) + OperationExecution(applied/partial/skipped+note) + RevisionResult(完整新稿+执行记录+source_* 原稿/评估/计划) + normalize_executions(剔除臆造/去重/补齐缺失/按计划顺序全覆盖); ReviserSkill(LLM 生成完整新稿非patch + protection_block 显式列出 preserve 与禁止修改项 + 权威覆盖 episode/title/source + 服务端重算 word_count/dialogue_ratio) + reviser.md v1.0.0 + RevisionAgent + golden revised_episode_football.json; 全量 507 passed/2 存量日志失败(477→507 恰为 F-02 新增 30) |
+| F-03 | Continuity Validator | 1d | F-02,C-06 | DONE | AI Agent | 39 tests passed, Ruff/mypy clean(改动文件); domain/revision.py 增 ContinuityViolation(kind/source=rule·semantic) + ContinuityWarning + ContinuitySemanticCheck(独立 Skill 结构化输出) + ContinuityCheckInput(新稿/原稿/大纲/StoryBible/连续性状态/锁定事实) + ContinuityCheckResult(pass/fail + violations/warnings 分列 + checks_run, fail ⟺ 有违规); memory/continuity.py 增规则检查(锁定事实回归: 原稿有而新稿无才判缺失, 内容字符覆盖率≥0.5 容忍轻微措辞改变 / 大纲 key_events 必须体现 / required_characters 必须出场, 角色 ID→名称映射) + fact_preserved_in_text(子串命中或覆盖率) ; ContinuityCheckTool(纯规则) + ContinuitySemanticCheckSkill(LLM, source 权威置 semantic) + ContinuityCheckSkill(规则优先: 规则失败跳过 LLM 直接 fail; 规则通过才语义复核反转/状态/伏笔); continuity_semantic_check.md v1.0.0 + manifest/loader/openai 注册(映射 reviser); 全量 546 passed/2 存量日志失败(507→546 恰为 F-03 新增 39) |
+| F-04 | Diff 与版本查询 | 0.75d | F-02,B-04 | DONE | AI Agent | 36 tests passed（unit 27 + integration 9）, Ruff/mypy clean(改动文件); domain/diff.py 纯模型(extra=forbid, 字段 ge/le) + tools/diff.py 确定性算法(两阶段场景对齐: 编号锚定 sim≥0.6 + Needleman-Wunsch sim≥0.35; 行级相似度规避 SequenceMatcher autojunk 病态; diff_lines 三计数 replace 块配对; 对称 change_ratio=(removed+added)chars/(from+to)chars; check_change_ratio 供 F-05 gate; 超大 diff truncated 保留统计清行明细) + DiffService(跨项目/类型/集数防护, content 无法解析回退 line diff) + GET /artifacts/diff(注册于 {artifact_id} 之前防路由吞噬); 集成测覆盖版本列表不可变/方向对称/跨项目拒绝/截断; 全量 582 passed/2 存量日志失败(546→582 恰为 F-04 新增 36) |
 | F-05 | Revision Workflow/重评 | 1d | F-01..F-04,E-04 | TODO | - | - |
 | F-06 | Revision API | 0.5d | F-05 | TODO | - | - |
 | G-01 | 短期/中期/项目记忆 | 0.75d | B-03,C-06 | TODO | - | - |

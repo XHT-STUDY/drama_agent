@@ -1908,3 +1908,205 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 建议的下一任务
 
 - **Phase E Exit Gate 已 PASS**。下一步:**F-01 确定性选集与 RevisionPlan**(评估→选最低分集→修订计划),随后 H-06 修订/版本/Diff 前端视图
+
+---
+
+## 2026-08-08 — F-01 确定性选集与 RevisionPlan
+
+**任务 ID：** F-01
+**状态：** DONE
+**日期：** 2026-08-08
+
+### 做了什么
+
+- [domain/revision.py](../backend/app/domain/revision.py)：新增三个纯函数 + `RevisionPlanInput` 输入模型
+  - `select_revision_candidate(reports)`：确定性选集——只从 `need_revision=true` 中选 `overall_score` 最低者，同分取 `episode_number` 最小者；无待修订集返回 None。**不调用 LLM**
+  - `operations_from_issues(issues, locked_facts)`：issue→operation 确定性映射（instruction=issue.suggestion，绑定 issue_ids/目标场景/preserve=锁定事实）
+  - `filter_grounded_operations(ops, report)`：剔除无来源 issue 的空泛任务（空 issue_ids 或引用报告外 issue_id 一律剔除）
+- [skills/revision_plan.py](../backend/app/skills/revision_plan.py)：`RevisionPlanSkill`——LLM 生成计划后做五重后校验：①有据可依过滤 ②LLM 全部失实时确定性兜底 ③scene_number 超范围降级 null ④锁定事实并入每个 operation 的 preserve ⑤权威字段覆盖（episode/source ids/locked_facts/max_change_ratio 不信任 LLM 自报）
+- [prompts/templates/revision_plan.md](../backend/app/prompts/templates/revision_plan.md) v1.0.0 + [manifest.yaml](../backend/app/prompts/manifest.yaml) + [loader.py](../backend/app/prompts/loader.py) 注册 RevisionPlanInput；[openai_compatible.py](../backend/app/llm/openai_compatible.py) 映射 `revision_plan→reviser`
+- [application/revision_service.py](../backend/app/application/revision_service.py)：`build_revision_plan` 编排——解析报告→确定性选集→跨项目防护→追溯原稿与 StoryBible 锁定事实→Skill 生成→持久化 revision_plan Artifact（input_hash 幂等兜底）；`list_project_revision_plans` 查询
+- 测试：[test_selector.py](../backend/tests/unit/revision/test_selector.py)（8 个）+ [test_plan.py](../backend/tests/unit/revision/test_plan.py)（20 个），含三集同分取最小集号、无来源任务剔除、权威字段覆盖、场景钳制、LLM 失实兜底、LLM 失败抛出
+
+### 为什么这么做
+
+- **选集必须确定性、零 LLM**：修订是"改哪一集"的决策，如果由 LLM 决定会引入不确定性且无法审计；纯函数可单测可复现，也满足 TEST_PLAN 场景 3（三集同分选最小集号）。
+- **计划必须"有据可依"**：LLM 开放域输出可能凭空编任务。验收要求"不允许无来源 issue 的空泛任务"——用 `filter_grounded_operations` 做硬校验，LLM 全部失实时回退到确定性 `operations_from_issues`，保证计划永远有依据。
+- **锁定事实是硬约束**：即使 LLM 没把 locked_facts 写进 preserve，也要兜底并入每个 operation，避免修订破坏既有设定。
+- **权威字段服务端覆盖**：与 E 阶段一致——episode/source/locked_facts/max_change_ratio 由服务端决定，LLM 自报一律覆盖，保证 Artifact 链可追溯。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/revision/` | 28 passed |
+| 全量 pytest（-m "not smoke"） | **477 passed / 2 failed**（仅 test_health 存量日志，零新增） |
+| `uv run ruff check app/ tests/` | All checks passed |
+| `uv run mypy`（新增 5 个文件） | 零错误 |
+
+### 学习收获
+
+- **LLM 生成 + 确定性兜底的双保险模式可复用**：开放域输出（计划/诊断）先用硬规则校验，全失效时用确定性生成兜底——系统永远不产出"看似合理但无依据"的产物。
+- **纯函数与 Skill 分层让验收可测**：`select_revision_candidate` 等决策函数放 domain 层纯函数，测试无需任何 mock；Skill 只做 LLM 组装与后校验。选择逻辑"不调用 LLM"这条验收因此可以直接用单测证明。
+- **FakeLLM fixture 只需覆盖合法路径**：失实/失败路径用 fault injection（`inject_fault(1,"timeout")`）和"引用不存在的 issue_id"构造，不必为每个分支准备一个 fixture。
+- **preserve 兜底合并比依赖 LLM 更稳**：prompt 里要求写 preserve 可能被忽略，服务端统一合并锁定事实进每个 operation 才是可验证的保证。
+
+### 建议的下一任务
+
+- **F-02 Revision Skill 与局部改写**（输入原稿/计划/StoryBible/ContinuityState/大纲，输出完整新 ScriptDraft，服务端重算文本指标），随后 F-03 Continuity Validator
+
+## 2026-08-08 — F-02 Revision Skill 与局部改写
+
+**任务 ID：** F-02
+**状态：** DONE
+**日期：** 2026-08-08
+
+### 做了什么
+
+- [domain/revision.py](../backend/app/domain/revision.py)：新增 F-02 模型与纯函数
+  - `RevisionTaskInput`：修订任务输入——原稿 ScriptDraft、修订计划、StoryBible、当前集大纲、ContinuityState 文本快照、修订计划 Artifact ID
+  - `OperationExecution`：单操作执行记录（`status: applied / partial / skipped` + note），对应验收"每个 operation 有执行结果或未执行说明"
+  - `RevisionResult`：**完整新稿**（非 patch）+ operation 执行记录 + `source_script/evaluation/revision_plan_artifact_id`（保证"新稿 source 包含原稿、评估、计划"）
+  - `normalize_executions(plan_ops, llm_execs)`：执行记录规范化纯函数——剔除臆造 operation_id、同 ID 去重保首条、缺失补齐 skipped 说明、按计划顺序全覆盖输出
+- [skills/reviser.py](../backend/app/skills/reviser.py)：`ReviserSkill`——渲染 prompt 时用 `_build_protection_block` **显式列出 preserve 与禁止修改项**（本集标识 / 锁定事实 / 各 operation preserve / 角色 forbidden_changes）；LLM 生成完整新稿后做权威覆盖（episode_number / title / referenced_outline_artifact_id / source_* 不信任 LLM 自报）+ 服务端重算 word_count / dialogue_ratio + 执行记录规范化
+- [agents/revision.py](../backend/app/agents/revision.py)：`RevisionAgent.revise_episode`——包装 Skill 调用，构造 RevisionTaskInput
+- [prompts/templates/reviser.md](../backend/app/prompts/templates/reviser.md) v1.0.0：要求输出完整新稿不输出 patch、显式覆盖 protection_block、operation_executions 必须一一覆盖计划；manifest / loader 注册 RevisionTaskInput/OperationExecution/RevisionResult
+- LLM 路由：[openai_compatible.py](../backend/app/llm/openai_compatible.py) 映射 `revise_episode→reviser` 并补 `reviser→llm_reviser_model`；[config.py](../backend/app/core/config.py) + [.env.example](../.env.example) 新增 `LLM_REVISER_MODEL`
+- golden：[revised_episode_football.json](../backend/tests/golden/revised_episode_football.json)——第一集修订稿（第一场新增陈浩对峙，冲突更强）
+- 测试：[test_reviser.py](../backend/tests/unit/skills/test_reviser.py)（30 个）：normalize_executions 纯函数 6 个、Schema 6 个、protection_block 4 个、ReviserSkill 13 个、RevisionAgent 集成 1 个
+
+### 为什么这么做
+
+- **修订必须输出完整新稿，而非 patch**：验收明确"不输出原地 patch"。完整新稿让 Artifact 不可变版本模型自然成立——新稿是全新 Artifact，原稿不被原地覆盖；patch 则需要 diff 应用逻辑且难以回滚。
+- **"原稿 content 完全不变"靠结构保证**：Skill 从不修改 `task_input.script_draft`，只在 LLM 输出的新稿副本上做权威覆盖；用"输入模型不动 + 输出是新实例"的测试直接证明验收项。
+- **episode_number / title 服务端权威覆盖**：与 F-01 一致的"不信任 LLM 自报"原则——LLM 可能顺手改写标题，服务端强制恢复原稿 title，保证标题规则不被误改。
+- **执行记录"有据可依 + 全覆盖"双保证**：LLM 自报的 status 被信任但受校验（臆造 operation_id 剔除、去重），缺失项由 `normalize_executions` 确定性补齐为 skipped 说明——任何情况下每个 operation 都有执行结果或未执行说明。
+- **在模型输入中显式列出 preserve / 禁止修改项**：与其事后校验"是否违反"，不如事前把约束写进 prompt（protection_block），让 LLM 在生成时就避开禁区；这与 F-01 的"锁定事实并入 preserve"互补——一个改 prompt 引导、一个做服务端兜底。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/skills/test_reviser.py tests/unit/revision/` | 58 passed（F-02 30 个 + F-01 28 个） |
+| 全量 pytest（-m "not smoke"） | **507 passed / 2 failed**（仅 test_health 存量日志，零新增；477→507 恰为 F-02 新增 30） |
+| `uv run ruff check app/ tests/` | All checks passed |
+| `uv run mypy`（改动 7 个文件） | Success，零错误（全仓 14 个错误均为未改动文件存量） |
+
+### 学习收获
+
+- **"约束前置"优于"校验后置"**：把 preserve / 禁止修改项显式写进 prompt（protection_block），让 LLM 生成时即避开禁区，比生成后再校验更高效；两者结合（引导 + 兜底）才是完整的双保险。
+- **mypy 的 for 循环变量类型会跨循环"继承"**：同一个变量名先在 `for record in list_A` 中成为 `Operation` 类型，再在后续循环里被赋 `Optional` 值时，mypy 报 incompatible-assignment。给两层循环用不同变量名（`llm_record` / `op_record`）即可根治（详见 TROUBLESHOOTING）。
+- **"输出完整新稿"让不可变版本模型天然成立**：新稿是一个新的 ScriptDraft 实例 + 独立 Artifact，原稿零改动——"原稿不变"这条验收用"输入模型不被修改"的单测直接证明，不必做 diff 级断言。
+- **Golden fixture 一套覆盖 happy path**：`revised_episode_football.json` 同时充当合法路径的 FakeLLM fixture 与 Schema 解析测试样本，失实/失败路径用"改 fixture 副本 + fault injection"构造，不重复造 fixture。
+
+### 建议的下一任务
+
+- **F-03 Continuity Validator**（检查锁定事实保留/矛盾、required events、角色与伏笔状态，输出 pass/violations/warnings，失败转 needs_manual_review）
+
+## 2026-08-08 — F-03 Continuity Validator
+
+**任务 ID：** F-03
+**状态：** DONE
+**日期：** 2026-08-08
+
+### 做了什么
+
+- [domain/revision.py](../backend/app/domain/revision.py)：新增 F-03 连续性检查模型
+  - `ContinuityViolation`：阻断性违规（`kind` 7 类 + `expected/actual/evidence` + `source: rule/semantic` 区分发现途径）
+  - `ContinuityWarning`：非阻断提示（与 violations 分列存储）
+  - `ContinuitySemanticCheck`：独立语义 Skill 的结构化输出（violations + warnings）
+  - `ContinuityCheckInput`：新稿 + 原稿 + 本集大纲 + StoryBible + 修订前 ContinuityState + 锁定事实
+  - `ContinuityCheckResult`：`status: pass/fail` + violations/warnings 分列 + rule_checks_run/semantic_checks_run；model_validator 强制 `fail ⟺ 存在 violations`
+- [memory/continuity.py](../backend/app/memory/continuity.py)：确定性规则检查
+  - `fact_preserved_in_text(fact, text)`：**内容字符覆盖率 ≥ 0.5 容忍轻微措辞改变**——归一化去标点 + 过滤停用词后按字符算覆盖率，子串命中直接通过
+  - `character_name_by_id(story_bible, char_id)`：角色 ID → 姓名映射（大纲 required_characters 是 ID，剧本场景是姓名）
+  - `ContinuityManager.run_rule_checks`：三类规则——①锁定事实回归（**仅当原稿存在该事实才要求新稿保留**，防止修订误删既有事实，也避免"事实本就不在本集"的误报）；②大纲 key_events 必须体现在新稿；③大纲 required_characters 必须出场
+- [tools/continuity_check.py](../backend/app/tools/continuity_check.py)：`ContinuityCheckTool`——纯规则包装，不调用 LLM
+- [skills/continuity_check.py](../backend/app/skills/continuity_check.py)：两个 Skill
+  - `ContinuitySemanticCheckSkill`（name=continuity_semantic_check）：独立语义 Skill，LLM 复核锁定事实反转 / 关键人物状态变化 / 伏笔一致性，**source 由服务端权威置为 semantic**
+  - `ContinuityCheckSkill`（name=continuity_check）：编排器——**规则检查优先**：规则失败直接 fail 且不调用 LLM；规则通过才调用语义 Skill 复核，合并后输出 ContinuityCheckResult
+- [prompts/templates/continuity_semantic_check.md](../backend/app/prompts/templates/continuity_semantic_check.md) v1.0.0 + manifest/loader 注册；[openai_compatible.py](../backend/app/llm/openai_compatible.py) 映射 `continuity_semantic_check→reviser`（复用 llm_reviser_model，不加新配置）
+- 测试：[test_continuity_check.py](../backend/tests/unit/revision/test_continuity_check.py)（39 个）：文本匹配 6 / 角色映射 3 / 规则检查 7 / Schema 11 / 语义 Skill 3 / 编排 Skill 8 / Tool 1
+
+### 为什么这么做
+
+- **规则优先 + 必要语义的拆分是 F-03 的核心设计**：确定性检查（事实/事件/角色是否"仍出现"）先用纯函数完成，规则失败直接 fail 且**跳过 LLM**（省一次调用、结论可复现）；只有规则通过后残余的语义风险（反转 / 状态 / 伏笔）才交给独立 Skill。这实现了"规则检查优先，必要语义检查通过独立 Skill 且结构化输出"。
+- **锁定事实用"原稿回归"而非"必须在本集出现"**：锁定事实是跨集不变量，单集剧本不必全部提及。若直接要求"每个锁定事实都在本集出现"，第 1 集修订（设定在后续集才展开）会被误判失败。改为"原稿有→新稿必须还有"即回归检测，语义矛盾再由语义层兜底。
+- **内容字符覆盖率而非整段子串匹配**：中文无现成分词，按字符过滤停用词后算覆盖率，对"换词不换义"的轻微措辞改变足够宽容；阈值 0.5 允许接近一半措辞调整，同时仍能抓住真正缺失（如删除整场公园练球）。
+- **warnings 与 violations 分列**：阻断性问题（fail）与非阻断提示（仅预警）分开建模，前端 / F-05 工作流可据此决定是否转 needs_manual_review，同时保留诊断信息。
+- **反转检测放在语义层而非规则层**：`不是X` 变成 `是X`、人物关系颠倒这类"文本仍在但语义反转"无法用字符匹配可靠识别（会误报/漏报），交给 LLM 判断更稳妥——这也正是"必要语义检查"存在的意义。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/revision/test_continuity_check.py` | 39 passed |
+| `uv run pytest tests/unit/revision/ tests/unit/skills/ tests/unit/memory/` | 全绿 |
+| 全量 pytest（-m "not smoke"） | **546 passed / 2 failed**（仅 test_health 存量日志，零新增；507→546 恰为 F-03 新增 39） |
+| `uv run ruff check app/ tests/` | All checks passed |
+| `uv run mypy`（改动 7 个文件） | Success，零错误 |
+
+### 学习收获
+
+- **验收项的反例也要构造"语义完整"的输入**：开始用"替换整段 plain_text"构造"删除关键事件"的用例，结果误伤其他大纲事件（多个 required_event 同时缺失）导致断言错位。后来改为在原稿文本上做**局部替换**，保证其余大纲事件完整，只让目标事件真正缺失——测试输入要先想清楚"只变一个变量"。
+- **停用词表是覆盖率的敏感点**：把「能」「要」「有」「中」等放进停用词会误伤「超能力」「重要」「有效」等常见复合词，导致轻微措辞改变被误判为事实丢失（`extract_content_chars` 实测把"超能力"滤成"超力"）。停用词只应收纯虚词 / 代词，含歧义的字宁可不滤（详见 TROUBLESHOOTING）。
+- **"原稿回归"门控解决跨集事实误报**：连续性检查对象是"修订后的单集"，锁定事实是否必须在本集出现取决于"原稿是否已建立该事实"——用原稿存在性做门控，从根上避免把"后续集才展开的设定"误判为修订失败。
+- **FakeLLM 短路径验证"规则优先"**：规则失败时断言 `fake_llm.get_call_history() == []`，直接证明没有发起 LLM 调用，比 mock 内部 skill 更简洁有力。
+
+### 建议的下一任务
+
+- **F-04 Diff Service 与版本查询**（scene-aware diff + change_ratio），为版本对比与 Revision Gate 提供基础
+
+---
+
+## 2026-08-08 — F-04 Diff Service 与版本查询
+
+**任务 ID：** F-04
+**状态：** DONE
+**日期：** 2026-08-08
+
+### 做了什么
+
+- [domain/diff.py](../backend/app/domain/diff.py)：纯 Pydantic 模型（无逻辑，`model_config={"extra":"forbid"}`）
+  - `SceneChangeType`（added/removed/modified/unchanged Literal）、`DiffLineStats`（三行三字符计数 + from/to_chars，字段 `ge=0`）
+  - `LineChange`（行级变化：类型 + 新旧行号 1-based + 新旧文本，可空）
+  - `SceneChange`（场景级：类型 + 新旧场景号 + location/time_of_day + similarity `[0,1]` + 行/字符计数 + `line_changes`/`line_changes_truncated`）
+  - `SceneDiffSummary`、`ScriptDiff`（mode scene/line + Artifact 元数据 + change_ratio `[0,1]` + scene_changes + line_changes + truncated）
+- [tools/diff.py](../backend/app/tools/diff.py)：确定性算法，零 LLM
+  - `diff_lines`：`SequenceMatcher.get_opcodes()` → 行级三计数；replace 块 m 旧/n 新配对 `min(m,n)` 行 modified、多余旧行 removed、多余新行 added；字符统计 replace 块两侧全计
+  - 两阶段场景对齐 `_align_scenes`：①`scene_number` 锚定（编号相同且相似度 ≥ 0.60）；②未匹配场景 Needleman-Wunsch 加权比对（相似度 ≥ 0.35 才采纳），解决中间插入/删除的编号位移
+  - **行级相似度 `_similarity`**：先 `diff_lines` 行级对齐（哈希 O(n)）再逐对短串字符级匹配，规避 SequenceMatcher autojunk 把长中文文本高频字符当垃圾导致的相似度虚低（详见 TROUBLESHOOTING）
+  - `compute_change_ratio`：对称 `(removed_chars + added_chars) / max(1, from_chars + to_chars)`，方向无关，范围 [0,1]，与 `RevisionPlan.max_change_ratio`（默认 0.35）对齐
+  - `check_change_ratio(actual, max)`：`<=` 判定，供 F-05 Revision Gate 消费
+  - `diff_script_drafts`（mode=scene）/ `diff_texts`（mode=line 回退）；`MAX_DIFF_LINE_CHANGES=2000` 超限 → `truncated=True` 清空全部 `line_changes` 但保留 stats/change_ratio/scene_summary
+- [artifacts/diff_service.py](../backend/app/artifacts/diff_service.py)：`DiffService.diff_artifacts`——取两版本 → `_validate_pair`（跨项目 400 / 非 script_draft 400 / 不同集 400，不存在 404 复用 ArtifactStore）→ `ScriptDraft.model_validate` 解析，异常回退 `diff_texts` → `model_copy` 回填 Artifact 元数据（返回类型 `ScriptDiff`）
+- [api/v1/artifacts.py](../backend/app/api/v1/artifacts.py)：`GET /api/v1/artifacts/diff?from_artifact_id=&to_artifact_id=`，**注册于 `GET /artifacts/{artifact_id}` 之前**（否则 `artifact_id="diff"` 被 UUID 解析成 422）；`model_dump(mode="json")` 保中文
+- 测试：unit 27（中文不乱码/相同版本/场景增删改/重编号对齐/行级计数/方向对称/change_ratio 边界与 gate/截断/line 回退/Schema 约束/Tool 冒烟）+ integration 9（版本列表不可变/正常 diff/方向对称/跨项目拒绝/类型拒绝/集数拒绝/404/无效内容回退/超大截断）
+
+### 为什么这么做
+
+- **纯确定性、零 LLM**：diff 是计算型查询，用 Python `difflib` 即可精确完成，不持久化（结果每次实时算）。这使 F-04 可被单元测试全覆盖、可复现，也是 Revision Gate 能确定性判定的前提。
+- **两阶段场景对齐**：仅按编号锚定会在"中间插入/删除场景导致编号位移"时误判整场 removed+added；阶段二 Needleman-Wunsch 按内容相似度把位移场景正确配对，避免误报。
+- **对称 change_ratio**：分子 `removed_chars + added_chars`、分母 `from_chars + to_chars`，A/B 颠倒时方向互换但值不变——直接满足验收③，也让 Revision Gate 的判定不受 from/to 语义影响。
+- **场景号是剧本内容的一部分**（plain_text 含【第N场】），因此重编号场景仅头部一行 modified 而非 removed+added，这是忠实行为而非缺陷。
+- **超大 diff 截断保留统计**：字符统计在 opcode 阶段已算完，与保留行列表无关；截断只清 `line_changes` 明细，统计/比例/摘要仍完整返回，前端可安全展示。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/artifacts/test_diff.py tests/integration/api/test_artifact_versions.py` | **36 passed**（unit 27 + integration 9） |
+| 全量 pytest（-m "not smoke"） | **582 passed / 2 failed**（仅 test_health 存量日志，零新增；546→582 恰为 F-04 新增 36） |
+| `uv run ruff check app/ tests/` | All checks passed |
+| `uv run mypy`（改动 6 个文件） | Success，零错误 |
+
+### 学习收获
+
+- **SequenceMatcher 的 autojunk 对长中文文本是隐蔽的陷阱**：`SequenceMatcher(None, a, b).ratio()` 在 ~24k 字符的 joined 场景文本上只返回 0.001——高频中文字符（"第/句/对/白"出现 2100 次）超过 autojunk 阈值（len//100+1）被当垃圾丢弃，几乎丢失全部匹配；而 `autojunk=False` 在同规模字符串上是 O(n²) 会挂起。**修复：相似度改在行列表上计算**（`SequenceMatcher` 对可哈希行是 O(n)），先按行对齐再对配对行逐对做短串字符级匹配——等效于整段 ratio，但既避开 autojunk 又避开长文本 O(n²)。详见 TROUBLESHOOTING。
+- **"整场重写 vs 轻改"的判定尺度要先定**：相似度 < 0.35 的场判定为 removed+added（整场重写），> 0.6 编号相同即锚定（轻改），中间区间交给加权比对。阈值语义要与 golden 样例行为一起验证，而不是只做边界单测。
+- **静态路由必须注册在动态路由之前**：`/artifacts/diff` 若在 `/artifacts/{artifact_id}` 之后注册，`artifact_id="diff"` 会被 FastAPI 的 UUID 转换器在匹配前拦截成 422。路由顺序是 diff 端点能用的前提。
+- **集成测试的 session 提交陷阱**：Artifact 在独立 session 创建后必须 `await db.commit()`，否则 session 关闭回滚，后续查询返回 404。集成测试的 fixture 结构（`import app.db.session as db_session` 必须在方法内取 `_async_session_factory`）不能在最外层 import。
+
+### 建议的下一任务
+
+- **F-05 Revision Workflow 与重新评估**——Revision Gate 用 `check_change_ratio(actual, RevisionPlan.max_change_ratio)` 判定修订是否可接受，连通 F-01..F-04 的修订闭环。

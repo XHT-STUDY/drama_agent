@@ -90,7 +90,19 @@ def _auto_register_domain_schemas() -> None:
     from app.domain.evaluation import EvaluationInput, EvaluationIssue, EvaluationReport  # noqa: F401
     from app.domain.outline import EpisodeOutline, EpisodeOutlineSet, OutlineInput  # noqa: F401
     from app.domain.requirement import NeedsUserInput, NormalizedRequirement, RequirementInput  # noqa: F401
-    from app.domain.revision import RevisionOperation, RevisionPlan  # noqa: F401
+    from app.domain.revision import (  # noqa: F401
+        ContinuityCheckInput,
+        ContinuityCheckResult,
+        ContinuitySemanticCheck,
+        ContinuityViolation,
+        ContinuityWarning,
+        OperationExecution,
+        RevisionOperation,
+        RevisionPlan,
+        RevisionPlanInput,
+        RevisionResult,
+        RevisionTaskInput,
+    )
     from app.domain.script import DialogueLine, EpisodeWriterInput, Scene, ScriptDraft  # noqa: F401
     from app.domain.story_bible import CharacterProfile, StoryBible, StoryBibleInput  # noqa: F401
     from app.domain.summary import SummaryInput, SummaryOutput  # noqa: F401
@@ -114,6 +126,15 @@ def _auto_register_domain_schemas() -> None:
     register_schema("EvaluationReport", EvaluationReport)
     register_schema("RevisionOperation", RevisionOperation)
     register_schema("RevisionPlan", RevisionPlan)
+    register_schema("RevisionPlanInput", RevisionPlanInput)
+    register_schema("OperationExecution", OperationExecution)
+    register_schema("RevisionResult", RevisionResult)
+    register_schema("RevisionTaskInput", RevisionTaskInput)
+    register_schema("ContinuityViolation", ContinuityViolation)
+    register_schema("ContinuityWarning", ContinuityWarning)
+    register_schema("ContinuitySemanticCheck", ContinuitySemanticCheck)
+    register_schema("ContinuityCheckInput", ContinuityCheckInput)
+    register_schema("ContinuityCheckResult", ContinuityCheckResult)
     register_schema("EpisodeSummary", EpisodeSummary)
     register_schema("StoryLoop", StoryLoop)
     register_schema("CharacterState", CharacterState)

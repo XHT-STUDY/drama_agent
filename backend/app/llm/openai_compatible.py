@@ -34,6 +34,7 @@ _ROLE_MODEL_ATTRS = {
     "planner": "llm_planner_model",
     "writer": "llm_writer_model",
     "evaluator": "llm_evaluator_model",
+    "reviser": "llm_reviser_model",
     "summarizer": "llm_summarizer_model",
 }
 
@@ -335,6 +336,9 @@ class OpenAICompatibleLLM(LLMClient):
             "outline": "planner",
             "write_episode": "writer",
             "evaluate_episode": "evaluator",
+            "revision_plan": "reviser",
+            "revise_episode": "reviser",
+            "continuity_semantic_check": "reviser",
             "summarize_episode": "summarizer",
         }
 

@@ -3,6 +3,7 @@
 端点：
 - GET  /projects/{project_id}/artifacts/latest?type=&episode=1  获取最新版本
 - GET  /projects/{project_id}/artifacts                         按项目列表
+- GET  /artifacts/diff?from_artifact_id=&to_artifact_id=        两版本 Diff
 - GET  /artifacts/{artifact_id}                                 获取指定版本
 - GET  /artifacts/{artifact_id}/versions                        版本历史
 - GET  /artifacts/{artifact_id}/links                           源依赖查询
@@ -18,9 +19,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db
 from app.application.artifact_service import ArtifactService
+from app.artifacts.diff_service import DiffService
 
 router = APIRouter(tags=["artifacts"])
 _service = ArtifactService()
+_diff_service = DiffService()
+
+
+@router.get("/artifacts/diff")
+async def diff_artifacts(
+    from_artifact_id: Annotated[uuid.UUID, Query(description="旧版本（from）Artifact ID")],
+    to_artifact_id: Annotated[uuid.UUID, Query(description="新版本（to）Artifact ID")],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """两版本 Diff：from → to 的变化（场景感知，无法解析时回退全文行 diff）。"""
+    result = await _diff_service.diff_artifacts(
+        db, from_artifact_id=from_artifact_id, to_artifact_id=to_artifact_id
+    )
+    return result.model_dump(mode="json")
 
 
 @router.get("/projects/{project_id}/artifacts/latest")

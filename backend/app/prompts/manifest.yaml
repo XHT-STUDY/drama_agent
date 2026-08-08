@@ -55,6 +55,33 @@ prompts:
     template: evaluate_episode.md
     changelog: "v1.1: 输出与 EvaluationReport 对齐，issue 必带 evidence/diagnosis/suggestion 且定位场景，overall/need_revision 由服务端回填，注入 rubric 锚点与客观特征"
 
+  # ---- 修订计划 ----
+  - name: revision_plan
+    version: "1.0.0"
+    input_schema: RevisionPlanInput
+    output_schema: RevisionPlan
+    owner: reviser
+    template: revision_plan.md
+    changelog: "初始版本：从评估问题生成有据可依的修订计划，每个 operation 绑定 issue_ids、目标场景与 preserve"
+
+  # ---- 单集剧本修订 ----
+  - name: revise_episode
+    version: "1.0.0"
+    input_schema: RevisionTaskInput
+    output_schema: RevisionResult
+    owner: reviser
+    template: reviser.md
+    changelog: "初始版本：按修订计划局部改写单集剧本，输出完整新稿与 operation 执行记录；显式列出 preserve 与禁止修改项"
+
+  # ---- 连续性语义检查 ----
+  - name: continuity_semantic_check
+    version: "1.0.0"
+    input_schema: ContinuityCheckInput
+    output_schema: ContinuitySemanticCheck
+    owner: reviser
+    template: continuity_semantic_check.md
+    changelog: "初始版本：修订稿语义层连续性复核（锁定事实反转 / 关键人物状态 / 伏笔一致性），规则检查通过后由独立 Skill 执行"
+
   # ---- 剧集摘要 ----
   - name: summarize_episode
     version: "1.0.0"
