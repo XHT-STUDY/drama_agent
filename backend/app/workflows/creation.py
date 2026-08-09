@@ -1,13 +1,14 @@
-"""CreationWorkflow — LangGraph 创作工作流 (C-07).
+"""CreationWorkflow — LangGraph 创作工作流 (C-07, F-05).
 
 将 C-02 ~ C-06 的各 Skill 串联为完整创作流程：
-normalize → retrieve → story_bible → outline → write_episodes → finalize
+normalize → retrieve → story_bible → outline → write_episodes
+→ evaluate_episodes → (需修订 → select_revision → revise → continuity_check
+→ re_evaluate → 循环或 finalize；否则 → finalize)
 
 节点约束（见 DEV_PLAN §7.2）：
 - State 只存 Artifact ID（大文本不存 State）
 - 每节点发布 node.started / node.completed 事件
 - 已完成节点重试时复用（completed_nodes 跳过）
-- 预留 evaluate_after_creation 分支
 """
 
 from __future__ import annotations
@@ -19,13 +20,21 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.workflows.nodes import (
+    continuity_check_node,
     evaluate_episodes_node,
     finalize_node,
     normalize_node,
     outline_node,
+    re_evaluate_node,
     retrieve_node,
+    revise_node,
+    select_revision_node,
     story_bible_node,
     write_episodes_node,
+)
+from app.workflows.revision import (
+    _should_route_after_continuity,
+    _should_route_after_revision,
 )
 from app.workflows.state import CreationState
 
@@ -59,15 +68,16 @@ def _should_evaluate(state: CreationState) -> Literal["evaluate_episodes", "__en
     return "evaluate_episodes"
 
 
-def _should_finalize_after_eval(state: CreationState) -> Literal["finalize", "__end__"]:
-    """evaluate_episodes 后的路由决策 (E-04)。
+def _should_route_after_eval(state: CreationState) -> Literal["select_revision", "finalize", "__end__"]:
+    """evaluate_episodes 后的路由决策 (E-04, F-05)。
 
-    - 存在需修订的集 → 暂停在修订决策点（Phase F 实现实际修订）
-    - 否则 → finalize（Run 完成）
+    - 存在需修订的集 → select_revision（进入自动修订分支）
+    - 失败 → __end__
+    - 全部通过 → finalize（Run 完成）
     """
     if state.get("needs_revision_decision"):
-        logger.info("存在需修订的集，暂停在修订决策点，等待 Phase F")
-        return "__end__"
+        logger.info("存在需修订的集，进入自动修订分支")
+        return "select_revision"
     if state.get("status") == "failed":
         logger.warning("评估失败，工作流终止")
         return "__end__"
@@ -83,8 +93,15 @@ def build_creation_workflow() -> CompiledStateGraph:
           └─ (ok) → retrieve → story_bible → outline → write_episodes
                ├─ (failed) → END
                └─ (ok) → evaluate_episodes
-                          ├─ (需修订) → END（暂停在修订决策点）
+                          ├─ (需修订) → select_revision → revise → continuity_check
+                          │              ├─ (pass) → re_evaluate
+                          │              │            ├─ (仍有低分且未满轮) → select_revision
+                          │              │            ├─ (全部通过) → finalize → END
+                          │              │            └─ (满轮仍低分 / 显著下降) → END
+                          │              └─ (fail / 转人工审查) → END
                           └─ (否则) → finalize → END
+
+    修订分支的节点注册与路由见 F-05（路由函数复用于 revision.py）。
 
     Returns:
         已编译的 LangGraph StateGraph
@@ -98,6 +115,10 @@ def build_creation_workflow() -> CompiledStateGraph:
     builder.add_node("outline", outline_node)
     builder.add_node("write_episodes", write_episodes_node)
     builder.add_node("evaluate_episodes", evaluate_episodes_node)
+    builder.add_node("select_revision", select_revision_node)
+    builder.add_node("revise", revise_node)
+    builder.add_node("continuity_check", continuity_check_node)
+    builder.add_node("re_evaluate", re_evaluate_node)
     builder.add_node("finalize", finalize_node)
 
     # 设置入口
@@ -119,8 +140,21 @@ def build_creation_workflow() -> CompiledStateGraph:
     )
     builder.add_conditional_edges(
         "evaluate_episodes",
-        _should_finalize_after_eval,
-        {"finalize": "finalize", "__end__": END},
+        _should_route_after_eval,
+        {"select_revision": "select_revision", "finalize": "finalize", "__end__": END},
+    )
+    # 修订分支（F-05）
+    builder.add_edge("select_revision", "revise")
+    builder.add_edge("revise", "continuity_check")
+    builder.add_conditional_edges(
+        "continuity_check",
+        _should_route_after_continuity,
+        {"re_evaluate": "re_evaluate", "__end__": END},
+    )
+    builder.add_conditional_edges(
+        "re_evaluate",
+        _should_route_after_revision,
+        {"select_revision": "select_revision", "finalize": "finalize", "__end__": END},
     )
     builder.add_edge("finalize", END)
 

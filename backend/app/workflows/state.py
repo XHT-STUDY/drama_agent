@@ -42,7 +42,19 @@ class CreationState(TypedDict, total=False):
 
     # ---- 评估与修订决策 ----
     needs_revision_decision: bool
-    """3 集评估完成后为 True：存在需修订的集，等待修订决策（Phase F 处理）。"""
+    """3 集评估完成后为 True：存在需修订的集（F-05 起由修订分支实际处理）。"""
+
+    # ---- 修订（F-05）----
+    revision_round: int
+    """已选定并推进的修订轮数（0 起，select_revision 成功选定后自增）。"""
+    revision_candidate_episode: int | None
+    """当前轮选中的待修订集号（1-based）。"""
+    revision_plan_artifact_id: str | None
+    """当前轮修订计划 Artifact UUID 字符串。"""
+    needs_manual_review: bool
+    """连续性失败或重评分显著下降（>5 分）时为 True，转人工审查。"""
+    needs_manual_review_reason: str | None
+    """人工审查原因（连续性违规摘要 / 分数下降说明）。"""
 
     # ---- 流程控制 ----
     current_episode: int

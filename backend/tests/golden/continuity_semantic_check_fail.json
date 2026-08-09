@@ -1,0 +1,13 @@
+{
+  "violations": [
+    {
+      "kind": "locked_fact_reversed",
+      "target": "林峰的核心天赋是战术视野，不是超能力",
+      "expected": "修订稿不得反转锁定事实「林峰的核心天赋是战术视野，不是超能力」",
+      "actual": "修订稿中将林峰的天赋描写为超能力",
+      "evidence": "第 1 集修订稿场景 2: 林峰声称自己拥有瞬间预知比赛结果的超能力",
+      "source": "semantic"
+    }
+  ],
+  "warnings": []
+}

@@ -2302,11 +2302,11 @@ Prompt 必须区分：
   - 新评估只绑定新稿；
   - 重新评分下降超过 5 分标记 needs_manual_review。
 - 验收：
-  - [ ] MAX_REVISION_ROUNDS=1 有效；
-  - [ ] 只有一个 episode 版本增加；
-  - [ ] 重试不会重复增加 revision_round；
-  - [ ] 原稿与原评估可查询；
-  - [ ] 连续性失败不会进入 completed。
+  - [x] MAX_REVISION_ROUNDS=1 有效（test_round_budget_max_1_effective：重评仍低分 → round=1 非 2，停 needs_review）；
+  - [x] 只有一个 episode 版本增加（test_happy_path：ep1 恰 2 版本、ep2/3 各 1）；
+  - [x] 重试不会重复增加 revision_round（test_retry_does_not_double_increment）；
+  - [x] 原稿与原评估可查询（test_happy_path 末段断言 orig 仍 valid、orig_eval overall=73.2）；
+  - [x] 连续性失败不会进入 completed（test_continuity_failure_never_completes）。
 - 测试：
   - pytest -m workflow backend/tests/workflow/test_revision_workflow.py
 
@@ -2928,7 +2928,7 @@ Prompt 必须区分：
 | F-02 | Revision Skill | 1d | F-01 | DONE | AI Agent | 30 tests passed, Ruff/mypy clean(改动文件); domain/revision.py 增 RevisionTaskInput(原稿/计划/StoryBible/大纲/连续性状态) + OperationExecution(applied/partial/skipped+note) + RevisionResult(完整新稿+执行记录+source_* 原稿/评估/计划) + normalize_executions(剔除臆造/去重/补齐缺失/按计划顺序全覆盖); ReviserSkill(LLM 生成完整新稿非patch + protection_block 显式列出 preserve 与禁止修改项 + 权威覆盖 episode/title/source + 服务端重算 word_count/dialogue_ratio) + reviser.md v1.0.0 + RevisionAgent + golden revised_episode_football.json; 全量 507 passed/2 存量日志失败(477→507 恰为 F-02 新增 30) |
 | F-03 | Continuity Validator | 1d | F-02,C-06 | DONE | AI Agent | 39 tests passed, Ruff/mypy clean(改动文件); domain/revision.py 增 ContinuityViolation(kind/source=rule·semantic) + ContinuityWarning + ContinuitySemanticCheck(独立 Skill 结构化输出) + ContinuityCheckInput(新稿/原稿/大纲/StoryBible/连续性状态/锁定事实) + ContinuityCheckResult(pass/fail + violations/warnings 分列 + checks_run, fail ⟺ 有违规); memory/continuity.py 增规则检查(锁定事实回归: 原稿有而新稿无才判缺失, 内容字符覆盖率≥0.5 容忍轻微措辞改变 / 大纲 key_events 必须体现 / required_characters 必须出场, 角色 ID→名称映射) + fact_preserved_in_text(子串命中或覆盖率) ; ContinuityCheckTool(纯规则) + ContinuitySemanticCheckSkill(LLM, source 权威置 semantic) + ContinuityCheckSkill(规则优先: 规则失败跳过 LLM 直接 fail; 规则通过才语义复核反转/状态/伏笔); continuity_semantic_check.md v1.0.0 + manifest/loader/openai 注册(映射 reviser); 全量 546 passed/2 存量日志失败(507→546 恰为 F-03 新增 39) |
 | F-04 | Diff 与版本查询 | 0.75d | F-02,B-04 | DONE | AI Agent | 36 tests passed（unit 27 + integration 9）, Ruff/mypy clean(改动文件); domain/diff.py 纯模型(extra=forbid, 字段 ge/le) + tools/diff.py 确定性算法(两阶段场景对齐: 编号锚定 sim≥0.6 + Needleman-Wunsch sim≥0.35; 行级相似度规避 SequenceMatcher autojunk 病态; diff_lines 三计数 replace 块配对; 对称 change_ratio=(removed+added)chars/(from+to)chars; check_change_ratio 供 F-05 gate; 超大 diff truncated 保留统计清行明细) + DiffService(跨项目/类型/集数防护, content 无法解析回退 line diff) + GET /artifacts/diff(注册于 {artifact_id} 之前防路由吞噬); 集成测覆盖版本列表不可变/方向对称/跨项目拒绝/截断; 全量 582 passed/2 存量日志失败(546→582 恰为 F-04 新增 36) |
-| F-05 | Revision Workflow/重评 | 1d | F-01..F-04,E-04 | TODO | - | - |
+| F-05 | Revision Workflow/重评 | 1d | F-01..F-04,E-04 | DONE | AI Agent | 修订分支接通主工作流: select_revision(确定性选集+revision_round 原子自增) → revise(候选稿 draft 落库) → continuity_check(规则+语义,pass 提升 valid/fail 保 draft 转人工) → re_evaluate(权威原分取自 plan,下降>5 转人工); creation.py 低分改走修订分支; runs.py 事后处理改 elif 链(manual_review/needs_revision_decision/needs_user_input); revision.py 独立图+路由; ArtifactType 增 continuity_check; 新 7 个 workflow 测试+fixtures; **修复 B 期存量 input_hash 跨集碰撞**(compute_input_hash 仅哈希 source ids,各集剧本共享 outline/sb → ep2+ 幂等复用 ep1,真实管线只产出第 1 集; 现把 episode_number+artifact_type 纳入哈希载荷); 全量 589 passed/2 存量 health 日志失败(582→589), Ruff clean, mypy 回到 14 存量基线(0 新增) |
 | F-06 | Revision API | 0.5d | F-05 | TODO | - | - |
 | G-01 | 短期/中期/项目记忆 | 0.75d | B-03,C-06 | TODO | - | - |
 | G-02 | Context Builder 完整化 | 0.75d | G-01,D-05 | TODO | - | - |

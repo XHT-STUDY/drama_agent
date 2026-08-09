@@ -69,7 +69,11 @@ class ArtifactStore:
             已持久化的 Artifact ORM 实例
         """
         checksum = compute_checksum(content)
-        input_hash = compute_input_hash(source_artifact_ids)
+        input_hash = compute_input_hash(
+            source_artifact_ids,
+            episode_number=episode_number,
+            artifact_type=artifact_type,
+        )
 
         repo = self._get_repo(db)
 

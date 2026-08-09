@@ -34,6 +34,7 @@ class ArtifactType(StrEnum):
     SCRIPT_DRAFT = "script_draft"
     EVALUATION_REPORT = "evaluation_report"
     REVISION_PLAN = "revision_plan"
+    CONTINUITY_CHECK = "continuity_check"
     CONTINUITY_STATE = "continuity_state"
     CONVERSATION_SUMMARY = "conversation_summary"
     IMPORT_CLASSIFICATION = "import_classification"

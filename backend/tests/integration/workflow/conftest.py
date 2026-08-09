@@ -16,6 +16,11 @@ from app.application.run_service import RunService
 from app.domain.evaluation import EvaluationReport
 from app.domain.outline import EpisodeOutlineSet
 from app.domain.requirement import NormalizedRequirement
+from app.domain.revision import (
+    ContinuitySemanticCheck,
+    RevisionPlan,
+    RevisionResult,
+)
 from app.domain.script import ScriptDraft
 from app.domain.story_bible import StoryBible
 from app.events.publisher import EventPublisher
@@ -44,6 +49,13 @@ def fake_llm() -> FakeLLM:
     llm.register("write_episode", script_draft)
     # 评估 fixture：高分 golden（服务端回填 need_revision=False → creation 走 finalize）
     llm.register("evaluate_episode", EvaluationReport.model_validate(_load_golden("evaluation_report_valid")))
+    # 修订分支 fixtures（F-05）：默认走"通过"语义（连续性 pass）
+    llm.register("revision_plan", RevisionPlan.model_validate(_load_golden("revision_plan_valid")))
+    llm.register("revise_episode", RevisionResult.model_validate(_load_golden("revised_episode_football")))
+    llm.register(
+        "continuity_semantic_check",
+        ContinuitySemanticCheck.model_validate(_load_golden("continuity_semantic_check_valid")),
+    )
     return llm
 
 

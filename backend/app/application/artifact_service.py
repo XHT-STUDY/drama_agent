@@ -22,7 +22,7 @@ from app.domain.continuity import ContinuityState
 from app.domain.enums import ArtifactType
 from app.domain.evaluation import EvaluationReport
 from app.domain.outline import EpisodeOutlineSet
-from app.domain.revision import RevisionPlan
+from app.domain.revision import ContinuityCheckResult, RevisionPlan
 from app.domain.script import ScriptDraft
 from app.domain.story_bible import StoryBible
 
@@ -33,6 +33,7 @@ _SCHEMA_MAP: dict[str, Any] = {
     ArtifactType.SCRIPT_DRAFT: ScriptDraft,
     ArtifactType.EVALUATION_REPORT: EvaluationReport,
     ArtifactType.REVISION_PLAN: RevisionPlan,
+    ArtifactType.CONTINUITY_CHECK: ContinuityCheckResult,
     ArtifactType.CONTINUITY_STATE: ContinuityState,
 }
 

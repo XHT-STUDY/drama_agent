@@ -176,3 +176,16 @@
 **解决方案**：相似度不再对整段长字符串做 `SequenceMatcher`，改在**行列表**上计算——`SequenceMatcher` 对可哈希的行列表构建 `b2j` 是 O(n)（每行哈希一次）；对齐后把 replace 块配对的相邻行再做**短串**（几十字符）字符级匹配 `SequenceMatcher(a, b, autojunk=False)`。等效于整段 ratio（`2*matched/(from_chars+to_chars)`），但既避开 autojunk 把高频字符当垃圾，又避开长文本 O(n²)。修改文件：[diff.py](backend/app/tools/diff.py)
 
 **学习收获**：`difflib` 的相似度度量只保证语义正确、不保证在任意长度/字符分布上行为直观——**autojunk 是给英文等长序列设计的启发式，对高频重复元素（尤其中文）是隐蔽陷阱**。用 `SequenceMatcher` 做长文本相似度时，应优先构造"短单位"再聚合（行级对齐 + 逐对短串比对），而不是对整段长字符串直接 `ratio()`；同时牢记 `autojunk=False` 只适合短输入（O(n²)），切勿用于长文本。度量算法要在"接近大输入规模"的测试用例上验证阈值行为，而非只做小样本单测。
+
+## 2026-08-09 — input_hash 只哈希 source ids 导致多集工作流全部幂等复用第 1 集
+
+**症状**：F-05 新增的 `test_revision_workflow.py` 中 happy path 断言 `list_versions(script_draft, ep=2/3) == 1` 失败——ep2/ep3 的剧本版本数恒为 0；调试探针显示播种的 3 个评估报告读回来是**同一个 Artifact ID、同一份低分内容**（overall 73.2）。进一步验证：完整 creation 工作流跑完后 `script_artifact_ids` 的 3 个 key 指向**同一个 ID**，数据库里 ep2/ep3 没有任何剧本行——即**真实管线从 Phase C 起实际只产出并评估了第 1 集**，只是此前测试都断言 dict 的 key 数量（`len(...)==3`）而漏检。
+
+**产生原因**：`ArtifactStore.create` 用 `compute_input_hash(source_artifact_ids)` 做幂等去重，而该哈希的载荷**只有 source_artifact_ids**。多集工作流中每一集剧本都从同一份 outline + story_bible 派生（source 完全相同、版本号相同）→ ep1/ep2/ep3 的 input_hash 完全一致 → 第 2 集起 `find_by_input_hash` 直接返回第 1 集的 Artifact，新行从不插入。评估报告同理：因为 3 集剧本已全部去重成同一个 script id，3 份评估的 source（同 script id）也碰撞。
+
+**解决方案**：把 `episode_number` 与 `artifact_type` 纳入哈希载荷——它们才是"逻辑输入身份"的一部分（同 source、不同集数/类型不是同一产物）。修改 [versions.py](backend/app/artifacts/versions.py)（`compute_input_hash(source, *, episode_number, artifact_type)` 载荷改为 `{"episode_number", "artifact_type", "sources"}`）与 [store.py](backend/app/artifacts/store.py) 调用处。修复后：同集同源重试仍幂等复用（idempotency 语义保留），跨集不再误复用。附带把测试播种里"ep1_report 缺失时把所有集都种成高分"的 helper 笔误一并修正（文档与实现不符，导致 select 选不出候选）。
+
+**学习收获**：
+- **幂等键必须覆盖业务输入的身份边界**：只哈希"来源依赖"是不够的——多集剧本同源是常态，缺 episode/type 的键会把不同集误判为同一输入。设计幂等键前先枚举"什么算相同输入"。
+- **"断言 key 数量"≠"断言内容存在"**：`len(dict)==3` 对"3 个 key 指向同一对象"毫无防备。验证"每集都有产物"要用按集查询（`list_versions` 计数 / 按集拉取），并断言 ID 独立性。
+- **测试 helper 的自证**：播种 helper 的 docstring 说"ep1 低分、ep2/3 高分"，实现却全种高分——调试时单独写"播种→读回→跑纯函数"的探针测试，一步定位是播种错还是节点错，远快于读满图日志。

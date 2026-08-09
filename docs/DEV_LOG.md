@@ -2110,3 +2110,49 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 建议的下一任务
 
 - **F-05 Revision Workflow 与重新评估**——Revision Gate 用 `check_change_ratio(actual, RevisionPlan.max_change_ratio)` 判定修订是否可接受，连通 F-01..F-04 的修订闭环。
+
+## 2026-08-09 — F-05 Revision Workflow 与重新评估
+
+### 做了什么
+
+把 F-01..F-04 的修订能力接通进主 creation 工作流，形成"评估低分 → 确定性选集 → 修订 → 连续性检查 → 重评"的自动闭环（MAX_REVISION_ROUNDS=1）：
+
+- [workflows/nodes/select_revision.py](../backend/app/workflows/nodes/select_revision.py)：`select_revision_node`（零 LLM）——读全部评估报告 → `select_revision_candidate` 确定性选最低分集（need_revision=true、同分取最小集号）→ `revision_round` 原子自增（返回值不入 state 即未进 completed_nodes，崩溃重试不重复自增）。
+- [workflows/nodes/revise.py](../backend/app/workflows/nodes/revise.py)：`revise_node`——`RevisionService.build_revision_plan`（确定性复选 + 跨项目防护 + 持久化 plan）→ ReviserSkill 产出完整新稿 → **候选稿以 status="draft" 落库**（绕过自动 valid），是否成为 latest valid 由连续性检查决定；source 依赖遵循 `evaluation_service._resolve_context` 约定（derived_from→outline 取末项、references→story_bible 取首项，原稿/计划用 "revises" 关系避免被误读）。
+- [workflows/nodes/continuity_check.py](../backend/app/workflows/nodes/continuity_check.py)：`continuity_check_node`——回放 1..ep-1 集重建 `ContinuityState` → 规则检查 + 语义检查（`continuity_semantic_check` prompt）→ 持久化 continuity_check 诊断 Artifact；pass 提升候选稿为 valid（直改 ORM status 列，content 不变，符合不可变模型）；fail 保持 draft + `needs_manual_review=True` + 原因。
+- [workflows/nodes/re_evaluate.py](../backend/app/workflows/nodes/re_evaluate.py)：`re_evaluate_node`——**原始分从 `RevisionPlan.source_evaluation_artifact_id` 取**（权威，不会被 evaluation_artifact_ids[ep] 覆盖）；新稿是新 Artifact ID → 不命中旧评估幂等，生成全新评估且只绑新稿；下降 > 5 分（`_SCORE_DROP_MANUAL_REVIEW_THRESHOLD`）→ `needs_manual_review`；更新 `evaluation_artifact_ids[ep]` 并遍历全部报告重算 `needs_revision_decision`。
+- [workflows/revision.py](../backend/app/workflows/revision.py)：独立 `build_revision_workflow()` 图 + 两个确定性路由器（`_should_route_after_continuity` / `_should_route_after_revision`，供 creation.py 复用避免环形 import）；`_MAX_REVISION_ROUNDS = Settings().max_revision_rounds`。
+- [workflows/creation.py](../backend/app/workflows/creation.py)：`_should_route_after_eval` 遇 `needs_revision_decision` → `select_revision`；注册 4 个修订节点并接边。
+- [api/v1/runs.py](../backend/app/api/v1/runs.py)：create_script 初始 state 增 5 个修订字段；事后处理改 **elif 链**（failed → needs_user_input → needs_manual_review → needs_revision_decision → completed），因为 manual_review 与 needs_revision_decision 可同时为真，独立 if 会触发 running→needs_review 非法二次转换。
+- 测试：新增 `test_revision_workflow.py` 7 个（happy path / 轮次上限 / 重试幂等 / 连续性失败 / 下降>5 转人工 / 全通过不修订 / 独立图）；改 `test_creation_evaluation_branch.py` 低分用例接入自动修订分支；`test_domain_schemas.py` ArtifactType 10→11；conftest fake_llm 增注册 revision_plan/revise_episode/continuity_semantic_check。
+
+**额外修复一个 B 期存量严重 bug（input_hash 跨集碰撞）**：`compute_input_hash` 只哈希 `source_artifact_ids`，而多集工作流里各集剧本共享同一 outline/story_bible 来源 → 第 2 集起全部幂等复用第 1 集的 Artifact，**真实管线实际只产出/评估第 1 集**。修复：把 `episode_number` 与 `artifact_type` 纳入哈希载荷（见 TROUBLESHOOTING）。
+
+### 为什么这么做
+
+- **修订决策必须确定性、可审计**：选"改哪一集"不调 LLM，纯函数 `select_revision_candidate`，revision_round 原子自增使重试可安全重放。
+- **候选稿先 draft 后提升**：连续性通过与否决定候选稿命运，draft→valid 只改 status 列、content 不动，延续不可变 Artifact 模型；失败稿+诊断保留为 draft 版本供人工复核。
+- **重评只绑新稿**：新稿是新 Artifact ID，天然避开"同一剧本版本重复评估"的幂等；原稿与原评估保持可查（验收要求）。
+- **原始分取 plan 而非 evaluation_artifact_ids[ep]**：后者会被重评覆盖，前者才指向"修订前那次评估"，保证下降判定有正确基线。
+- **elif 链而非独立 if**：needs_manual_review 与 needs_revision_decision 可能同时为 True，先判人工复核，避免重复触发 Run 状态转换。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest -m workflow tests/integration/workflow/test_revision_workflow.py -q` | **7 passed** |
+| `uv run pytest tests/integration/workflow/test_creation_evaluation_branch.py tests/contract/test_domain_schemas.py -q` | 全绿 |
+| 全量 pytest（-m "not smoke"） | **589 passed / 2 failed**（仅 test_health 存量日志失败，零新增；582→589 恰为 F-05 新增 7） |
+| `uv run ruff check app/ tests/` | All checks passed |
+| `uv run mypy` | 回到 14 存量基线，**0 新增错误**（revision.py 用 `CompiledStateGraph[CreationState, None, CreationState, CreationState]` 全参标注） |
+
+### 学习收获
+
+- **"测试断言数量不等于断言正确性"**：`test_high_score_finalizes` 断言 `len(evaluation_artifact_ids)==3` 一直通过，但 dict 的 3 个 key 可能指向同一个 Artifact ID——Phase E 就这样放过了"只写了第 1 集"的存量 bug。F-05 断言"ep1 恰 2 版本、ep2/3 各 1 版本"（`list_versions` 计数）才把它炸出来。测试要断言*存在性与独立性*，不能只数 key。
+- **幂等键必须覆盖真正的输入**：`input_hash` 本意是"相同输入复用结果"，但哈希载荷只有 source ids，缺 episode/type，导致跨集同源产物误判为"相同输入"。幂等键语义要贴合业务输入的身份边界。
+- **中途播种测试的 helper 要先自证**：`_seed_full_project` 声称"ep1 低分、ep2/3 高分"，实现却在 ep1_report 缺失时把所有集都种成 `_high_content`，导致 select 永远选不出候选——调试时单独写一个"播种→读回→纯函数选集"的探针测试立刻定位，比满图日志高效得多。
+- **LangGraph 节点内 `get_config()["configurable"]` 只在图内有效**：独立脚本直接调 `_async_session_factory()` 拿到 None（FastAPI 生命周期外未初始化），排查节点问题必须在测试 fixture 上下文内跑。
+
+### 建议的下一任务
+
+- **F-06 Revision API 与闭环契约**——F-05 的独立 `build_revision_workflow()` 已铺路，加 API 端点与闭环契约测试即可。

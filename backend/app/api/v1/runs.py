@@ -351,6 +351,11 @@ async def _execute_workflow(
                     "evaluation_artifact_ids": {},
                     "needs_revision_decision": False,
                     "continuity_state_text": "",
+                    "revision_round": 0,
+                    "revision_candidate_episode": None,
+                    "revision_plan_artifact_id": None,
+                    "needs_manual_review": False,
+                    "needs_manual_review_reason": None,
                     "current_episode": 1,
                     "status": "running",
                     "needs_user_input": False,
@@ -389,6 +394,10 @@ async def _execute_workflow(
 
             final_state = await workflow.ainvoke(initial_state, workflow_config)
 
+            # 事后处理用 elif 链（F-05）：needs_manual_review 与 needs_revision_decision
+            # 可同时为真，独立 if 会触发 running→needs_review 的非法二次转换。
+            # 优先序: failed → needs_user_input → needs_manual_review →
+            # needs_revision_decision（满轮仍低分）→ evaluate 收尾。
             if final_state.get("status") == "failed":
                 await run_svc.transition_status(db, run_id, "failed")
                 await publisher.publish(
@@ -399,33 +408,38 @@ async def _execute_workflow(
                     },
                     autocommit=True,
                 )
-
-            if final_state.get("needs_user_input"):
+            elif final_state.get("needs_user_input"):
                 await run_svc.transition_status(db, run_id, "needs_review")
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.needs_review",
                     payload={"reason": "用户输入不完整，需要补充信息"},
                     autocommit=True,
                 )
-
-            if final_state.get("needs_revision_decision"):
-                # 存在需修订的集 → 暂停在修订决策点（Phase F 实现实际修订）
+            elif final_state.get("needs_manual_review"):
+                # 连续性失败或修订后显著下降 → 转人工复核（候选稿保留为诊断版本）
+                await run_svc.transition_status(db, run_id, "needs_review")
+                await publisher.publish(
+                    db, run_id=run_id, event_type="run.needs_manual_review",
+                    payload={
+                        "reason": final_state.get("needs_manual_review_reason"),
+                        "message": "自动修订受限，需要人工复核",
+                    },
+                    autocommit=True,
+                )
+            elif final_state.get("needs_revision_decision"):
+                # 修订轮次已用满仍存在需修订的集 → 暂停在人工复核点
                 await run_svc.transition_status(db, run_id, "needs_review")
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.needs_revision_decision",
                     payload={
-                        "message": "存在需修订的集，等待修订决策",
+                        "message": "自动修订轮次已用满，仍有需修订的集，等待人工决策",
                         "evaluation_artifact_ids": final_state.get("evaluation_artifact_ids", {}),
                     },
                     autocommit=True,
                 )
-
-            # action=evaluate 且无修订决策 → 直接完成（evaluation workflow 无 finalize 节点）
-            if (
-                action == "evaluate"
-                and not final_state.get("needs_revision_decision")
-                and final_state.get("status") != "failed"
-            ):
+            elif action == "evaluate":
+                # action=evaluate 且无任何拦截标志 → 直接完成
+                # （evaluation workflow 无 finalize 节点，由 API 层收尾）
                 await run_svc.transition_status(db, run_id, "completed")
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.completed",
@@ -484,6 +498,11 @@ def _register_fake_fixtures(llm: Any) -> None:
     from app.domain.evaluation import EvaluationReport
     from app.domain.outline import EpisodeOutlineSet
     from app.domain.requirement import NormalizedRequirement
+    from app.domain.revision import (
+        ContinuitySemanticCheck,
+        RevisionPlan,
+        RevisionResult,
+    )
     from app.domain.script import ScriptDraft
     from app.domain.story_bible import StoryBible
 
@@ -493,3 +512,10 @@ def _register_fake_fixtures(llm: Any) -> None:
     llm.register("write_episode", ScriptDraft.model_validate(_load("script_draft_valid")))
     # 评估 fixture：使用 golden 高分报告（服务端回填 need_revision=False → 走 finalize/completed）
     llm.register("evaluate_episode", EvaluationReport.model_validate(_load("evaluation_report_valid")))
+    # 修订分支 fixtures（F-05）：仅防御性注册，正常高分路径不触发
+    llm.register("revision_plan", RevisionPlan.model_validate(_load("revision_plan_valid")))
+    llm.register("revise_episode", RevisionResult.model_validate(_load("revised_episode_football")))
+    llm.register(
+        "continuity_semantic_check",
+        ContinuitySemanticCheck.model_validate(_load("continuity_semantic_check_valid")),
+    )
