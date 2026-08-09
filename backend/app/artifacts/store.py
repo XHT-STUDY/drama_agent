@@ -54,6 +54,7 @@ class ArtifactStore:
         content_schema_version: str = "1.0",
         prompt_version: str = "",
         source_artifact_ids: list[dict[str, Any]] | None = None,
+        dedup_extra: str = "",
     ) -> Artifact:
         """创建新 Artifact 版本。
 
@@ -65,6 +66,9 @@ class ArtifactStore:
 
         并发冲突时（IntegrityError on unique constraint）重新查询版本号重试。
 
+        dedup_extra: 附加幂等因子（如 user_instruction），使"同源但不同意图"
+            的产物拥有不同 input_hash。
+
         Returns:
             已持久化的 Artifact ORM 实例
         """
@@ -73,6 +77,7 @@ class ArtifactStore:
             source_artifact_ids,
             episode_number=episode_number,
             artifact_type=artifact_type,
+            dedup_extra=dedup_extra,
         )
 
         repo = self._get_repo(db)
@@ -176,3 +181,16 @@ class ArtifactStore:
     async def get_source_links(self, db: AsyncSession, artifact_id: uuid.UUID) -> list[Any]:
         """查询 Artifact 的来源依赖关系。"""
         return await self._get_repo(db).get_source_links(artifact_id)
+
+    async def find_referencing_artifacts(
+        self,
+        db: AsyncSession,
+        target_id: uuid.UUID,
+        *,
+        relation: str | None = None,
+        artifact_type: str | None = None,
+    ) -> list[Artifact]:
+        """查询反向引用指定 Artifact 的所有 Artifact（F-06）。"""
+        return await self._get_repo(db).find_referencing_artifacts(
+            target_id, relation=relation, artifact_type=artifact_type
+        )

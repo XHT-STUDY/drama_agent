@@ -100,6 +100,8 @@ async def revise_node(state: CreationState) -> dict[str, Any]:
             evaluation_reports=eval_artifacts,
             agent=agent,
             prompt_loader=prompt_loader,
+            episode_number=state.get("revision_candidate_episode"),
+            user_instruction=state.get("user_instruction"),
         )
         if plan_artifact is None:
             logger.info("无需修订（无 need_revision 集），跳过修订节点")

@@ -57,6 +57,7 @@ export type ArtifactType =
   | "script_draft"
   | "evaluation_report"
   | "revision_plan"
+  | "continuity_check"
   | "continuity_state"
   | "conversation_summary";
 
@@ -295,3 +296,200 @@ export const DEFAULT_EVALUATION_WEIGHTS: Record<EvaluationDimension, number> = {
   visualizability: 0.08,
   compliance_safety: 0.08,
 };
+
+// ============================================================
+// 修订 (Revision) — 与后端 app/domain/revision.py 同步 (H-06)
+// ============================================================
+
+/** 修订计划中的一条操作 */
+export interface RevisionOperation {
+  operation_id: string;
+  target_scene_number: number | null;
+  issue_ids: string[];
+  instruction: string;
+  preserve: string[];
+  expected_effect: string;
+}
+
+/** revision_plan Artifact 的 content */
+export interface RevisionPlanContent {
+  episode_number: number;
+  source_script_artifact_id: string;
+  source_evaluation_artifact_id: string;
+  operations: RevisionOperation[];
+  locked_facts: string[];
+  max_change_ratio: number;
+  user_instruction: string | null;
+}
+
+/** GET /projects/{pid}/revisions/{plan_id} 详情响应：Artifact + 顶层 result_chain */
+export interface RevisionPlanArtifact extends Omit<Artifact, "content"> {
+  content: RevisionPlanContent;
+  result_chain: ResultChain;
+}
+
+/** 连续性违规类型 */
+export type ContinuityViolationKind =
+  | "locked_fact_missing"
+  | "locked_fact_reversed"
+  | "required_event_missing"
+  | "required_character_missing"
+  | "loop_inconsistent"
+  | "character_state_change"
+  | "semantic_inconsistency";
+
+/** 违规类型 → 中文标签 */
+export const CONTINUITY_VIOLATION_LABELS: Record<ContinuityViolationKind, string> = {
+  locked_fact_missing: "锁定事实缺失",
+  locked_fact_reversed: "锁定事实被反转",
+  required_event_missing: "必需事件缺失",
+  required_character_missing: "必需角色缺失",
+  loop_inconsistent: "伏笔状态不一致",
+  character_state_change: "人物状态矛盾",
+  semantic_inconsistency: "语义不一致",
+};
+
+/** 连续性违规 */
+export interface ContinuityViolation {
+  kind: ContinuityViolationKind;
+  target: string;
+  expected: string;
+  actual: string;
+  evidence: string;
+  source: "rule" | "semantic";
+}
+
+/** 连续性警告 */
+export interface ContinuityWarning {
+  kind: ContinuityViolationKind;
+  target: string;
+  message: string;
+  source: "rule" | "semantic";
+}
+
+/** continuity_check Artifact 的 content */
+export interface ContinuityCheckContent {
+  status: "pass" | "fail";
+  checked_episode_number: number;
+  violations: ContinuityViolation[];
+  warnings: ContinuityWarning[];
+  rule_checks_run: string[];
+  semantic_checks_run: string[];
+}
+
+/** result_chain：plan 详情沿 Artifact 链反查的结果（每段可 null） */
+export interface ResultChain {
+  source_script: Artifact | null;
+  source_evaluation: Artifact | null;
+  candidate_script: Artifact | null;
+  continuity_check: Artifact | null;
+  new_evaluation: Artifact | null;
+  diff_ids: { base: string; target: string } | null;
+}
+
+/** 发起修订请求体 */
+export interface CreateRevisionRequest {
+  script_artifact_id: string | null;
+  user_instruction: string | null;
+  idempotency_key: string | null;
+}
+
+// ============================================================
+// Diff — 与后端 app/domain/diff.py 同步 (H-06)
+// ============================================================
+
+/** Diff 模式：scene=结构化场景对比；line=全文行对比（无法解析时回退） */
+export type DiffMode = "scene" | "line";
+
+/** 变更类型 */
+export type SceneChangeType = "added" | "removed" | "modified" | "unchanged";
+
+/** 单行变更 */
+export interface LineChange {
+  change_type: SceneChangeType;
+  old_line_number: number | null;
+  new_line_number: number | null;
+  old_text: string | null;
+  new_text: string | null;
+}
+
+/** 单场景变更 */
+export interface SceneChange {
+  change_type: SceneChangeType;
+  old_scene_number: number | null;
+  new_scene_number: number | null;
+  location: string;
+  time_of_day: string;
+  similarity: number;
+  added_lines: number;
+  removed_lines: number;
+  modified_lines: number;
+  added_chars: number;
+  removed_chars: number;
+  line_changes: LineChange[];
+  line_changes_truncated: boolean;
+}
+
+/** 行/字符统计 */
+export interface DiffLineStats {
+  added_lines: number;
+  removed_lines: number;
+  modified_lines: number;
+  added_chars: number;
+  removed_chars: number;
+  changed_chars: number;
+  from_chars: number;
+  to_chars: number;
+}
+
+/** 场景级摘要 */
+export interface SceneDiffSummary {
+  from_scene_count: number;
+  to_scene_count: number;
+  added: number;
+  removed: number;
+  modified: number;
+  unchanged: number;
+}
+
+/** GET /artifacts/diff 响应 */
+export interface ScriptDiff {
+  mode: DiffMode;
+  from_artifact_id: string | null;
+  to_artifact_id: string | null;
+  from_version: number | null;
+  to_version: number | null;
+  project_id: string | null;
+  episode_number: number | null;
+  change_ratio: number;
+  scene_summary: SceneDiffSummary;
+  stats: DiffLineStats;
+  scene_changes: SceneChange[];
+  line_changes: LineChange[];
+  truncated: boolean;
+}
+
+// ============================================================
+// 导出中心 (Export) — H-07（前端本地导出）
+// ============================================================
+
+/** 导出文件格式 */
+export type ExportFormat = "markdown" | "docx";
+
+/** 可导出的内容类型（粒度：整类内容，而非单集） */
+export type ExportContentKind =
+  | "story_bible"
+  | "outline"
+  | "script"
+  | "evaluation"
+  | "revision";
+
+/** 导出历史记录（本地存储，H-07） */
+export interface ExportRecord {
+  id: string;
+  exportedAt: string;
+  format: ExportFormat;
+  kinds: ExportContentKind[];
+  filename: string;
+  sizeBytes: number;
+}

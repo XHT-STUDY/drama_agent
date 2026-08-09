@@ -94,6 +94,8 @@ class RevisionPlanSkill(Skill):
             ),
             locked_facts=_json.dumps(plan_input.locked_facts, ensure_ascii=False, indent=2),
             max_change_ratio=str(plan_input.max_change_ratio),
+            # loader render() 严格：必须恒提供模板变量；无用户要求时占位
+            user_instruction=str(plan_input.user_instruction or "（无）"),
         )
 
         # 2. 调用 LLM 生成结构化计划
@@ -154,6 +156,7 @@ class RevisionPlanSkill(Skill):
             operations=grounded,
             locked_facts=list(plan_input.locked_facts),
             max_change_ratio=plan_input.max_change_ratio,
+            user_instruction=plan_input.user_instruction,
         )
 
         logger.info(

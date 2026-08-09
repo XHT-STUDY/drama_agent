@@ -62,26 +62,35 @@ class RevisionService:
         evaluation_reports: list[ArtifactResponse],
         agent: BaseAgent,
         prompt_loader: PromptLoader,
+        episode_number: int | None = None,
+        user_instruction: str | None = None,
     ) -> ArtifactResponse | None:
-        """从评估报告选出最低分集并生成修订计划。
+        """为指定集（或自动选中的最低分集）生成修订计划。
 
         流程:
         1. 解析评估报告（服务端回填的 overall/need_revision 已持久化）;
-        2. 确定性选集——无 need_revision 集时直接返回 None（不修订）;
+        2. 选集——传 episode_number 时跳过自动选集（用户显式指定单集，
+           不要求 need_revision）；否则确定性选最低分集，无 need_revision 时
+           返回 None（不修订）;
         3. 跨项目防护 + 追溯原稿与 StoryBible 锁定事实;
-        4. 调用 RevisionPlanSkill 生成有据可依的计划;
-        5. 持久化 revision_plan Artifact（绑定原稿/评估/设定版本）。
+        4. 调用 RevisionPlanSkill 生成有据可依的计划（含 user_instruction，
+           但锁定事实不可被绕过）;
+        5. 持久化 revision_plan Artifact（绑定原稿/评估/设定版本，
+           user_instruction 纳入幂等键避免同源不同指令误复用）。
 
         Args:
             evaluation_reports: 各集最新评估报告 Artifact（可无序）;
             agent: 用于 LLM 调用的 BaseAgent;
-            prompt_loader: Prompt 模板加载器。
+            prompt_loader: Prompt 模板加载器;
+            episode_number: 用户指定待修订集号；缺省时自动选集;
+            user_instruction: 用户补充要求（不可违反锁定事实）。
 
         Returns:
-            revision_plan Artifact；无 need_revision 集时返回 None。
+            revision_plan Artifact；自动选集且无 need_revision 集时返回 None。
 
         Raises:
             AppError(CROSS_PROJECT_ACCESS): 原稿不属于当前项目。
+            AppError(EVALUATION_NOT_FOUND): 指定集无评估报告。
         """
         if not evaluation_reports:
             return None
@@ -91,16 +100,22 @@ class RevisionService:
             EvaluationReport.model_validate(r.content) for r in evaluation_reports
         ]
 
-        # 2. 确定性选集（纯函数，不调用 LLM）
-        selected = select_revision_candidate(reports)
-        if selected is None:
-            logger.info("全部评估通过，无需修订")
-            return None
+        # 2. 选集：用户指定集 vs 确定性自动选集
+        selected: EvaluationReport
+        if episode_number is not None:
+            eval_artifact = self._find_by_episode(evaluation_reports, episode_number)
+            selected = EvaluationReport.model_validate(eval_artifact.content)
+        else:
+            candidate = select_revision_candidate(reports)
+            if candidate is None:
+                logger.info("全部评估通过，无需修订")
+                return None
+            selected = candidate
+            eval_artifact = self._find_by_episode(
+                evaluation_reports, selected.episode_number
+            )
 
-        # 3. 定位原稿与评估 Artifact，跨项目防护
-        eval_artifact = self._find_by_episode(
-            evaluation_reports, selected.episode_number
-        )
+        # 3. 定位原稿，跨项目防护
         script_artifact = await self._artifact_svc.get_version(
             db, selected.script_artifact_id
         )
@@ -130,6 +145,7 @@ class RevisionService:
             script_draft=script,
             evaluation_report=selected,
             locked_facts=list(locked_facts),
+            user_instruction=user_instruction,
         )
         plan: RevisionPlan = await self._skill.execute(
             {
@@ -139,7 +155,7 @@ class RevisionService:
             }
         )
 
-        # 5. 持久化（input_hash 幂等兜底）
+        # 5. 持久化（input_hash 幂等兜底；user_instruction 纳入幂等键）
         return await self._artifact_svc.create_validated_artifact(
             db,
             project_id=project_id,
@@ -150,6 +166,7 @@ class RevisionService:
             source_artifact_ids=self._build_sources(
                 script_artifact, eval_artifact, story_bible_artifact
             ),
+            dedup_extra=user_instruction or "",
         )
 
     # ---- 查询 ----

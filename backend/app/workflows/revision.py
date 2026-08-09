@@ -37,6 +37,22 @@ logger = logging.getLogger(__name__)
 _MAX_REVISION_ROUNDS = Settings().max_revision_rounds
 
 
+def _should_route_after_select(state: CreationState) -> Literal["revise", "__end__"]:
+    """select_revision 后的路由决策（F-06 独立图）。
+
+    - revision_candidate_episode 非 None（自动选中或用户预置）→ revise；
+    - 无候选（自动路径全部评估通过）→ __end__，避免空转连续性/重评。
+
+    注意：此条件边**只**加在独立的 build_revision_workflow() 上。
+    creation.py 内联主流程的 select_revision 仅在评估已判定需修订时可达，
+    加条件边有把 run 卡在 running 的风险——两处刻意不对称。
+    """
+    if state.get("revision_candidate_episode") is None:
+        logger.info("无待修订集，独立修订工作流直接结束")
+        return "__end__"
+    return "revise"
+
+
 def _should_route_after_continuity(state: CreationState) -> Literal["re_evaluate", "__end__"]:
     """continuity_check 后的路由决策。
 
@@ -105,7 +121,12 @@ def build_revision_workflow() -> CompiledStateGraph[CreationState, None, Creatio
 
     builder.set_entry_point("select_revision")
 
-    builder.add_edge("select_revision", "revise")
+    # F-06：自动路径无候选（全部评估通过）时直接 END，避免空转
+    builder.add_conditional_edges(
+        "select_revision",
+        _should_route_after_select,
+        {"revise": "revise", "__end__": END},
+    )
     builder.add_edge("revise", "continuity_check")
     builder.add_conditional_edges(
         "continuity_check",

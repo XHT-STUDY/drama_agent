@@ -56,6 +56,41 @@ async def select_revision_node(state: CreationState) -> dict[str, Any]:
     progress("select_revision", "started", 0.99)
 
     try:
+        # F-06：预置候选（用户显式指定单集）。存在时不走确定性自动选集，
+        # 仅校验其评估报告在 State 中可寻址；缺失则直接判定失败。
+        preset_ep = state.get("revision_candidate_episode")
+        if preset_ep is not None:
+            if str(preset_ep) not in eval_ids:
+                logger.error("预置待修订集 %d 无评估报告", preset_ep)
+                await publisher.publish(
+                    db, run_id=run_id, event_type="node.failed",
+                    payload={"node": "select_revision", "error": f"第 {preset_ep} 集无评估报告"},
+                    autocommit=True,
+                )
+                return {
+                    "status": "failed",
+                    "error_node": "select_revision",
+                    "error_detail": f"第 {preset_ep} 集无评估报告",
+                }
+            new_round = state.get("revision_round", 0) + 1
+            await publisher.publish(
+                db, run_id=run_id, event_type="node.completed",
+                payload={
+                    "node": "select_revision",
+                    "selected_episode": preset_ep,
+                    "preset": True,
+                    "revision_round": new_round,
+                    "progress": 1.0,
+                },
+                autocommit=True,
+            )
+            progress("select_revision", "completed", 1.0)
+            return {
+                "revision_candidate_episode": preset_ep,
+                "revision_round": new_round,
+                "completed_nodes": state.get("completed_nodes", []) + ["select_revision"],
+            }
+
         reports: list[EvaluationReport] = []
         for aid in eval_ids.values():
             artifact = await artifact_svc.get_version(db, uuid.UUID(aid))

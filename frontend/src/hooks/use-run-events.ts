@@ -133,6 +133,14 @@ export function useRunEvents(
     } else if (data.event_type === "run.failed") {
       console.log("[SSE] 工作流失败", data.payload);
       setRunStatus("failed");
+    } else if (
+      // 需人工复核 / 修订轮次用满等 → 归入 needs_review 终态（H-07 E2E 低分场景）
+      data.event_type === "run.needs_review" ||
+      data.event_type === "run.needs_manual_review" ||
+      data.event_type === "run.needs_revision_decision"
+    ) {
+      console.log("[SSE] 工作流暂停待人工复核", data.event_type, data.payload);
+      setRunStatus("needs_review");
     }
   }, []);
 

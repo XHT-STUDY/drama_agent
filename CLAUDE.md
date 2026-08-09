@@ -82,9 +82,9 @@ make doctor       # 环境健康检查(DB、Redis、配置)
 
 ## 当前进度
 
-- **已验收**:Phase A(工程基线)、B(后端基础设施)、C(创作能力)全部 DONE
-- **初步跑通**:H-01~05(前端项目 / 对话 / SSE 进度 / StoryBible / 大纲 / 剧本 / 评估视图),真实 LLM 全链路可运行
-- **未开始**:H-06~07、Phase D(RAG)、E(评估)、F(修订)、G(记忆 / 导入导出)、I(发布加固)
+- **已验收**:Phase A(工程基线)、B(后端基础设施)、C(创作能力)、E(评估)、F(修订)全部 DONE
+- **H 阶段全部 DONE(H-01~07)**:前端工作台 + 导出中心 + Playwright E2E 全链路闭环。`make e2e REPEAT=5` 验收通过(FakeLLM + 低分场景,隔离 postgres/redis)
+- **未开始**:Phase D(RAG)、G(记忆 / 导入导出)、I(发布加固)
 
 最新进度以 [docs/DEV_PLAN.md](docs/DEV_PLAN.md) §13 进度总表为准。
 

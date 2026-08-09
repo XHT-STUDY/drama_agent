@@ -1,0 +1,41 @@
+{
+  "episode_number": 1,
+  "script_artifact_id": "00000000-0000-0000-0000-000000000010",
+  "rubric_version": "1.0.0",
+  "dimension_scores": {
+    "opening_hook": 60,
+    "main_clarity": 55,
+    "character_appeal": 62,
+    "conflict_intensity": 50,
+    "payoff_density": 58,
+    "ending_hook": 65,
+    "pacing": 52,
+    "visualizability": 48,
+    "compliance_safety": 88
+  },
+  "overall_score": 58.7,
+  "strengths": ["合规性表现良好", "结尾钩子留有悬念"],
+  "issues": [
+    {
+      "issue_id": "iss_low_001",
+      "dimension": "conflict_intensity",
+      "severity": "medium",
+      "scene_number": 1,
+      "evidence": "冲突呈现较为平淡",
+      "diagnosis": "冲突张力不足，缺乏尖锐的对抗元素",
+      "suggestion": "增加与主角对立的角色，在淘汰现场施加更直接的质疑"
+    },
+    {
+      "issue_id": "iss_low_002",
+      "dimension": "visualizability",
+      "severity": "medium",
+      "scene_number": 2,
+      "evidence": "场景描写较少",
+      "diagnosis": "画面感偏弱，场景与动作描写不足",
+      "suggestion": "补充环境与动作细节，增强可视觉化程度"
+    }
+  ],
+  "revision_suggestions": ["加强冲突张力与场景画面感"],
+  "need_revision": true,
+  "risk_flags": []
+}

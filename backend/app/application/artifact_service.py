@@ -119,6 +119,7 @@ class ArtifactService:
         content_schema_version: str = "1.0",
         prompt_version: str = "",
         source_artifact_ids: list[dict[str, Any]] | None = None,
+        dedup_extra: str = "",
     ) -> ArtifactResponse:
         """创建经过 Schema 校验的 Artifact。
 
@@ -141,6 +142,7 @@ class ArtifactService:
             content_schema_version=content_schema_version,
             prompt_version=prompt_version,
             source_artifact_ids=source_artifact_ids,
+            dedup_extra=dedup_extra,
         )
         return ArtifactResponse(artifact)
 
@@ -210,3 +212,20 @@ class ArtifactService:
             }
             for link in links
         ]
+
+    async def find_referencing_artifacts(
+        self,
+        db: AsyncSession,
+        target_id: uuid.UUID,
+        *,
+        relation: str | None = None,
+        artifact_type: str | None = None,
+    ) -> list[ArtifactResponse]:
+        """查询反向引用指定 Artifact 的所有 Artifact (F-06)。
+
+        沿 ArtifactLink.target_id 反查下游产物，供修订结果链解析。
+        """
+        artifacts = await self._store.find_referencing_artifacts(
+            db, target_id, relation=relation, artifact_type=artifact_type
+        )
+        return [ArtifactResponse(a) for a in artifacts]

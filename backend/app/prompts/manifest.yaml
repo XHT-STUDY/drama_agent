@@ -57,12 +57,12 @@ prompts:
 
   # ---- 修订计划 ----
   - name: revision_plan
-    version: "1.0.0"
+    version: "1.1.0"
     input_schema: RevisionPlanInput
     output_schema: RevisionPlan
     owner: reviser
     template: revision_plan.md
-    changelog: "初始版本：从评估问题生成有据可依的修订计划，每个 operation 绑定 issue_ids、目标场景与 preserve"
+    changelog: "v1.1: 新增用户补充要求（user_instruction）段——置于锁定事实之下、不可违反锁定事实；其余保持有据可依的 operation 生成"
 
   # ---- 单集剧本修订 ----
   - name: revise_episode

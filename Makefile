@@ -1,7 +1,7 @@
 # DramaAgent Makefile
 # 统一开发命令入口 — 详见 docs/DEV_PLAN.md
 
-.PHONY: install lint typecheck test ci up down doctor clean
+.PHONY: install lint typecheck test ci up down doctor clean e2e-setup e2e e2e-down
 
 ## 安装全部依赖
 install:
@@ -69,6 +69,23 @@ doctor:
 	@echo "=== 检查本地运行时目录 ==="
 	@(test -d var/uploads && test -d var/artifacts) || echo "WARN: var/uploads 或 var/artifacts 目录不存在，请运行 make up"
 	@echo "=== 环境检查完成 ==="
+
+## 安装 Playwright 浏览器（E2E 前置，一次性）
+e2e-setup:
+	@echo "=== 安装 Playwright Chromium ==="
+	cd frontend && pnpm exec playwright install chromium --with-deps
+	@echo "=== Playwright 浏览器安装完成 ==="
+
+## 运行 Playwright E2E（全链路 Demo，FakeLLM）
+## 用法：make e2e           # 冒烟 1 次
+##       make e2e REPEAT=5  # 验收：可重复运行至少 5 次
+e2e:
+	@bash scripts/e2e.sh --repeat-each=$(REPEAT)
+
+## 停止 E2E 基础设施（PostgreSQL:5433 / Redis:6380）
+e2e-down:
+	docker compose -f docker-compose.e2e.yml down -v
+	@echo "=== E2E 基础设施已停止 ==="
 
 ## 清理构建产物与缓存
 clean:

@@ -152,8 +152,8 @@ export default function ProjectDetailPage() {
             onReconnect={runEvents.reconnect}
           />
 
-          {/* 完成后显示导航链接 */}
-          {runEvents.runStatus === "completed" && (
+          {/* 完成后显示导航链接（含需人工复核的终态，H-07） */}
+          {(runEvents.runStatus === "completed" || runEvents.runStatus === "needs_review") && (
             <div className="mt-4 flex flex-wrap gap-3">
               <Link
                 href={`/projects/${projectId}/story-bible`}
@@ -166,6 +166,18 @@ export default function ProjectDetailPage() {
                 className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-blue-300 hover:text-blue-600 transition-colors"
               >
                 📋 查看分集大纲
+              </Link>
+              <Link
+                href={`/projects/${projectId}/versions`}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-blue-300 hover:text-blue-600 transition-colors"
+              >
+                🔀 修订与版本
+              </Link>
+              <Link
+                href={`/projects/${projectId}/exports`}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-blue-300 hover:text-blue-600 transition-colors"
+              >
+                📦 导出中心
               </Link>
             </div>
           )}
@@ -204,8 +216,8 @@ export default function ProjectDetailPage() {
           {/* runs 加载完成且无错误 → 根据 latestRun 状态展示 */}
           {runsReady && !runsError && (
           <>
-          {/* 上次运行已完成 → 显示结果入口 */}
-          {latestRun?.status === "completed" && (
+          {/* 上次运行已完成 / 需人工复核 → 显示结果入口（H-07） */}
+          {(latestRun?.status === "completed" || latestRun?.status === "needs_review") && (
             <div className="mb-6 rounded-lg border border-green-200 bg-green-50 p-5">
               <h3 className="mb-2 text-sm font-semibold text-green-800">✅ 上次创作已完成</h3>
               <div className="flex flex-wrap gap-3">
@@ -226,6 +238,18 @@ export default function ProjectDetailPage() {
                   className="rounded-lg border border-green-300 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-blue-300 hover:text-blue-600 transition-colors"
                 >
                   📝 查看剧本
+                </Link>
+                <Link
+                  href={`/projects/${projectId}/versions`}
+                  className="rounded-lg border border-green-300 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-blue-300 hover:text-blue-600 transition-colors"
+                >
+                  🔀 修订与版本
+                </Link>
+                <Link
+                  href={`/projects/${projectId}/exports`}
+                  className="rounded-lg border border-green-300 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-blue-300 hover:text-blue-600 transition-colors"
+                >
+                  📦 导出中心
                 </Link>
               </div>
             </div>

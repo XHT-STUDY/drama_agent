@@ -35,6 +35,7 @@ def compute_input_hash(
     *,
     episode_number: int = 1,
     artifact_type: str = "",
+    dedup_extra: str = "",
 ) -> str | None:
     """计算输入 Artifact ID 集合的 SHA256。
 
@@ -44,22 +45,27 @@ def compute_input_hash(
     哈希载荷同时包含 episode_number 与 artifact_type —— 否则多集工作流中
     各集剧本共享相同的 source（outline + story_bible），input_hash 会跨集
     碰撞，导致第 2 集起全部幂等复用第 1 集的 Artifact（F-05 修复）。
+    dedup_extra 仅在非空时加入载荷 —— 使"同一原稿、不同指令"的修订计划
+    拥有不同幂等键（F-06），同时保持存量哈希逐字节不变。
 
     Args:
         source_artifact_ids: [{"artifact_id": "uuid", "version": 1, "relation": "derived_from"}, ...]
         episode_number: 所属集号（参与幂等键，区分不同集的同源产物）。
         artifact_type: Artifact 类型（参与幂等键，避免不同类型共享源时误复用）。
+        dedup_extra: 附加去重因子（如 user_instruction），非空时纳入哈希。
 
     Returns:
         64 位 SHA256 十六进制字符串；无输入时返回 None。
     """
     if not source_artifact_ids:
         return None
-    payload = {
+    payload: dict[str, Any] = {
         "episode_number": episode_number,
         "artifact_type": artifact_type,
         "sources": sorted(source_artifact_ids, key=lambda x: x.get("artifact_id", "")),
     }
+    if dedup_extra:
+        payload["dedup_extra"] = dedup_extra
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 

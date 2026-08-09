@@ -11,9 +11,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "e2e": "playwright test --config ../e2e/playwright.config.ts"
   },
   "dependencies": {
+    "docx": "^9.7.1",
     "next": "^15.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
@@ -21,6 +23,7 @@
   "packageManager": "pnpm@9.15.0",
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.15.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

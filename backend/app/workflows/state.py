@@ -51,6 +51,8 @@ class CreationState(TypedDict, total=False):
     """当前轮选中的待修订集号（1-based）。"""
     revision_plan_artifact_id: str | None
     """当前轮修订计划 Artifact UUID 字符串。"""
+    user_instruction: str | None
+    """用户补充要求（不可违反锁定事实；进 RevisionPlanInput 供修订计划使用）。"""
     needs_manual_review: bool
     """连续性失败或重评分显著下降（>5 分）时为 True，转人工审查。"""
     needs_manual_review_reason: str | None

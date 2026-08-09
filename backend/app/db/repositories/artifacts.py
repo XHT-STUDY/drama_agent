@@ -165,3 +165,37 @@ class ArtifactRepository(BaseRepository):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def find_referencing_artifacts(
+        self,
+        target_id: uuid.UUID,
+        *,
+        relation: str | None = None,
+        artifact_type: str | None = None,
+    ) -> list[Artifact]:
+        """反向依赖查询：以指定 Artifact 为 target 的所有 Artifact (F-06)。
+
+        用于从修订计划沿 ArtifactLink 链解析候选稿 / 连续性检查结果等下游产物。
+        JOIN Artifact 过滤类型，按 target 去重（同一 Artifact 可能有多条链接），
+        再按 version 升序排列。
+
+        Args:
+            target_id: 被引用的 Artifact ID（ArtifactLink.target_id）。
+            relation: 可选——只返回指定 relation（如 "revises" / "derived_from"）。
+            artifact_type: 可选——只返回指定类型的 Artifact（如 "script_draft"）。
+
+        Returns:
+            反向引用该 Artifact 的 Artifact 列表（按 version 升序、去重）。
+        """
+        stmt: Any = (
+            select(Artifact)
+            .join(ArtifactLink, ArtifactLink.source_id == Artifact.id)
+            .where(ArtifactLink.target_id == target_id)
+        )
+        if relation is not None:
+            stmt = stmt.where(ArtifactLink.relation == relation)
+        if artifact_type is not None:
+            stmt = stmt.where(Artifact.type == artifact_type)
+        stmt = stmt.order_by(Artifact.version.asc())
+        result = await self.session.execute(stmt)
+        return list(result.scalars().unique().all())

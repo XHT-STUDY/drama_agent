@@ -1,0 +1,38 @@
+# DramaAgent E2E 测试基础设施（H-07）
+#
+# 与开发环境隔离：仅提供 PostgreSQL + Redis 两个容器（独立端口与卷），
+# 后端 / 前端以宿主进程运行（scripts/e2e.sh 编排），避免新增镜像构建范围。
+#
+# 使用：make e2e   /   make e2e-down
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: drama-e2e-postgres
+    environment:
+      POSTGRES_USER: drama
+      POSTGRES_PASSWORD: drama
+      POSTGRES_DB: drama_e2e
+    ports:
+      - "5433:5432"
+    volumes:
+      - e2e_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drama -d drama_e2e"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: drama-e2e-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  e2e_postgres_data:

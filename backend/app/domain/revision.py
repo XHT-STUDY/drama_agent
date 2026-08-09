@@ -67,6 +67,9 @@ class RevisionPlan(BaseModel):
         ge=0.0,
         le=1.0,
     )
+    user_instruction: str | None = Field(
+        default=None, description="用户补充要求（不可违反锁定事实）"
+    )
 
     @model_validator(mode="after")
     def _check_operations_non_empty(self) -> "RevisionPlan":
@@ -104,6 +107,9 @@ class RevisionPlanInput(BaseModel):
         description="允许的最大文本变化比例",
         ge=0.0,
         le=1.0,
+    )
+    user_instruction: str | None = Field(
+        default=None, description="用户补充要求（不可违反锁定事实）"
     )
 
 

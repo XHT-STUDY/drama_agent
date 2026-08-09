@@ -189,3 +189,144 @@
 - **幂等键必须覆盖业务输入的身份边界**：只哈希"来源依赖"是不够的——多集剧本同源是常态，缺 episode/type 的键会把不同集误判为同一输入。设计幂等键前先枚举"什么算相同输入"。
 - **"断言 key 数量"≠"断言内容存在"**：`len(dict)==3` 对"3 个 key 指向同一对象"毫无防备。验证"每集都有产物"要用按集查询（`list_versions` 计数 / 按集拉取），并断言 ID 独立性。
 - **测试 helper 的自证**：播种 helper 的 docstring 说"ep1 低分、ep2/3 高分"，实现却全种高分——调试时单独写"播种→读回→跑纯函数"的探针测试，一步定位是播种错还是节点错，远快于读满图日志。
+
+## 2026-08-09 — git stash 对比 mypy 基线污染（untracked 文件未被藏起）
+
+**症状**：F-06 收尾验证 mypy 时，采用"改动前 `git stash` 跑一遍当基线，改动后跑一遍对比新增"的方法。第一次对比得到"基线 62 错误 vs 当前 59 错误"——新增文件使基线比当前还高，结论自相矛盾，无法判定是否引入了新错误。
+
+**产生原因**：`git stash`（无 `-u`）**默认不藏 untracked 文件**。F-06 新增的 [revisions.py](backend/app/api/v1/revisions.py) 与 [test_revisions.py](backend/tests/integration/api/test_revisions.py) 是全新文件，`git stash` 后仍留在工作区——"基线"跑的是"旧 runs.py + 新 revisions.py"的混合状态，其错误数既包含旧代码的存量错误、又包含新文件尚未修复的错误，所以反而高于改动后的干净状态。此外行号差异也让两份输出难以 diff。
+
+**解决方案**：放弃 stash 法，改用**消息归一化对比**——把错误消息按行号归一化后直接 diff 两份完整输出：
+
+```bash
+cd backend
+uv run mypy 2>&1 | sed -E 's/(\.py):[0-9]+: error: /\1: /' | sort > /tmp/mypy_current.txt
+git stash && uv run mypy 2>&1 | sed -E 's/(\.py):[0-9]+: error: /\1: /' | sort > /tmp/mypy_base.txt && git stash pop
+diff /tmp/mypy_base.txt /tmp/mypy_current.txt   # 仅显示被"删除"的行(改掉的存量错误)与被"新增"的行(真正新错误)
+```
+
+归一化后只比 `文件: 错误代码` 前缀，行号差异不再污染；确认基线 59 条全部落在未改动的文件（runs.py 的 FakeLLM/ainvoke/unused-ignore、creation.py type-arg、既有测试文件等），改动文件与新增文件零错误 → 判定 0 新增。
+
+**学习收获**：用 git 机制做"前后对比"时，**必须显式确认被藏/被恢复的文件集合覆盖了你关心的全部文件**——untracked 的新增文件是 stash 的盲区。做 mypy（或任何全仓静态检查）的基线对比，直接对两份完整输出做归一化 diff 更简单可靠，不必依赖 git；同时用 `sort` 消除顺序差异。归一化正则要**只去掉行号、保留文件与错误代码**，避免把不同的真实错误混淆。
+
+## 2026-08-09 — mypy 局部推断陷阱：分支类型污染 / 同作用域同名变量 / reexport
+
+**症状**：F-06 的三个 mypy 报错都是"运行正确、类型不洁"：
+1. `revision_service.py` 报 `Incompatible types in assignment`——`selected` 变量先被赋 `EvaluationReport`、else 分支再赋 `select_revision_candidate(reports)`（返回 `EvaluationReport | None`）；
+2. `runs.py` 报 `Name "latest_per_episode" already defined`（no-redef）——evaluate 与 revise 两个 elif 分支在同一函数作用域各定义了一个同名变量；
+3. `test_revisions.py` 报 `"DEFAULT_EVALUATION_WEIGHTS" is not exported`——从 `app.domain.evaluation` import 该常量，但 mypy 严格模式不允许 re-export。
+
+**产生原因**：
+1. 变量在第一个分支被推断为窄类型后，后续分支再赋宽类型（`T | None`）时，mypy 沿用首次推断做兼容性检查——控制流虽然保证 else 分支不会同时执行，但静态检查按声明序合并。
+2. Python 没有块级作用域，elif 分支里的变量同属函数作用域；mypy 视同名重定义为错误（非 `# type: ignore` 无法共存）。
+3. 常量定义在 `app.domain.enums`，`app.domain.evaluation` 只是 `from ... import` 转发；严格模式（`no_implicit_reexport` 默认关闭但对顶层 import 有警告）不接受转发层作为合法来源。
+
+**解决方案**：
+1. 显式注解 `selected: EvaluationReport`，并用中间变量 `candidate = select_revision_candidate(reports)` 收窄后再赋给 `selected`（if candidate is None: return None 之后 candidate 已被 narrow 成 EvaluationReport）；
+2. 改名切断同作用域冲突——revise 分支的变量改为 `latest_scripts`（语义也更准确：只有 evaluate 分支需要"每集最新"，revise 分支要的是"全部待修订集的剧本集合"）；
+3. 改从**真正定义处** import：`from app.domain.enums import DEFAULT_EVALUATION_WEIGHTS`。mypy 的错误消息会直接指出"该符号在哪个模块定义"——按它的提示改 import 来源即可。
+
+**学习收获**：
+- mypy 的局部类型推断是**声明序敏感**的：先窄后宽、同作用域重名、跨模块转发 import 都是静态检查的坑，与运行时正确性完全无关——pytest 全绿不代表 mypy 静。
+- 应对三件套：①分支内收窄宽类型时用中间变量 + `if x is None: return` 让控制流替你做 narrowing；②同作用域复用变量名一律改名而非加 ignore；③严格模式报 reexport 时看错误提示"该符号定义在哪"，改从源头 import。
+- 收尾验证时把 `uv run mypy` 当作第一公民（与 ruff 同级），新增文件尤其要在 mypy 严格模式下保持全类型化——API handler 不返回 `Any`，文档对 `revisions.py` 的要求正是为让新代码不进错误基线的门槛。
+
+## 2026-08-09 — vitest 内所有 useState 组件报 "Invalid hook call"（React 双实例）
+
+**症状**：H-06 新增 `DiffView`（内含 `useState`）测试后，**任何一个**渲染含 hook 组件的测试都抛 `Invalid hook call` / `Cannot read properties of null (reading 'useState')`。此前全套测试（H-01..H-05）全绿——因为被测组件全部无状态，从未真正渲染过 hook 组件。连一个最小 `function Probe(){ const [open]=useState(false); return <div/> }` 的探针测试也失败。
+
+**产生原因**：pnpm workspace hoisting 导致**两份 react**：
+- `@testing-library/react` 被提升到仓库根 node_modules（`/home/xie/drama_agent/node_modules/.pnpm/@testing-library+react@16.3.2_...`），它 `import "react-dom/client"` 走**根**的 react-dom → 运行时 `require("react")` 命中**根** `.pnpm/react@19.2.8`；
+- 测试文件 `import React from "react"`（经 frontend 的 Vite 解析）走 **frontend** `.pnpm/react@19.2.8`。
+
+React 19 的 `ReactSharedInternals.H`（hook dispatcher）挂在**各自模块实例**上：react-dom 在自己的 react 实例上 `H = currentDispatcher`，`useState` 在另一个实例上读 `H` → 渲染期间 dispatcher 为 `null` → "Invalid hook call"。用 `require.resolve` 从测试目录探针看不出问题（它两端都解析到 frontend），必须从 **@testing-library/react 所在目录**解析才看到根副本。验证手段：`require.resolve("react-dom/client", { paths: [TLR路径] })` ≠ `require.resolve("react", { paths: [测试目录] })`。
+
+**解决方案**：在 [vitest.config.ts](frontend/vitest.config.ts) 的 `resolve.alias` 用**数组形式**把 react 系全部 alias 到【与 react-dom 同源的根副本】具体文件，且**更具体前缀在前**：
+```ts
+resolve: {
+  alias: [
+    { find: "@", replacement: path.resolve(__dirname, "./src") },
+    { find: "react-dom/client",   replacement: path.resolve(__dirname, "../node_modules/.pnpm/react-dom@19.2.8_react@19.2.8/node_modules/react-dom/client.js") },
+    { find: "react-dom",          replacement: path.resolve(__dirname, "../node_modules/.pnpm/react-dom@19.2.8_react@19.2.8/node_modules/react-dom/index.js") },
+    { find: "react/jsx-dev-runtime", replacement: path.resolve(__dirname, "../node_modules/.pnpm/react@19.2.8/node_modules/react/jsx-dev-runtime.js") },
+    { find: "react/jsx-runtime",  replacement: path.resolve(__dirname, "../node_modules/.pnpm/react@19.2.8/node_modules/react/jsx-runtime.js") },
+    { find: "react",              replacement: path.resolve(__dirname, "../node_modules/.pnpm/react@19.2.8/node_modules/react/index.js") },
+  ],
+}
+```
+注意两个无效方案（踩过）：`resolve.dedupe: ["react","react-dom"]` 单独用不生效——react-dom 是 **externalized CJS**，运行时 `require("react")` 由 Node 解析，dedupe 管不到；`test.server.deps.inline` 也未让 react-dom 走 Vite 图。另外 alias **不能**指向 frontend 副本——react-dom 仍在根，两根不对齐。**必须让测试的 react 对齐 react-dom 的 react（根副本）**。
+
+**学习收获**：
+- monorepo + pnpm workspace 下，测试环境很容易出现"渲染方（react-dom）与调用方（useState）各持一份 react"的静默分裂，症状就是**所有 hook 组件 Invalid hook call，而无状态组件全绿**——无状态测试永远暴露不了它。新增第一个带 hook 的测试时，先跑一个 `useState` 探针。
+- 排查双实例不要只从测试目录 `require.resolve`，要从真正**加载渲染器的那个依赖**（此处是根 node_modules 里的 @testing-library/react）反向解析，才能看到真实分裂。
+- 另一个连带坑：jsdom 不触发 `<details>/<summary>` 的 `toggle` 事件，受控 `<details>` 的交互测试永远点不开。折叠交互组件直接改用按钮 + `onClick` 显式 setState，别依赖原生 details 行为。
+
+---
+
+## 2026-08-09 — uvicorn 起后端报 `Attribute "app" not found in module "app.main"`
+
+**症状**：E2E 编排里 `uvicorn app.main:app` 启动即失败，`Error loading ASGI app. Attribute "app" not found in module "app.main"`。
+
+**产生原因**：本仓库后端用的是 **app factory 模式**——[main.py](backend/app/main.py) 只有 `create_app(settings)`，没有模块级 `app` 对象。`uvicorn app.main:app` 期望模块里有一个名为 `app` 的 ASGI 实例。开发时一直没暴露，因为此前没有统一的后端启动脚本（`make run` 不存在，文档也未记录 uvicorn 命令）。
+
+**解决方案**：用 uvicorn 的 **factory 模式**：`uvicorn "app.main:create_app" --factory`。工厂字符串要求可调用对象返回 ASGI app，uvicorn 加载后调用之。
+
+**学习收获**：`app.factory:create_app` 与 `app.factory:app` 是两种不同的 uvicorn 入口。遇到 `Attribute not found` 先看目标模块是工厂还是实例；用 `--factory` 或写一个模块级 `app = create_app()` 入口。E2E 编排这类"基础设施脚本"最容易踩，启动命令应该在第一个集成脚本里就验证。
+
+---
+
+## 2026-08-09 — `pnpm start -- -p 3100` 把 `--` 原样传给 next，报 `Invalid project directory: -p`
+
+**症状**：E2E 前端启动日志显示 `next start "--" "-p" "3100"`，立即报 `Invalid project directory provided, no such directory: /home/xie/drama_agent/frontend/-p`。
+
+**产生原因**：pnpm（9.x）转发参数到 npm script 时会把 `--` 也一并传下去，`next start` 不认 `--` 后面的位置参数分割，把 `-p` 当成了目录参数。
+
+**解决方案**：改用 `pnpm exec next start -p 3100`——直接调用 node_modules 里的 next 可执行文件传参，不走 npm script 的 `--` 转发语义。
+
+**学习收获**：`pnpm <script> -- args` 与 `pnpm exec <binary> args` 的传参语义不同；前者把 `--` 透传给脚本（许多 CLI 不接受），后者干净。编排脚本里调用项目自带二进制，优先 `pnpm exec` / `npx` 形式。
+
+---
+
+## 2026-08-09 — WSL 下 Playwright Chromium 缺系统库：libnspr4/libnss3/libasound.so.2 not found
+
+**症状**：`playwright install chromium` 装好了浏览器二进制，但 `chromium.launch()` 立即失败：`error while loading shared libraries: libnspr4.so ... libnss3.so ... libnssutil3.so ... libasound.so.2 ...`。`playwright install chromium --with-deps` 需要 sudo，而 WSL 的 sudo 要密码，无法在非交互脚本里安装。
+
+**产生原因**：Chromium 依赖 NSS/NSPR/ALSA 系统库，WSL 精简环境默认未装；这些库属于 root 管理包，普通用户装不了。
+
+**解决方案**（**无需 sudo 的用户级解**）：
+```bash
+mkdir -p var/pw-libs/debs && cd var/pw-libs/debs
+apt-get download libnss3 libnspr4 libasound2t64   # Ubuntu 24.04 是 t64 变体（libasound2 无 candidate）
+for d in *.deb; do dpkg-deb -x "$d" ../root/; done
+```
+然后在启动 Playwright 时注入：
+```bash
+export LD_LIBRARY_PATH="$ROOT/var/pw-libs/usr/lib/x86_64-linux-gnu"
+```
+[e2e.sh](scripts/e2e.sh) 检测到 `var/pw-libs` 存在即注入，普通 Linux 无此目录不受影响。
+
+**学习收获**：WSL / 容器这类精简 Linux 跑 headless Chromium 几乎必然缺 NSS 系库。遇到 sudo 不可用时，`apt-get download + dpkg-deb -x + LD_LIBRARY_PATH` 是干净的用户级替代——不改系统、不污染环境，还能随项目目录分发（已加 .gitignore 则本地自持）。
+
+---
+
+## 2026-08-09 — Playwright `getByText("创作 Idea")` strict mode violation: resolved to 2 elements
+
+**症状**：E2E 第一步断言工作台出现「创作 Idea」失败：`strict mode violation: getByText('创作 Idea') resolved to 2 elements`——同时命中输入区 `<h2>创作 Idea</h2>` 和空态引导段 `<p>在上方输入创作 Idea，点击…</p>`。
+
+**产生原因**：`getByText` 默认子串匹配，同一文案在不同 UI 位置重复出现（标题 + 引导文案）即报严格模式冲突。Playwright 1.28+ 对定位到多元素默认抛错，防止断言语义模糊。
+
+**解决方案**：对易重复文案用 `.first()`（`page.getByText("创作 Idea").first()`），或换更精确的 role locator（`getByRole("heading", { name: "创作 Idea" })`）。
+
+**学习收获**：写 E2E 断言前先想"这段文本在页面上可能出现几次"——标题、空态引导、面包屑、占位符都常复用同一关键词。能精确就精确（role/name），不能精确就用 `.first()` 并注释原因，别让严格模式冲突反复打断冒烟。
+
+---
+
+## 2026-08-09 — 下载断言死锁：先 `await download` 再点按钮，事件永远等不到
+
+**症状**：E2E 下载步骤偶发/必现超时——`page.waitForEvent("download")` 挂住不动，直到 Playwright 超时。
+
+**产生原因**：把 `waitForEvent("download")` 写成"先注册 Promise → 但把它放进 await 链的后面，等点击完成后才拿到 Promise"或"先 await 点击再 await download"——download 事件在点击瞬间就已触发，晚到的监听错过它（Playwright 事件队列里 `download` 不会重放）。
+
+**解决方案**：**必须先注册 waitForEvent，再触发下载**。把触发封装成回调，helper 内先 `const p = page.waitForEvent("download"); await trigger(); const d = await p;`。[e2e/fixtures/helpers.ts](e2e/fixtures/helpers.ts) 的 `expectDownloadNotEmpty(page, trigger)` 即此模式。
+
+**学习收获**：凡是"事件发生在动作瞬间"的断言（download、filechooser、response、request），都要先挂监听再触发动作，且用回调延迟触发时机。这个坑对 `waitForEvent("popup")`、`page.on("filechooser")` 同样适用。

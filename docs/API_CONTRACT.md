@@ -129,6 +129,14 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 | POST | `/runs/{id}/cancel` | 取消 Run |
 | GET | `/runs/{id}/events` | SSE 事件流 |
 
+### 修订（F-06）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/projects/{id}/revisions` | 发起修订（自动 / 单集指定，202 + Run） |
+| GET | `/projects/{id}/revisions` | 列出项目修订计划 |
+| GET | `/projects/{id}/revisions/{plan_id}` | 计划详情 + 解析结果链 |
+
 ## POST /projects/{id}/runs — 创建 Run
 
 ### 请求体
@@ -220,6 +228,102 @@ data: {"event_id":"...","run_id":"...","sequence":1,"type":"run.created","payloa
 
 传入 `Last-Event-ID` header 后，服务端从 PostgreSQL 补发之后的所有事件。
 
+## POST /projects/{id}/revisions — 发起修订
+
+F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
+`GET /runs/{id}` 轮询或 `GET /runs/{id}/events`（SSE）观察。
+
+支持两种模式：
+- **自动修订**：不传 `script_artifact_id`，确定性选最低分集（仅 `need_revision=true` 的集）；
+- **单集修订**：传 `script_artifact_id` 指定一个**合法剧本版本**（任意版本，不要求最新），
+  可选 `user_instruction`（不能绕过锁定事实）。
+
+### 请求体
+
+```json
+{
+  "script_artifact_id": "550e8400-e29b-41d4-a716-446655440010",
+  "user_instruction": "加强反派动机，但不得改变主角身世",
+  "idempotency_key": "optional-client-generated-key"
+}
+```
+
+| 字段 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `script_artifact_id` | UUID | 否 | 指定待修订剧本版本；缺省 → 自动修订 |
+| `user_instruction` | string (≤2000) | 否 | 用户补充要求（**不可违反锁定事实**，服务端硬性并入 preserve） |
+| `idempotency_key` | string (≤128) | 否 | 幂等去重键 |
+
+### 响应
+
+**202 Accepted** — 修订 Run 已创建并进入队列（同 `POST /runs` 的 `RunResponse` 结构）。
+
+### 错误码
+
+| 状态码 | code | 说明 |
+|------|------|------|
+| 404 | `SCRIPT_NOT_FOUND` | 指定剧本不存在 / 非 `script_draft` / 非 `valid` |
+| 403 | `CROSS_PROJECT_ACCESS` | 指定剧本不属于当前项目 |
+| 404 | `EVALUATION_NOT_FOUND` | 指定剧本尚无绑定评估（"已过期评估不匹配"拒绝） |
+
+### 工作机制
+
+1. POST → 同步校验（剧本存在 / 类型 / 状态 / 归属 / 绑定评估）→ Run 状态 `queued`
+2. Worker：`queued` → `running` → 执行独立 `build_revision_workflow()`
+   （select_revision → revise → continuity_check → re_evaluate）
+3. 最终：`running` → `completed`（或 `needs_review`：连续性失败 / 重评显著下降 /
+   修订轮次已用满仍存在需修订集）
+
+## GET /projects/{id}/revisions — 修订计划列表
+
+按集号升序、版本升序返回项目全部 `revision_plan` Artifact。
+
+**响应（200）**
+
+```json
+{
+  "items": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440020",
+      "project_id": "...",
+      "type": "revision_plan",
+      "version": 1,
+      "episode_number": 1,
+      "status": "valid",
+      "content": {
+        "episode_number": 1,
+        "source_script_artifact_id": "...",
+        "source_evaluation_artifact_id": "...",
+        "operations": [],
+        "locked_facts": [],
+        "max_change_ratio": 0.3,
+        "user_instruction": null
+      },
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ],
+  "total": 1,
+  "offset": 0,
+  "limit": 20
+}
+```
+
+## GET /projects/{id}/revisions/{plan_id} — 修订计划详情
+
+返回计划本身 + 沿 `ArtifactLink` 反查解析的**结果链**（每段防御式置空）：
+
+| 字段 | 说明 |
+|------|------|
+| `result_chain.source_script` | 计划引用的原稿 Artifact |
+| `result_chain.source_evaluation` | 计划引用的评估报告 |
+| `result_chain.candidate_script` | `relation="revises"` 指向该计划的候选新稿 |
+| `result_chain.continuity_check` | 候选稿派生的连续性检查结果 |
+| `result_chain.new_evaluation` | 绑定候选稿的重评报告 |
+| `result_chain.diff_ids` | Diff 两端：`{"base": 原稿, "target": 候选稿}`，供 `/artifacts/diff` 使用 |
+
+**错误码**：跨项目 403 `CROSS_PROJECT_ACCESS`；非修订计划 / 不存在 404 `ARTIFACT_NOT_FOUND`。
+
 ## Artifact 类型
 
 | Type | 说明 | 集数 |
@@ -229,3 +333,6 @@ data: {"event_id":"...","run_id":"...","sequence":1,"type":"run.created","payloa
 | `episode_outline_set` | 10 集分集大纲 | — |
 | `script_draft` | 单集剧本 | 1-3 |
 | `continuity_state` | 连续性状态 | — |
+| `evaluation_report` | 评估报告（绑定被评估剧本版本） | 1-3 |
+| `revision_plan` | 修订计划（引用原稿 / 评估 / 锁定事实） | 1-3 |
+| `continuity_check` | 修订稿连续性检查结果 | 1-3 |

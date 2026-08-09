@@ -2156,3 +2156,191 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 建议的下一任务
 
 - **F-06 Revision API 与闭环契约**——F-05 的独立 `build_revision_workflow()` 已铺路，加 API 端点与闭环契约测试即可。
+
+---
+
+## 2026-08-09 — F-06 Revision API 与闭环契约
+
+**任务 ID：** F-06
+**状态：** DONE
+**日期：** 2026-08-09
+
+### 做了什么
+
+把 F-05 的修订闭环通过 HTTP 暴露出来：**自动修订 + 用户指定单集修订**（可选 `user_instruction`，不可绕过锁定事实），异步 202 返回 Run，结果沿 Artifact 链可查询，POST 时同步完成权限/版本校验：
+
+- [api/v1/revisions.py](../backend/app/api/v1/revisions.py)（新，`router` tag=revisions）：
+  - `POST /projects/{pid}/revisions`（202）——请求体 `script_artifact_id?`（指定一个**合法剧本版本**，任意版本不要求最新）/ `user_instruction?`（≤2000）/ `idempotency_key?`。同步校验：`get_version(from=None)` 不存在/非 `script_draft`/非 `valid` → 404 `SCRIPT_NOT_FOUND`；跨项目 → 403 `CROSS_PROJECT_ACCESS`；无绑定 valid 评估 → 404 `EVALUATION_NOT_FOUND`（即"已过期评估不匹配"拒绝）。`create_run(action="revise", config={"options":{...}})` + `schedule_worker(run.id, "revise", config)` → 202 `RunResponse`。
+  - `GET /projects/{pid}/revisions`——分页 `{items,total,offset,limit}`，按集号/版本升序。
+  - `GET /projects/{pid}/revisions/{plan_artifact_id}`——plan + **result_chain**：沿 `ArtifactLink` 反查 source_script / source_evaluation / candidate_script（relation=`revises`）/ continuity_check（`derived_from` candidate）/ new_evaluation（`find_evaluation_for_script`）/ diff_ids，每段防御式置空（`contextlib.suppress(NotFoundError)`）；跨项目 403、缺失 404 `ARTIFACT_NOT_FOUND`。
+- [api/v1/runs.py](../backend/app/api/v1/runs.py)：`_schedule_worker` → `schedule_worker`（公开，供 revisions.py import）；create_run 调度守卫与早退守卫纳入 `"revise"`；`_execute_workflow` 新增 `elif action == "revise":` 分支——取 story_bible/outline 最新 valid（缺任一提 ValueError）、解析每集最新 valid script + 绑定评估（`ArtifactRepository.find_evaluation_for_script`）、**用用户指定 script 覆盖**"最新 valid"解析（再校验 type/status/project），构建完整中途播种 state → `build_revision_workflow()`；事后处理 elif 链加 `elif action == "revise":` → `transition_status("completed")` + `run.completed` 事件。
+- [workflows/revision.py](../backend/app/workflows/revision.py)：加 `_should_route_after_select(state) -> Literal["revise","__end__"]` 条件边——预置候选为空时直接 END，避免空转连续性/重评。**刻意不改 creation.py**（其 select_revision 仅当 eval 已判定需修订时可达，改动有卡 running 风险），注释说明此刻意不对称。
+- [workflows/nodes/select_revision.py](../backend/app/workflows/nodes/select_revision.py)：预置候选分支——`revision_candidate_episode` 非 None 时校验其存在于 `evaluation_artifact_ids`（否则 `status="failed"`），保持候选、`revision_round += 1`、publish `preset: True`；自动路径不变（F-05 测试不受影响）。
+- [workflows/nodes/revise.py](../backend/app/workflows/nodes/revise.py)：`build_revision_plan(...)` 透传 `episode_number=state.get("revision_candidate_episode")`、`user_instruction=state.get("user_instruction")`。
+- [application/revision_service.py](../backend/app/application/revision_service.py)：`build_revision_plan` 增 `episode_number` / `user_instruction`——指定集时 `_find_by_episode`（缺失抛 `EVALUATION_NOT_FOUND`）跳过自动选集（不要求 need_revision）；`user_instruction` 进 `RevisionPlanInput` 并作为落库 `dedup_extra`。
+- [domain/revision.py](../backend/app/domain/revision.py)：`RevisionPlanInput` 与 `RevisionPlan` 各加 `user_instruction: str | None = None`（默认 None，存量 golden fixture 不受影响）。
+- [prompts/templates/revision_plan.md](../backend/app/prompts/templates/revision_plan.md) + [prompts/manifest.yaml](../backend/app/prompts/manifest.yaml)：版本 **1.1.0**，在"锁定事实"之后加 `## 用户补充要求` 段渲染 `{{ user_instruction }}`；[skills/revision_plan.py](../backend/app/skills/revision_plan.py) 恒渲染该变量（loader `render()` 严格），`_merge_locked_facts_into_preserve` **无条件**并入 locked_facts——"user_instruction 不能绕过锁定事实"的硬保证。
+- [artifacts/versions.py](../backend/app/artifacts/versions.py)：`compute_input_hash` 增 `dedup_extra`——**仅非空时加入载荷**，存量哈希逐字节不变；store / ArtifactService 透传 `dedup_extra`。
+- [db/repositories/artifacts.py](../backend/app/db/repositories/artifacts.py) + [artifacts/store.py](../backend/app/artifacts/store.py) + [application/artifact_service.py](../backend/app/application/artifact_service.py)：新增 `find_referencing_artifacts`（按 `ArtifactLink.target_id` 反查，可选 relation/type 过滤，按 version 升序）——支撑 result_chain 反查。
+- [api/v1/router.py](../backend/app/api/v1/router.py)：注册 `revisions_router`。
+- 测试：[tests/integration/api/test_revisions.py](../backend/tests/integration/api/test_revisions.py)（新，8 个）：自动修订跑通（202→completed→列表+详情链）；指定剧本 + user_instruction（ep1 恰 2 版本、候选最新 valid、计划含指令、链齐全）；无绑定评估 404；跨项目 403；列表 200；详情含 6 键结果链；跨项目详情 403；OpenAPI 含 `/revisions` 路径。
+- 文档：[docs/API_CONTRACT.md](../docs/API_CONTRACT.md)：修订三端点（POST 202 请求/响应/错误码表、GET 列表、GET 详情 result_chain 表）+ Artifact 类型表补 `revision_plan` / `continuity_check`。
+
+### 为什么这么做
+
+- **API 形态沿用 Run + SSE 异步模式**：修订是长任务（多节点 + LLM），POST 立即 202 + run_id，进度经既有 `GET /runs/{id}` / SSE 观察——客户端无需新协议，与创建/评估一致。
+- **"指定任一合法版本"不校验最新**：单集修订语义是"改这份稿子"，用户可能想重写旧版本；POST 只校验存在/类型/状态/归属/绑定评估，worker 再用用户脚本覆盖"最新 valid"解析，保证指定版本真正被修订（验收①）。
+- **`user_instruction` 硬性并入 preserve 而非提示词软约束**：仅渲染进 prompt 依赖 LLM 自觉，`_merge_locked_facts_into_preserve` 无条件合并是**结构性保证**——指令永远无法删掉锁定事实。
+- **独立图条件边为自动路径省一次空转**：自动修订若无 need_revision 集，select 产出空候选 → 直接 END，不空跑连续性检查与重评；creation.py 不动是因为其 select_revision 只在 eval 已判需修订时可达，改边可能卡 running——两个图语义不同，刻意不对称。
+- **`dedup_extra` 仅非空入载荷**：把 `user_instruction` 纳入幂等键（同源不同指令不误复用），但空值不参与哈希——存量 Artifact 哈希逐字节不变，避免全线重算/重复落库。
+- **result_chain 用反查而非重建**：沿既存 `ArtifactLink` 表反查（`find_referencing_artifacts`），无需为修订额外建索引表；每段防御式置空，缺链不影响整个详情返回。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest -m integration tests/integration/api/test_revisions.py -q` | **8 passed** |
+| `uv run pytest -m integration tests/integration/api/ tests/integration/workflow/test_revision_workflow.py -q` | 回归全绿 |
+| `uv run pytest -m contract tests/contract/test_prompts.py -q` | 全绿（loader 校验 frontmatter 与 manifest 一致，1.1.0 双处同步） |
+| 全量 pytest（-m "not smoke"） | **597 passed / 2 failed**（仅 test_health 存量日志失败，零新增；589→597 恰为 F-06 新增 8） |
+| `uv run ruff check app/ tests/` | All checks passed |
+| `uv run mypy` | **0 新增错误**（59 存量基线，git-stash 归一化对比确认；新增文件零错误） |
+
+### 学习收获
+
+- **mypy 的局部类型推断会在 if/else 分支间"污染"**：`selected` 先被赋 `EvaluationReport`、else 分支再赋 `EvaluationReport | None`（`select_revision_candidate`）→ mypy 报 incompatible assignment。用显式注解 `selected: EvaluationReport` + 中间变量 `candidate` 收窄，把"窄类型先赋、宽类型后赋"的顺序问题摆平。
+- **同作用域同名变量跨分支重定义会撞 no-redef**：runs.py 的 evaluate 与 revise 两个分支各自定义 `latest_per_episode` → mypy no-redef。改名（revise 分支 `latest_scripts`）比 `# type: ignore` 干净，语义也更准确。
+- **`git stash` 不藏 untracked 文件**：mypy 基线对比用 `git stash` 时，新增文件（revisions.py / test_revisions.py）仍留在工作区，会污染"存量基线"的数字。改用**消息归一化对比**（`sed -E 's/(\.py):[0-9]+: error: /\1: /'` 去掉行号）比 stash 干净可靠（详见 TROUBLESHOOTING）。
+- **`from X import Y` 的 reexport 陷阱**：`from app.domain.evaluation import DEFAULT_EVALUATION_WEIGHTS` 在 mypy 严格模式报"re-export not allowed"。改从真正定义处 `app.domain.enums` import——mypy 会告诉你从哪里 import，别硬加 ignore。
+- **反查链用 `contextlib.suppress(NotFoundError)` 替代 try/except/pass**：既满足 Ruff SIM105/B904，又让"缺链置空"的意图显式，比空 except 更可读。
+
+### 建议的下一任务
+
+- **F-07 前端修订视图 / 或进入 Phase G（记忆 / 导入导出）**——API 已闭环，前端可加"发起修订 → 进度 → 结果链 + Diff"视图；RAG 记忆（Phase D）与导入导出（G）仍是剩余大块。
+
+---
+
+## 2026-08-09 — H-06 修订、版本与 Diff 页面
+
+**任务 ID：** H-06（即 F-06 DEV_LOG 建议的"F-07 前端修订视图"；计划中无 F-07，对应任务卡 H-06）
+**状态：** DONE
+**日期：** 2026-08-09
+
+### 做了什么
+
+构建前端修订闭环视图，打通阶段 H Exit Gate 的演示路径（「查看最低分集修订 → 对比版本」，全程不再依赖 Swagger）。纯前端任务，后端 F-01..F-06 的全部 API 直接复用，**零后端改动**：
+
+- [types/api.ts](../frontend/src/types/api.ts)：`ArtifactType` 补 `"continuity_check"`（否则 result_chain 强转 TS 报错）；新增修订/连续性/Diff 全套类型（`RevisionOperation`/`RevisionPlanContent`/`RevisionPlanArtifact`/`ResultChain`/`ContinuityViolation(Kind)`/`ContinuityWarning`/`ContinuityCheckContent`/`DiffMode`/`LineChange`/`SceneChange`/`DiffLineStats`/`SceneDiffSummary`/`ScriptDiff`/`CreateRevisionRequest`）+ `CONTINUITY_VIOLATION_LABELS` kind→中文。
+- [api-client.ts](../frontend/src/lib/api-client.ts)：新增 `revisionsApi`（create 202 / list 分页 / get 详情）+ `artifactsApi.diff(from,to)`（encodeURIComponent）。
+- [features/diff/DiffView.tsx](../frontend/src/features/diff/DiffView.tsx)（新）：scene/line 双模式；行级变更红/绿 + 删除线 + `L{n}` 行号 + `（空）` 占位；`truncated`（全局）与 `line_changes_truncated`（单场景）分级提示；`mode=line` 回退横幅且不显示误导的场景摘要；空 diff「两个版本无差异」。`SceneCard` 受控折叠 + **body 仅在展开时渲染**，`AUTO_OPEN_LIMIT=20`（>20 场景默认折叠）——超大 diff 永不一次性建 DOM。
+- [features/revisions/](../frontend/src/features/revisions/)（新，4 个纯叶子）：`RevisionPlanView`（集数/最大变更比例/用户补充要求/🔒 锁定事实不得违反/操作列表含 preserve 与预期效果）；`ContinuityCheckView`（pass 绿 / fail 红 + 违规 kind→中文 + source 徽章 规则/语义 + 目标/期望/实际/证据 + warnings 琥珀 + 已执行检查计数）；`ScoreComparison`（导出纯函数 `scoreDelta`，下降红「↓ 下降」绝不包装成提升 / 上升绿 / 持平灰，两列复用 `ScoreBar` 九维）；`RevisionPlanList`（卡片选中高亮 + onSelect）。
+- [features/revisions/RevisionDetail.tsx](../frontend/src/features/revisions/RevisionDetail.tsx)（新，容器）：`revisionsApi.get` 取详情 + `result_chain` → 推导 `needsManualReview`（`continuity_check.status==="fail"` 或 `new_eval.overall < source_eval.overall - 5`，对齐 F-05 `_SCORE_DROP_MANUAL_REVIEW_THRESHOLD`）→ 醒目红色 banner；编排 计划/连续性/评分对比/Diff；**「查看原稿 / 查看修订稿」**按钮切换 `ScriptView` 全文。
+- [app/projects/[id]/versions/page.tsx](../frontend/src/app/projects/[id]/versions/page.tsx)（新）：两区 stacked。修订记录：倒序列表 + 默认选中最新 + 顶部可折叠「发起修订」表单（可选 user_instruction）→ `useMutation` POST → 轮询 `GET /runs/{id}` 至终态 → `invalidateQueries` 刷新 + 状态行（completed 绿/needs_review 琥珀/failed 红）。版本对比：集数选择 → 原稿/修订稿版本两个 select（默认 target=最新、base=前一个）→ 任意两版本 `artifactsApi.diff` → `DiffView`；invalid 版本标「候选未通过」；**全程只读，不提供覆盖旧版本按钮**。
+- [app/projects/[id]/page.tsx](../frontend/src/app/projects/[id]/page.tsx)：两处"已完成"导航区加 `🔀 修订与版本` 入口链接。
+- [vitest.config.ts](../frontend/vitest.config.ts)：**修复 React 双实例导致所有 useState 组件 "Invalid hook call"**（详见学习收获）。
+- 测试：[tests/diff-view.test.tsx](../frontend/tests/diff-view.test.tsx)（12）+ [tests/revisions-view.test.tsx](../frontend/tests/revisions-view.test.tsx)（11），覆盖验收 5 项（含 21 场景防卡死交互断言、下降不包装成提升）。
+
+### 为什么这么做
+
+- **计划中没有 F-07**：用户请求「开发 F-07」，但 Phase F（F-01..F-06）已全部 DONE；F-06 日志建议的"F-07 前端修订视图"对应计划任务卡 **H-06**（依赖 H-05 + F Gate），按 H-06 执行并在任务卡/日志中写明映射。
+- **单页 stacked 两区优于 Tab**：修订记录与版本对比并列一页，"原稿可随时查看"流程不被藏，且实现比 Tab 状态切换简单。
+- **数据获取集中、叶子纯 props**：`useQuery`/`useMutation` 全留在 page/RevisionDetail，四个叶子组件与 DiffView 可在无 MSW / 无 QueryClientProvider 环境直接测试（沿用 H-01..H-05 约定）。
+- **大 diff 防卡死 = 后端截断 + 前端惰性渲染双保险**：后端 >2000 行截断清行明细；前端 SceneCard **仅在展开时渲染 body**，>20 场景默认折叠。用 21 场景测试锁定"折叠时行明细不渲染、点开才出现"。
+- **受控折叠不用 `<details>` 原生 onToggle**：jsdom 不触发 details 的 toggle 事件（实测 `after click open present: false`），真实浏览器行为也不统一 → SceneCard 改为按钮 + `onClick` 显式折叠，视觉不变、可交互可测。
+- **needs_manual_review 从 result_chain 推导而非依赖 run 状态**：plan 详情不携带 run 状态，`continuity_check.fail` 或评分降 >5 即为需人工复核——与后端 `_SCORE_DROP_MANUAL_REVIEW_THRESHOLD` 对齐，避免前后端阈值漂移。
+- **补最小「发起修订」入口**：任务卡未列，但它是演示闭环唯一前端入口，低成本高价值（POST `/revisions` 自动模式 + 轮询）。
+- **分数下降绝不包装成提升**：`scoreDelta = revised - source`，负 delta 红色「↓ 下降」，测试显式断言结果中不含「提升」。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `pnpm typecheck` | 零错误 |
+| `pnpm lint` | `✔ No ESLint warnings or errors`（仅存量 lockfile 警告） |
+| `pnpm test -- diff-view revisions-view` | **23 passed**（diff 12 + revisions 11） |
+| `pnpm test` 全量 | **145 passed**（122 → 145，恰为新增 23，零回归） |
+| `pnpm build` | 通过；新增 `/projects/[id]/versions` 动态路由（8.59 kB） |
+
+### 学习收获
+
+- **pnpm workspace hoisting 会让 vitest 出现两份 react → 所有 hook 组件 "Invalid hook call"**：`@testing-library/react` 被提升到**仓库根** node_modules（`/home/xie/drama_agent/node_modules/.pnpm`），其加载的 react-dom 是根副本、运行时 `require("react")` 命中**根** react；而测试文件 `import React from "react"` 走 **frontend** 副本。React 19 的 `ReactSharedInternals.H`（dispatcher）存在各自模块实例上，react-dom 在一个实例上 set、`useState` 在另一个实例上 read → 渲染期间 dispatcher 为 null → "Invalid hook call"。**此前全套测试都只测无状态组件，所以从未暴露**。`resolve.dedupe` 单独无效（react-dom 是 externalized CJS，dedupe 管不到它的运行时 require）；`server.deps.inline` 也未生效。**有效解法**：`resolve.alias` 数组把 react 系全部 alias 到【与 react-dom 同源的根副本】具体文件，且**更具体前缀在前**（`react-dom/client`、`react/jsx-runtime` 必须先于 `react`/`react-dom`，否则 find:"react" 前缀匹配会吞掉子路径，报 "Failed to resolve import react/jsx-dev-runtime"）。
+- **`@testing-library/react` 的 `getByText` 只拼接元素的直接文本节点**（`getNodeText` 过滤非 TEXT_NODE 子节点）：`<span>目标：</span>主角身世` 这种"标签 span + 值文本"或 JSX 插值拆开的文本，整串 `getByText("目标：主角身世")` 找不到。改断言值文本节点本身（`getByText("主角身世")`）。
+- **jsdom 不触发 `<details>`/`<summary>` 的 toggle**：受控 `<details>` 的 `onToggle` 在 jsdom 里永不触发，交互测试过不了。折叠交互应直接用按钮 + `onClick` 显式 setState，别依赖原生 details 行为。
+- **测试组件工厂的默认值要与断言一致**：`makeSceneChange` 默认 `old_scene_number=1`，21 场景测试没覆盖它导致场景标签变成 `第 1 → 21 场`（点「第 21 场」找不到）。覆盖 `old_scene_number` 后标签才正确。
+
+### 建议的下一任务
+
+- **H-07 导出中心与 Playwright E2E**——阶段 H 的最后一个任务卡（依赖 H-06、G-06），导出 Markdown/DOCX + E2E 固定 Demo，完成后可进 Phase I（加固 / RC）。剩余大块还有 Phase D（RAG）与 Phase G（记忆 / 导入导出）的后半。
+
+---
+
+## 2026-08-09 — H-07 导出中心与 Playwright E2E
+
+**任务 ID：** H-07
+**状态：** DONE
+**日期：** 2026-08-09
+
+### 做了什么
+
+打通阶段 H Exit Gate 的最后一环：**前端客户端本地导出中心 + Playwright 全链路 E2E**。用户确认了两个关键决策：① 导出走前端本地（复用现有 GET artifacts 接口取内容，Markdown 浏览器序列化，DOCX 用 `docx` npm 库），零后端导出 API 改动；② E2E 修订用后端低分场景开关（`FAKE_LLM_SCENARIO=revision` 注册低分评估 fixture）使 UI「发起修订」走 F-05 确定性选最低分集。
+
+**后端（测试支撑，默认行为不变）：**
+- [tests/golden/evaluation_report_lowscore.json](../backend/tests/golden/evaluation_report_lowscore.json)（新）：9 维加权 overall ≈58.7（< 阈值 75 → evaluator 回填 `need_revision=true`）。
+- [runs.py](../backend/app/api/v1/runs.py) `_register_fake_fixtures`：`FAKE_LLM_SCENARIO=revision` 时 `evaluate_episode` 改注册低分 fixture（同时覆盖初始评估与修订后重评，同一 prompt_name）；否则维持现状。
+- [tests/integration/api/test_fake_scenario.py](../backend/tests/integration/api/test_fake_scenario.py)（新，3 tests）：断言低分场景下 overall < 阈值且 `need_revision=true`。
+
+**前端导出中心：**
+- [lib/export.ts](../frontend/src/lib/export.ts)（新，纯函数可直测）：`markdownFrom{StoryBible,Outline,Script,Evaluation,Revision}` 各 Artifact → 稳定中文 Markdown 节（不输出内部 UUID/schema_version）；`buildExportMarkdown` 按选择拼接含项目名与导出时间抬头；`buildExportFilename` `{项目名}-{内容}-{时间戳}.{md|docx}`；`downloadBlob`（createObjectURL + 隐藏 `<a download>` + revoke）；`buildDocx` **点击时才 `dynamic(() => import("docx"))`**，避免进 SSR bundle。
+- [features/exports/ExportSection.tsx](../frontend/src/features/exports/ExportSection.tsx)（新，纯叶子）：内容类型多选（StoryBible/大纲/剧本 N 集/评估 N 集/修订说明，无数据置灰）+ 格式单选 + 「📦 生成并下载」+ 生成中/失败重试态。
+- [features/exports/ExportHistory.tsx](../frontend/src/features/exports/ExportHistory.tsx)（新，纯叶子 + localStorage）：时间/格式徽章(MD/DOCX)/内容/大小 + 重新下载（基于实时数据重序列化）+ 清空。
+- [app/projects/[id]/exports/page.tsx](../frontend/src/app/projects/[id]/exports/page.tsx)（新）：useQuery 聚合 project + story_bible/outline/各集 script_draft/evaluation_report/revisions → ExportData；localStorage 历史按项目隔离（`drama-exports:{projectId}`）；空数据 Empty 兜底。
+- 工作台 [page.tsx](../frontend/src/app/projects/[id]/page.tsx)：completed 与 needs_review 双终态导航区均加「📦 导出中心」入口。
+
+**needs_review 终态支持（低分场景退出门 Demo 的必要补齐）：**
+- [use-run-events.ts](../frontend/src/hooks/use-run-events.ts)：`run.needs_review / run.needs_manual_review / run.needs_revision_decision` → `setRunStatus("needs_review")`。
+- [RunProgress.tsx](../frontend/src/features/runs/RunProgress.tsx)：头部「创作完成，需人工复核 ⚠️」+ 琥珀横幅提示可点下方入口查看。
+- 工作台两处导航块条件从 `=== "completed"` 放宽为 `("completed" || "needs_review")`。
+
+**E2E 基建：**
+- [docker-compose.e2e.yml](../docker-compose.e2e.yml)（新）：隔离 postgres（:5433 / drama_e2e）+ redis（:6380），带 healthcheck；后端/前端以宿主进程跑，不引入新镜像。
+- [e2e/playwright.config.ts](../e2e/playwright.config.ts)（新）：`workers:1`、`fullyParallel:false`、`screenshot:"only-on-failure"`、`trace:"retain-on-failure"`（验收：截图/trace 只在失败时保留）。
+- [e2e/fixtures/](../e2e/fixtures/)（新）：`data.ts`（IDEA_TEXT + 期望常量）+ `helpers.ts`（`startCreation`/`waitForRunTerminal`/`expectExactlyOneRevision`/`expectDownloadNotEmpty`/`workbenchEntry`）。
+- [scripts/e2e.sh](../scripts/e2e.sh)（新）：compose 起 → DROP/CREATE drama_e2e → `alembic upgrade head` → `uvicorn "app.main:create_app" --factory`（8010，FakeLLM + 低分场景）→ `NEXT_PUBLIC_API_BASE=… pnpm build` → `pnpm exec next start -p 3100` → `playwright test --repeat-each=$REPEAT` → trap 清理。WSL 缺 Chromium 系统库时自动注入 `var/pw-libs` 到 LD_LIBRARY_PATH（见 TROUBLESHOOTING）。
+- [Makefile](../Makefile)：`e2e-setup` / `e2e`（`scripts/e2e.sh --repeat-each=$(REPEAT)`）/ `e2e-down`。
+
+**E2E Demo spec [dramaagent.spec.ts](../e2e/dramaagent.spec.ts)：** 单用例 8 段串行：空项目创建 → Idea → SSE 实时进度 → 刷新（SSE 重连）→ StoryBible → 10 集大纲 → 第 1 集剧本+低分评估 → 修订恰好 1 条（第 1 集）→ 连续性检查/评分对比/v1→v2 Diff → MD+DOCX 下载非空 + 历史 2 条。全程纯 UI，不使用 Swagger。
+
+### 为什么这么做
+
+- **导出 = 前端本地**：G-05/G-06 后端导出尚未实现，前端本地导出零后端改动即可交付 Exit Gate「下载 DOCX」；Phase G 落地时前端切到后端导出 API，UI 不变（用户确认）。
+- **E2E 修订 = 低分场景开关**：现有高分 golden fixture（overall 77.6 ≥ 75）→ 全部 `need_revision=false` → 自动修订选不出集。低分 fixture 使三集全部低分 → F-05 平局取最小集号 → 恰好修第 1 集，满足「每次只修订一个低分集」验收。开关仅影响 `APP_ENV=test` + 显式环境变量，生产/默认行为不变。
+- **needs_review 补齐是必须而非加戏**：低分场景下三集同低分，MAX_REVISION_ROUNDS=1 只修 1 集，`re_evaluate` 重算 `any_need_revision` 仍为 true → `_should_route_after_revision` 在轮次用满时返回 `__end__` 跳过 finalize → API elif 链判 `needs_revision_decision` → 创作 Run 停在 `needs_review`（这是**设计正确行为**，不是 bug）。但 H-06 之前的工作台只认 `completed`，低分场景退出门看不到任何内容入口 → 补双终态渲染。
+- **截图/trace 只在失败保留**：满足任务卡验收，也避免 CI 大量无用产物。
+- **`--repeat-each=N` 满足可重复性**：FakeLLM golden + 低分确定性 → 每次恰修第 1 集；同一后端/构建复用于 N 次重复，5 次验收共享一次编排成本。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run ruff check app/ tests/` | All checks passed |
+| `uv run mypy app/ tests/` | 仅存量错误（git stash 对照 HEAD 逐条一致，runs.py 5 条全部行号平移，无新增） |
+| `uv run pytest` 全量 | 仅 2 存量失败（test_health.py 日志断言，HEAD 同样失败）；test_fake_scenario 3 passed |
+| `pnpm typecheck` / `pnpm lint` | 零错误 / 零警告 |
+| `pnpm test` 全量 | **162 passed**（145 → 162，新增 exports 17，零回归） |
+| `pnpm build` | 通过；新增 `/projects/[id]/exports` 动态路由（8.34 kB） |
+| `make e2e` | **1 passed**（冒烟） |
+| `make e2e REPEAT=5` | **5 passed (15.0s)** —— 验收「可重复 ≥5 次」达成 |
+
+### 学习收获
+
+- **低分场景下创作 Run 必然停在 `needs_review` 而非 `completed`**：全部集共用同一低分 fixture → 全部 need_revision=true；MAX_REVISION_ROUNDS=1 只能修 1 集；`re_evaluate` 对全部 eval 重算仍低分；路由在轮次用满时 `__end__` 跳过 finalize；API elif 链命中 `needs_revision_decision` → status=needs_review。**这是设计正确行为**，不是故障——E2E 的等待逻辑、工作台入口渲染都要按「双终态」处理，别假定 finalize 恒定 completed。
+- **`app.main` 是 `create_app()` 工厂，没有模块级 `app`**：`uvicorn app.main:app` 报 `Attribute "app" not found`。用 `uvicorn "app.main:create_app" --factory`。
+- **pnpm 会把 `--` 原样传给脚本**：`pnpm start -- -p 3100` 实际执行 `next start "--" "-p" "3100"` → `Invalid project directory: -p`。直接 `pnpm exec next start -p 3100`。
+- **Playwright `getByText` 严格模式会因文本出现在多处报错**：`创作 Idea` 同时命中输入区 h2 与空态引导段 → `strict mode violation: resolved to 2 elements`。对易重复文案用 `.first()` 或更精确的 role locator。
+- **下载断言的正确姿势 = 先注册 `waitForEvent("download")` 再触发**：先 await 再点会死锁（下载事件还没注册就等不到）。`expectDownloadNotEmpty(page, trigger)` 内先 `waitForEvent` 再 `await trigger()`。
+- **WSL 下 Chromium 缺系统库且 sudo 需密码**：`libnspr4/libnss3/libnssutil3/libasound.so.2` not found。**无需 sudo 的解**：`apt-get download libnss3 libnspr4 libasound2t64`（24.04 是 t64 变体）→ `dpkg-deb -x` 解到用户目录 → 启动时注入 `LD_LIBRARY_PATH`。e2e.sh 检测 `var/pw-libs` 存在即注入。
+- **E2E 基建编排用宿主进程后端/前端 + 容器 DB/Redis**：无后端 Dockerfile 时避免引入新镜像构建范围；`--no-build` 复用 `.next` 加速迭代；`--repeat-each` 让"可重复 5 次"变成一个命令。
+
+### 建议的下一任务
+
+- **Phase I（稳定性与发布加固）：I-01 幂等/重试/取消/成本保护 → I-02 可观测性 → I-03 安全回归**——MVP 全链路（含 E2E）已闭环，可按阶段 I 逐卡推进；Phase D（RAG 记忆）与 Phase G（导入导出后半、真导出 API）仍是大块待做。

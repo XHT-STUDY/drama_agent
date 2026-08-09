@@ -164,8 +164,8 @@ async def create_run(
     )
 
     # 异步启动后台 Worker（best effort，不阻塞响应）
-    if body.action in ("create_script", "platform_smoke"):
-        _schedule_worker(run.id, body.action, config_snapshot)
+    if body.action in ("create_script", "platform_smoke", "revise"):
+        schedule_worker(run.id, body.action, config_snapshot)
 
     return RunResponse.from_orm(run)
 
@@ -216,7 +216,7 @@ async def cancel_run(
 _active_workers: dict[str, Any] = {}  # run_id → asyncio.Task
 
 
-def _schedule_worker(
+def schedule_worker(
     run_id: uuid.UUID,
     action: str,
     config_snapshot: dict[str, Any],
@@ -225,6 +225,7 @@ def _schedule_worker(
 
     在 create_run 响应返回后异步启动，
     使用独立的 DB 会话进行 Workflow 执行。
+    公开供 revisions.py 导入（F-06），避免环形 import。
     """
     import asyncio
 
@@ -276,10 +277,12 @@ async def _execute_workflow(
     from app.application.artifact_service import ArtifactService
     from app.application.run_service import RunService
     from app.artifacts.store import ArtifactStore
+    from app.db.repositories.artifacts import ArtifactRepository
     from app.events.publisher import EventPublisher
     from app.prompts.loader import PromptLoader
     from app.workflows.creation import build_creation_workflow
     from app.workflows.evaluation import build_evaluation_workflow
+    from app.workflows.revision import build_revision_workflow
     from app.workflows.state import CreationState
 
     agent = BaseAgent(name="planner", llm=llm_client)
@@ -299,8 +302,8 @@ async def _execute_workflow(
                 return
             await run_svc.transition_status(db, run_id, "running")
 
-            # platform_smoke / revise（Phase F 实现）→ 直接完成
-            if action not in ("create_script", "evaluate"):
+            # platform_smoke 等未接入的 action → 直接完成
+            if action not in ("create_script", "evaluate", "revise"):
                 await run_svc.transition_status(db, run_id, "completed")
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.completed",
@@ -366,7 +369,7 @@ async def _execute_workflow(
                     "prompt_versions": {},
                 }
                 workflow = build_creation_workflow()
-            else:
+            elif action == "evaluate":
                 # action=evaluate → 收集项目已有剧本（每集最新 valid），走独立评估工作流
                 store = ArtifactStore()
                 scripts = await store.list_by_project(
@@ -391,6 +394,89 @@ async def _execute_workflow(
                     "prompt_versions": {},
                 }
                 workflow = build_evaluation_workflow()
+            else:
+                # action=revise → 独立修订工作流（F-06）：中途播种状态。
+                # 每集取最新 valid 剧本与其绑定评估；用户指定剧本时覆盖对应集，
+                # 保证"任一合法版本可指定"成立（不校验是否最新）。
+                store = ArtifactStore()
+                sb_artifact = await store.get_latest(
+                    db, run.project_id, "story_bible", 1
+                )
+                outline_artifact = await store.get_latest(
+                    db, run.project_id, "episode_outline_set", 1
+                )
+                if sb_artifact is None or outline_artifact is None:
+                    raise ValueError("缺少 StoryBible 或大纲，无法执行修订")
+
+                scripts = await store.list_by_project(
+                    db, run.project_id, "script_draft", offset=0, limit=1000
+                )
+                latest_scripts: dict[int, str] = {}
+                for a in scripts:
+                    if a.status == "valid" and a.episode_number not in latest_scripts:
+                        latest_scripts[a.episode_number] = str(a.id)
+
+                repo = ArtifactRepository(db)
+                script_artifact_ids = {
+                    str(ep): sid for ep, sid in latest_scripts.items()
+                }
+                evaluation_artifact_ids: dict[str, str] = {}
+                for ep, sid in latest_scripts.items():
+                    bound = await repo.find_evaluation_for_script(
+                        run.project_id, uuid.UUID(sid)
+                    )
+                    if bound is not None:
+                        evaluation_artifact_ids[str(ep)] = str(bound.id)
+
+                # 用户指定剧本覆盖（防御性重校验：type/status/project + 绑定评估）
+                revision_candidate_episode: int | None = options.get("episode_number")
+                script_id_opt = options.get("script_artifact_id")
+                if script_id_opt:
+                    user_script = await store.get_version(
+                        db, uuid.UUID(script_id_opt)
+                    )
+                    if (
+                        user_script.type != "script_draft"
+                        or user_script.status != "valid"
+                        or user_script.project_id != run.project_id
+                    ):
+                        raise ValueError("指定的剧本版本不合法或不属于当前项目")
+                    ep = user_script.episode_number
+                    bound_eval = await repo.find_evaluation_for_script(
+                        run.project_id, user_script.id
+                    )
+                    if bound_eval is None:
+                        raise ValueError(f"第 {ep} 集指定剧本无绑定评估")
+                    script_artifact_ids[str(ep)] = str(user_script.id)
+                    evaluation_artifact_ids[str(ep)] = str(bound_eval.id)
+                    revision_candidate_episode = ep
+
+                initial_state = {
+                    "run_id": str(run_id),
+                    "project_id": str(run.project_id),
+                    "action": action,
+                    "story_bible_artifact_id": str(sb_artifact.id),
+                    "outline_set_artifact_id": str(outline_artifact.id),
+                    "script_artifact_ids": script_artifact_ids,
+                    "evaluation_artifact_ids": evaluation_artifact_ids,
+                    "needs_revision_decision": True,
+                    "continuity_state_text": "",
+                    "revision_round": 0,
+                    "revision_candidate_episode": revision_candidate_episode,
+                    "revision_plan_artifact_id": None,
+                    "user_instruction": options.get("user_instruction"),
+                    "needs_manual_review": False,
+                    "needs_manual_review_reason": None,
+                    "current_episode": revision_candidate_episode or 1,
+                    "status": "running",
+                    "needs_user_input": False,
+                    "error_node": None,
+                    "error_detail": None,
+                    "completed_nodes": [],
+                    "input_hashes": {},
+                    "prompt_versions": {},
+                }
+                workflow = build_revision_workflow()
 
             final_state = await workflow.ainvoke(initial_state, workflow_config)
 
@@ -446,6 +532,19 @@ async def _execute_workflow(
                     payload={
                         "message": "评估完成",
                         "evaluation_count": len(final_state.get("evaluation_artifact_ids", {})),
+                    },
+                    autocommit=True,
+                )
+            elif action == "revise":
+                # action=revise 且无任何拦截标志 → 修订闭环完成
+                await run_svc.transition_status(db, run_id, "completed")
+                await publisher.publish(
+                    db, run_id=run_id, event_type="run.completed",
+                    payload={
+                        "message": "修订完成",
+                        "revision_round": final_state.get("revision_round"),
+                        "candidate_episode": final_state.get("revision_candidate_episode"),
+                        "evaluation_artifact_ids": final_state.get("evaluation_artifact_ids", {}),
                     },
                     autocommit=True,
                 )
@@ -510,8 +609,16 @@ def _register_fake_fixtures(llm: Any) -> None:
     llm.register("story_bible", StoryBible.model_validate(_load("story_bible_football")))
     llm.register("outline", EpisodeOutlineSet.model_validate(_load("outline_set_valid")))
     llm.register("write_episode", ScriptDraft.model_validate(_load("script_draft_valid")))
-    # 评估 fixture：使用 golden 高分报告（服务端回填 need_revision=False → 走 finalize/completed）
-    llm.register("evaluate_episode", EvaluationReport.model_validate(_load("evaluation_report_valid")))
+    # 评估 fixture：默认 golden 高分报告（服务端回填 need_revision=False → 走 finalize/completed）。
+    # E2E 场景开关 FAKE_LLM_SCENARIO=revision：注册低分报告 → 全部集 need_revision=True →
+    # F-05 确定性选最低分集（平局取最小集号）恰好只修 1 集。默认行为不变。
+    if _os.environ.get("FAKE_LLM_SCENARIO") == "revision":
+        llm.register(
+            "evaluate_episode",
+            EvaluationReport.model_validate(_load("evaluation_report_lowscore")),
+        )
+    else:
+        llm.register("evaluate_episode", EvaluationReport.model_validate(_load("evaluation_report_valid")))
     # 修订分支 fixtures（F-05）：仅防御性注册，正常高分路径不触发
     llm.register("revision_plan", RevisionPlan.model_validate(_load("revision_plan_valid")))
     llm.register("revise_episode", RevisionResult.model_validate(_load("revised_episode_football")))

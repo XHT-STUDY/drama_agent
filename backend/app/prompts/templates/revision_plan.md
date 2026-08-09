@@ -1,10 +1,10 @@
 ---
 name: revision_plan
-version: "1.0.0"
+version: "1.1.0"
 input_schema: RevisionPlanInput
 output_schema: RevisionPlan
 owner: reviser
-changelog: "初始版本：从评估问题生成有据可依的修订计划，每个 operation 绑定 issue_ids、目标场景与 preserve"
+changelog: "v1.1: 新增用户补充要求（user_instruction）段——置于锁定事实之下、不可违反锁定事实；其余保持有据可依的 operation 生成"
 ---
 
 # 修订计划生成
@@ -31,6 +31,14 @@ changelog: "初始版本：从评估问题生成有据可依的修订计划，�
 ## 锁定事实（不可修改）
 
 {{ locked_facts }}
+
+## 用户补充要求
+
+{{ user_instruction }}
+
+> 约束：用户补充要求**不得违反上方锁定事实**。若与锁定事实冲突，一律以锁定事实为准。
+> 可将用户要求转化为具体 operation（或并入相关 operation 的 instruction / preserve），
+> 但禁止为满足用户要求而移除锁定事实或既有设定。
 
 ## 输出格式
 

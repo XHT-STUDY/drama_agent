@@ -2,7 +2,7 @@
 
 > 文档版本：v1.4  
 > 编制日期：2026-07-26  
-> 项目阶段：MVP — Phase H-05 完成，准备进入 H-06（修订/版本/Diff）  
+> 项目阶段：MVP — Phase H 完成（H-01~07：工作台全链路 + 导出中心 + Playwright E2E，`make e2e REPEAT=5` 验收通过），准备进入阶段 I（稳定性/发布加固）  
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -2325,11 +2325,11 @@ Prompt 必须区分：
   - 查询 RevisionPlan、ContinuityCheckResult、Diff 与新评估；
   - 权限与版本校验。
 - 验收：
-  - [ ] 用户可指定一个合法 Script 版本；
-  - [ ] 已过期评估与新稿不匹配时拒绝；
-  - [ ] 接口异步返回 202；
-  - [ ] 完整结果可从 Artifact 链查询；
-  - [ ] OpenAPI 示例可直接运行。
+  - [x] 用户可指定一个合法 Script 版本（POST body `script_artifact_id` 任意版本，worker 覆盖"最新 valid"解析）；
+  - [x] 已过期评估与新稿不匹配时拒绝（指定剧本无绑定 valid 评估 → 404 `EVALUATION_NOT_FOUND`）；
+  - [x] 接口异步返回 202（POST → `RunResponse`，`schedule_worker` 后台执行独立修订图）；
+  - [x] 完整结果可从 Artifact 链查询（`result_chain`：source_script/source_evaluation/candidate_script/continuity_check/new_evaluation/diff_ids）；
+  - [x] OpenAPI 示例可直接运行（OpenAPI paths 含 `/revisions`；文档提供可运行 JSON 示例）。
 - 测试：
   - pytest -m integration backend/tests/integration/api/test_revisions.py
 
@@ -2662,13 +2662,14 @@ Prompt 必须区分：
   - needs_manual_review 提示；
   - 不提供覆盖旧版本按钮。
 - 验收：
-  - [ ] 新增、删除、修改显示清楚；
-  - [ ] 分数下降不会被包装成成功提升；
-  - [ ] 连续性失败有具体 violation；
-  - [ ] 原稿可随时查看；
-  - [ ] 大 diff 页面不会卡死。
+  - [x] 新增、删除、修改显示清楚；（DiffView 徽章 + 行级红/绿 + scene_summary 计数）
+  - [x] 分数下降不会被包装成成功提升；（ScoreComparison `scoreDelta` 负 delta 红「↓ 下降」，测试断言不含「提升」）
+  - [x] 连续性失败有具体 violation；（ContinuityCheckView kind→中文标签 + source 徽章 + 目标/期望/实际/证据）
+  - [x] 原稿可随时查看；（RevisionDetail「查看原稿」按钮 + ScriptView 全文）
+  - [x] 大 diff 页面不会卡死；（后端 >2000 行截断 + SceneCard 惰性渲染 body + >20 场景默认折叠，21 场景测试锁定）
 - 测试：
   - pnpm test -- diff-view
+  - pnpm test -- revisions-view
 
 ### H-07 导出中心与 Playwright E2E
 
@@ -2688,11 +2689,11 @@ Prompt 必须区分：
   - 截图/trace 只在失败时保留；
   - 覆盖刷新、SSE 重连、版本 Diff。
 - 验收：
-  - [ ] 用户从空项目完成整个 Demo；
-  - [ ] 自动生成 10+3、评估、修订、Diff、导出；
-  - [ ] E2E 可重复运行至少 5 次；
-  - [ ] 每次只修订一个低分集；
-  - [ ] 下载文件存在且非空。
+  - [x] 用户从空项目完成整个 Demo；（e2e/dramaagent.spec.ts 单用例串行完成，`make e2e REPEAT=5` → 5 passed）
+  - [x] 自动生成 10+3、评估、修订、Diff、导出；（spec 逐段断言 StoryBible / 10 集大纲 / 3 集剧本 / 低分评估 / 1 条修订 / v1→v2 Diff / MD+DOCX 下载）
+  - [x] E2E 可重复运行至少 5 次；（`make e2e REPEAT=5` → `5 passed (15.0s)`）
+  - [x] 每次只修订一个低分集；（expectExactlyOneRevision 断言修订列表恰好 1 条且为第 1 集）
+  - [x] 下载文件存在且非空；（expectDownloadNotEmpty 断言 statSync size > 0）
 - 测试：
   - pnpm playwright test
 
@@ -2929,7 +2930,7 @@ Prompt 必须区分：
 | F-03 | Continuity Validator | 1d | F-02,C-06 | DONE | AI Agent | 39 tests passed, Ruff/mypy clean(改动文件); domain/revision.py 增 ContinuityViolation(kind/source=rule·semantic) + ContinuityWarning + ContinuitySemanticCheck(独立 Skill 结构化输出) + ContinuityCheckInput(新稿/原稿/大纲/StoryBible/连续性状态/锁定事实) + ContinuityCheckResult(pass/fail + violations/warnings 分列 + checks_run, fail ⟺ 有违规); memory/continuity.py 增规则检查(锁定事实回归: 原稿有而新稿无才判缺失, 内容字符覆盖率≥0.5 容忍轻微措辞改变 / 大纲 key_events 必须体现 / required_characters 必须出场, 角色 ID→名称映射) + fact_preserved_in_text(子串命中或覆盖率) ; ContinuityCheckTool(纯规则) + ContinuitySemanticCheckSkill(LLM, source 权威置 semantic) + ContinuityCheckSkill(规则优先: 规则失败跳过 LLM 直接 fail; 规则通过才语义复核反转/状态/伏笔); continuity_semantic_check.md v1.0.0 + manifest/loader/openai 注册(映射 reviser); 全量 546 passed/2 存量日志失败(507→546 恰为 F-03 新增 39) |
 | F-04 | Diff 与版本查询 | 0.75d | F-02,B-04 | DONE | AI Agent | 36 tests passed（unit 27 + integration 9）, Ruff/mypy clean(改动文件); domain/diff.py 纯模型(extra=forbid, 字段 ge/le) + tools/diff.py 确定性算法(两阶段场景对齐: 编号锚定 sim≥0.6 + Needleman-Wunsch sim≥0.35; 行级相似度规避 SequenceMatcher autojunk 病态; diff_lines 三计数 replace 块配对; 对称 change_ratio=(removed+added)chars/(from+to)chars; check_change_ratio 供 F-05 gate; 超大 diff truncated 保留统计清行明细) + DiffService(跨项目/类型/集数防护, content 无法解析回退 line diff) + GET /artifacts/diff(注册于 {artifact_id} 之前防路由吞噬); 集成测覆盖版本列表不可变/方向对称/跨项目拒绝/截断; 全量 582 passed/2 存量日志失败(546→582 恰为 F-04 新增 36) |
 | F-05 | Revision Workflow/重评 | 1d | F-01..F-04,E-04 | DONE | AI Agent | 修订分支接通主工作流: select_revision(确定性选集+revision_round 原子自增) → revise(候选稿 draft 落库) → continuity_check(规则+语义,pass 提升 valid/fail 保 draft 转人工) → re_evaluate(权威原分取自 plan,下降>5 转人工); creation.py 低分改走修订分支; runs.py 事后处理改 elif 链(manual_review/needs_revision_decision/needs_user_input); revision.py 独立图+路由; ArtifactType 增 continuity_check; 新 7 个 workflow 测试+fixtures; **修复 B 期存量 input_hash 跨集碰撞**(compute_input_hash 仅哈希 source ids,各集剧本共享 outline/sb → ep2+ 幂等复用 ep1,真实管线只产出第 1 集; 现把 episode_number+artifact_type 纳入哈希载荷); 全量 589 passed/2 存量 health 日志失败(582→589), Ruff clean, mypy 回到 14 存量基线(0 新增) |
-| F-06 | Revision API | 0.5d | F-05 | TODO | - | - |
+| F-06 | Revision API | 0.5d | F-05 | DONE | AI Agent | 修订闭环 HTTP 化: 新 app/api/v1/revisions.py(POST /projects/{id}/revisions 202+Run, script_artifact_id 任意合法版本/自动选集+user_instruction; 同步校验 SCRIPT_NOT_FOUND·CROSS_PROJECT_ACCESS·EVALUATION_NOT_FOUND; GET 列表/详情+result_chain 反查) + runs.py 接入 action=revise(schedule_worker 公开, 独立 build_revision_workflow 中途播种: 最新 valid 剧本+绑定评估, 用户指定剧本覆盖保证"任一合法版本"; elif 链加 revise→completed) + select_revision 尊重预置候选 + 独立图条件边(无候选直接 END) + RevisionPlanInput/Plan 增 user_instruction + revision_plan.md v1.1.0(用户补充要求段,不可违反锁定事实) + compute_input_hash 增 dedup_extra(仅非空加载荷,存量哈希逐字节不变) + find_referencing_artifacts 反查; 新 8 集成测试; 全量 597 passed/2 存量 health 日志失败(589→597), Ruff clean, mypy 0 新增 |
 | G-01 | 短期/中期/项目记忆 | 0.75d | B-03,C-06 | TODO | - | - |
 | G-02 | Context Builder 完整化 | 0.75d | G-01,D-05 | TODO | - | - |
 | G-03 | 上传与 TXT/DOCX Parser | 1d | B-03 | TODO | - | - |
@@ -2943,8 +2944,8 @@ Prompt 必须区分：
 | H-05 | 剧本编辑与评估视图 | 0.75d | H-04,E Gate | DONE | AI Agent | 122 tests passed, ESLint/tsc clean; EpisodeNav+ScriptView+ScoreBar+IssueCard+EvaluationPanel, 三栏布局, issue→scene定位, risk_flags明显展示, 评估四态覆盖, 阶段E Mock |
 | — | 🔧 SSE/日志/集数修复 | 0.5d | H-05 | DONE | AI Agent | SSE fetch→EventSource, event_type字段对齐, autocommit事件提交, DB轮询回退, 日志北京时区+彩色console, outline_count/script_count从config读取, 角色校验降级为日志, ChatInput集数选择器 |
 | — | 📐 文档工作流与 CLAUDE.md 精简 | 0.25d | - | DONE | AI Agent | CLAUDE.md 精简+状态修正; 「开发收尾清单」固化; DEV_PLAN 模板补"为什么/学到什么"; TROUBLESHOOTING 模板升级并回填 7 条学习经验 |
-| H-06 | 修订/版本/Diff | 0.75d | H-05,F Gate | TODO | - | - |
-| H-07 | 导出与 E2E | 1d | H-06,G-06 | TODO | - | - |
+| H-06 | 修订/版本/Diff | 0.75d | H-05,F Gate | DONE | AI Agent | 145 tests passed(122→145), ESLint/tsc clean, pnpm build 通过; types/api.ts 增 continuity_check + revision/continuity/diff 全套类型与中文标签; api-client 增 revisionsApi(create/list/get)+artifactsApi.diff; features/diff/DiffView.tsx(scene/line 双模式、行级红绿+删除线、截断分级提示、SceneCard 受控折叠+body 惰性渲染+>20 场景默认折叠防卡死、line 回退横幅、空 diff 占位); features/revisions/ 四叶子(RevisionPlanView 计划/锁定事实/用户补充要求、ContinuityCheckView 违规明细+source 徽章+warnings、ScoreComparison scoreDelta 纯函数+下降红绝不包装提升、RevisionPlanList 选中高亮); RevisionDetail.tsx 容器(result_chain 反查→needs_manual_review banner: 连续性失败或评分降>5、评分对比、Diff、原稿/修订稿全文切换); versions/page.tsx 两区(修订记录: 发起修订 POST→轮询 Run→刷新; 版本对比: 集数→原稿/修订稿版本→任意两版本 diff, invalid 标红, 只读不覆盖旧版本); 工作台两处完成态加「🔀 修订与版本」入口; **修复 vitest React 双实例**(@testing-library/react 自根加载 root react-dom→root react, 测试 import 走 frontend react → Invalid hook call; vitest.config resolve.alias 数组把 react 系统一到根副本, 更具体前缀在前) + 修复 jsdom 不触发 <details> toggle→SceneCard 改按钮显式折叠 |
+| H-07 | 导出与 E2E | 1d | H-06,G-06 | DONE | AI Agent | 前端 162 tests passed(145→162), ESLint/tsc clean, pnpm build 通过; 客户端本地导出中心 features/exports/(ExportSection 内容多选+格式单选+生成下载、ExportHistory localStorage 历史+重新下载+清空)+lib/export.ts 纯序列化(downloadBlob/buildDocx docx 动态导入, 不进 SSR)+exports 页; 工作台 completed/needs_review 双终态加「📦 导出中心」入口; **低分场景 E2E 支撑**: golden evaluation_report_lowscore.json(overall≈58.7<75→need_revision)+FAKE_LLM_SCENARIO=revision 开关(runs.py 注册低分 fixture)+test_fake_scenario.py(3 tests); **E2E 基建**: docker-compose.e2e.yml(postgres:5433/redis:6380 隔离, healthcheck)+e2e/playwright.config.ts(截图/trace 仅失败保留)+fixtures(data/helpers)+scripts/e2e.sh(建库→迁移→FakeLLM 低分后端:8010→前端:3100→playwright)+Makefile e2e/e2e-setup/e2e-down; dramaagent.spec.ts 全链路 8 段(空项目→Idea→SSE→刷新重连→SB→10 集大纲→3 集剧本→低分评估→恰 1 条修订→连续性/评分对比/Diff→MD+DOCX 下载非空→历史 2 条); needs_review 终态前端支持(useRunEvents/RunProgress 横幅/工作台链接, 低分场景创作 Run 停需复核仍可见入口) | make e2e REPEAT=5 → 5 passed; E2E 验收 5 项全部满足(见任务卡勾选); 后端全量 pytest 仅 2 存量日志失败(与 HEAD 一致) |
 | I-01 | 恢复与成本保护 | 0.75d | H Gate | TODO | - | - |
 | I-02 | 可观测性 | 0.5d | I-01 | TODO | - | - |
 | I-03 | 安全回归 | 0.5d | G-03,H-07 | TODO | - | - |

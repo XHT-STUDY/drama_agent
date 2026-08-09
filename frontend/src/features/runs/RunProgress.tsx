@@ -85,7 +85,9 @@ export function RunProgress({
             ? "创作完成 🎉"
             : runStatus === "failed"
               ? "创作失败"
-              : "创作进度"}
+              : runStatus === "needs_review"
+                ? "创作完成，需人工复核 ⚠️"
+                : "创作进度"}
         </h2>
         <div className="flex items-center gap-2">
           {/* 连接状态指示 */}
@@ -139,6 +141,13 @@ export function RunProgress({
       {runStatus === "completed" && (
         <div className="mb-4 rounded bg-green-50 px-4 py-3 text-sm text-green-700">
           ✅ 全部节点已完成，Artifact 已生成。
+        </div>
+      )}
+
+      {/* 需人工复核状态（H-07：低分场景自动修订后仍有低分集，暂停待人工决策） */}
+      {runStatus === "needs_review" && (
+        <div className="mb-4 rounded bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          ⚠️ 创作流程已结束，存在待人工复核的内容（如仍有需修订的集）。Artifact 均已生成，可点击下方入口查看。
         </div>
       )}
 
