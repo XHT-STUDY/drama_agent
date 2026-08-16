@@ -411,3 +411,21 @@ except Exception as exc:  # noqa: BLE001
 **解决方案**：把 `"evaluate"` 补进 `create_run` 的 schedule_worker 名单(与 `"export"` 一同加入)。修复后两条端到端路径都过。同时确认名单与 `_execute_workflow` 支持的所有 action 对齐,防再次遗漏。
 
 **学习收获**：**"永不执行"类的异步故障,最明显的暴露点是"等待终态超时",而不是报错**——HTTP 返回 202、Run 行存在、无异常日志,只有轮询等不到终态。凡新增一个 action,必须同时：(1) 进 `create_run` 的 schedule_worker 名单；(2) 有端到端测试断言"轮询到终态"。名单与执行分支是两份数据,靠人脑同步必漏,靠"轮询到终态"的测试兜底。
+
+---
+
+## 2026-08-16 — 节点失败级联：story_bible 失败后 outline 仍执行并在 uuid.UUID(None) 崩溃
+
+**症状**：I-01 恢复矩阵测试 `TestHardBudget`（硬预算 `enter_run(hard_calls=1)` 在第 2 次 LLM 调用 story_bible 处正确抛 `BudgetExceededError`），但断言 `final_state["error_code"] == "RUN_BUDGET_EXCEEDED"` 失败——ainvoke 直接以 `TypeError: one of the hex, bytes, bytes_le, fields, or int arguments must be given` 结束，traceback 定位在 `app/workflows/nodes/outline.py` 的 `uuid.UUID(state["story_bible_artifact_id"])`（story_bible 已失败故为 None）。
+
+**产生原因**：Creation 图中 `story_bible → outline → write_episodes` 是**静态边**（`builder.add_edge`），节点返回 `{"status": "failed"}` 只是写入 State 字段，图仍沿边继续执行。story_bible 失败后 outline 读取 `state["story_bible_artifact_id"]`（None）→ `uuid.UUID(None)` 抛 TypeError；TypeError 虽被 outline 的 `except` 捕获并走 `node_failure`，但级联一路覆盖 error_node/error_code，最终 final_state 的 error_code 变成 None（classify_error_code 对 TypeError 无映射）——既丢了真正的错误码（RUN_BUDGET_EXCEEDED），又让"每失败有 error_code"验收失效。预置的 `_should_evaluate`/`_should_route_after_eval` 条件边只检查 `write_episodes`/`evaluate_episodes` 之后的 failed，管不到中途节点。
+
+**解决方案**：给 12 个节点 + import_file 在 `raise_if_cancelled` 之后、completed_nodes 早退之前加失败短路守卫：
+```python
+# 失败短路（I-01）：上游节点已失败则跳过本节点，保持失败状态不变
+if state.get("status") == "failed":
+    return {}
+```
+这样 story_bible 失败后 outline/write_episodes 直接返回 `{}`（不读取缺的 Artifact、不覆盖 error 字段），`_should_evaluate` 检测 failed → END，final_state 保留 error_node="story_bible"、error_code="RUN_BUDGET_EXCEEDED"。恢复矩阵其余断言（timeout→LLM_TIMEOUT、cancel 无新 Artifact、checkpoint 恢复）与全量 881 passed 验证无回归。
+
+**学习收获**：**LangGraph 的静态边不会因节点返回 failed 而停止**——"节点失败即终止"必须显式做成条件边或节点入口短路，二者等价；对"级联会覆盖错误码"的验收，入口短路守卫更廉价（改 1 行 × N 节点，不动图结构）。同时**在写恢复/韧性测试时，先确认测试暴露的是"上游失败"还是"下游被上游拖垮"**——TestHardBudget 最初的失败不是预算没生效，而是下游把错误码冲掉了，这类"真 bug"是 I-01 验收本该抓出来的。

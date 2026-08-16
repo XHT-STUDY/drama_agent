@@ -2743,25 +2743,30 @@ Prompt 必须区分：
 - 预计：0.75 人日
 - 依赖：阶段 H
 - 修改文件：
-  - backend/app/application/run_service.py
-  - backend/app/workflows/checkpoint.py
-  - backend/app/llm/client.py
-  - backend/tests/workflow/test_recovery_matrix.py
+  - backend/app/llm/{retry,budget}.py（新增）
+  - backend/app/llm/{openai_compatible,fake}.py（重试/预算接入）
+  - backend/app/workflows/checkpoint.py（取消注册表+失败分类+状态检查点）
+  - backend/app/application/run_service.py（状态机 running→cancelled、cancel 协作式）
+  - backend/app/api/v1/runs.py（POST /runs/{id}/retry、worker 预算/checkpoint 恢复）
+  - backend/app/db/models/workflow_run.py + migrations/versions/0004（error 列）
+  - backend/app/workflows/nodes/* + import_file.py（入口取消/失败短路守卫）
+  - backend/tests/{unit/llm/test_retry.py, integration/workflow/test_recovery_matrix.py, integration/api/test_run_recovery.py}
 - 实现：
   - 节点错误分类与 retryable 标记；
   - 指数退避与 provider Retry-After；
   - per-run 调用次数/token 软硬上限；
   - cancel cooperative check；
   - checkpoint 恢复矩阵；
-  - 避免重复计费节点。
+  - 避免重复计费节点；
+  - 静态边节点失败级联修复（12 节点 status==failed 短路守卫）。
 - 验收：
-  - [ ] 429、timeout、invalid schema 走不同策略；
-  - [ ] 达硬上限后 Run 明确失败；
-  - [ ] cancel 后不创建新 Artifact；
-  - [ ] 恢复不会重复成功节点；
-  - [ ] 所有失败有 error_code。
+  - [x] 429、timeout、invalid schema 走不同策略；
+  - [x] 达硬上限后 Run 明确失败；
+  - [x] cancel 后不创建新 Artifact；
+  - [x] 恢复不会重复成功节点；
+  - [x] 所有失败有 error_code。
 - 测试：
-  - pytest -m workflow backend/tests/workflow/test_recovery_matrix.py
+  - pytest backend/tests/unit/llm/test_retry.py backend/tests/integration/workflow/test_recovery_matrix.py backend/tests/integration/api/test_run_recovery.py
 
 ### I-02 可观测性与运行诊断
 
@@ -2971,7 +2976,7 @@ Prompt 必须区分：
 | — | 📐 文档工作流与 CLAUDE.md 精简 | 0.25d | - | DONE | AI Agent | CLAUDE.md 精简+状态修正; 「开发收尾清单」固化; DEV_PLAN 模板补"为什么/学到什么"; TROUBLESHOOTING 模板升级并回填 7 条学习经验 |
 | H-06 | 修订/版本/Diff | 0.75d | H-05,F Gate | DONE | AI Agent | 145 tests passed(122→145), ESLint/tsc clean, pnpm build 通过; types/api.ts 增 continuity_check + revision/continuity/diff 全套类型与中文标签; api-client 增 revisionsApi(create/list/get)+artifactsApi.diff; features/diff/DiffView.tsx(scene/line 双模式、行级红绿+删除线、截断分级提示、SceneCard 受控折叠+body 惰性渲染+>20 场景默认折叠防卡死、line 回退横幅、空 diff 占位); features/revisions/ 四叶子(RevisionPlanView 计划/锁定事实/用户补充要求、ContinuityCheckView 违规明细+source 徽章+warnings、ScoreComparison scoreDelta 纯函数+下降红绝不包装提升、RevisionPlanList 选中高亮); RevisionDetail.tsx 容器(result_chain 反查→needs_manual_review banner: 连续性失败或评分降>5、评分对比、Diff、原稿/修订稿全文切换); versions/page.tsx 两区(修订记录: 发起修订 POST→轮询 Run→刷新; 版本对比: 集数→原稿/修订稿版本→任意两版本 diff, invalid 标红, 只读不覆盖旧版本); 工作台两处完成态加「🔀 修订与版本」入口; **修复 vitest React 双实例**(@testing-library/react 自根加载 root react-dom→root react, 测试 import 走 frontend react → Invalid hook call; vitest.config resolve.alias 数组把 react 系统一到根副本, 更具体前缀在前) + 修复 jsdom 不触发 <details> toggle→SceneCard 改按钮显式折叠 |
 | H-07 | 导出与 E2E | 1d | H-06,G-06 | DONE | AI Agent | 前端 162 tests passed(145→162), ESLint/tsc clean, pnpm build 通过; 客户端本地导出中心 features/exports/(ExportSection 内容多选+格式单选+生成下载、ExportHistory localStorage 历史+重新下载+清空)+lib/export.ts 纯序列化(downloadBlob/buildDocx docx 动态导入, 不进 SSR)+exports 页; 工作台 completed/needs_review 双终态加「📦 导出中心」入口; **低分场景 E2E 支撑**: golden evaluation_report_lowscore.json(overall≈58.7<75→need_revision)+FAKE_LLM_SCENARIO=revision 开关(runs.py 注册低分 fixture)+test_fake_scenario.py(3 tests); **E2E 基建**: docker-compose.e2e.yml(postgres:5433/redis:6380 隔离, healthcheck)+e2e/playwright.config.ts(截图/trace 仅失败保留)+fixtures(data/helpers)+scripts/e2e.sh(建库→迁移→FakeLLM 低分后端:8010→前端:3100→playwright)+Makefile e2e/e2e-setup/e2e-down; dramaagent.spec.ts 全链路 8 段(空项目→Idea→SSE→刷新重连→SB→10 集大纲→3 集剧本→低分评估→恰 1 条修订→连续性/评分对比/Diff→MD+DOCX 下载非空→历史 2 条); needs_review 终态前端支持(useRunEvents/RunProgress 横幅/工作台链接, 低分场景创作 Run 停需复核仍可见入口) | make e2e REPEAT=5 → 5 passed; E2E 验收 5 项全部满足(见任务卡勾选); 后端全量 pytest 仅 2 存量日志失败(与 HEAD 一致) |
-| I-01 | 恢复与成本保护 | 0.75d | H Gate | TODO | - | - |
+| I-01 | 恢复与成本保护 | 0.75d | H Gate | DONE | AI Agent | 恢复矩阵 6 测试类(27)+API 9+retry 单元全绿，全量 881 passed/2 存量日志失败(与 HEAD 一致)，Ruff clean，mypy 全 app 95 较基线 103 还少 8(0 新增)；新增 llm/retry.py(RetryPolicy 指数退避 base*factor^(attempt-1)+max_delay+Retry-After 解析秒/HTTP-date, is_retryable: 429/timeout/provider_error 可重试, execute_with_retry 驱动, LLM_ERROR_RUN_CODES 映射)+llm/budget.py(RunBudgetRegistry+contextvar: 软上限 run.warning 事件/硬上限抛 RUN_BUDGET_EXCEEDED)+checkpoint.py 重写(协作式取消 RunCancelledError 继承 BaseException 不被 except Exception 吞、_cancel_registry 跨 Task 共享、raise_if_cancelled 各节点入口、classify_error_code AppError.code 优先/文本兜底、node_failure、save/load_checkpoint)+FakeLLM retry_policy opt-in+inject_fault 新类型(timeout/rate_limited/invalid_schema/provider_error)+_attempt_count 含重试; run_service 状态机 running→cancelled, cancel_run 协作式(queued 立即 cancelled/running 置标记); runs.py POST /runs/{id}/retry(守卫 409 RUN_NOT_RETRYABLE/RUN_ALREADY_ACTIVE, failed/needs_review→queued 清 error 字段→schedule_worker)+worker enter_run/exit_run 预算登记+retry 以 state_summary 恢复(剥离 status/error 字段, completed_nodes 早退+write_episodes existing_scripts 跳过→不重调 LLM/不重写集/不重推 revision_round)+save_checkpoint+RunCancelledError→cancelled+run.cancelled+_persist_run_error; WorkflowRun error_code/error_detail 列+0004 migration+RunResponse 暴露; **修复真 bug: 节点失败级联**(story_bible 失败后 outline 静态边仍执行 uuid.UUID(None) 崩溃, error_code 被覆盖→12 节点+import_file 加 status==failed 短路守卫, _should_evaluate 干净终止); 验收 5 项全满足(见任务卡勾选) |
 | I-02 | 可观测性 | 0.5d | I-01 | TODO | - | - |
 | I-03 | 安全回归 | 0.5d | G-03,H-07 | TODO | - | - |
 | I-04 | MCP/Skill 扩展契约 | 0.5d | B-07 | TODO | - | - |

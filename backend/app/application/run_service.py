@@ -19,14 +19,15 @@ from app.core.errors import AppError, NotFoundError
 from app.db.models.project import Project
 from app.db.models.workflow_run import WorkflowRun
 from app.events.publisher import EventPublisher
+from app.workflows.checkpoint import request_cancel
 
 # 内存级幂等键存储（MVP 简化，后续可迁 Redis/DB）
 _idempotency_store: dict[str, uuid.UUID] = {}
 
-# 合法状态转换
+# 合法状态转换（I-01：running → cancelled 允许协作式取消）
 _VALID_TRANSITIONS: dict[str, set[str]] = {
     "queued": {"running", "cancelled"},
-    "running": {"completed", "failed", "needs_review"},
+    "running": {"completed", "failed", "needs_review", "cancelled"},
     "completed": set(),
     "failed": {"queued"},  # retry
     "cancelled": set(),
@@ -137,11 +138,27 @@ class RunService:
         return run
 
     async def cancel_run(self, db: AsyncSession, run_id: uuid.UUID) -> WorkflowRun:
-        """取消 Run。
+        """取消 Run（I-01 协作式）。
 
-        仅 queued 状态可取消；已 running/completed/failed 不可。
+        queued → 立即转为 cancelled；running → 置内存取消标记，工作流各节点
+        在安全点检查后退出，由 worker 统一把 Run 转为 cancelled（保证 cancel
+        后不创建新 Artifact）。已完成/失败/人工审查态不可取消。
         """
-        return await self.transition_status(db, run_id, "cancelled")
+        result = await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))
+        run = result.scalar_one_or_none()
+        if run is None:
+            raise NotFoundError(detail=f"Run 不存在: {run_id}", code="RUN_NOT_FOUND")
+
+        if run.status == "queued":
+            return await self.transition_status(db, run_id, "cancelled")
+        if run.status == "running":
+            request_cancel(str(run_id))
+            return run
+        raise AppError(
+            detail=f"Run 当前状态 {run.status} 不可取消",
+            status_code=409,
+            code="INVALID_TRANSITION",
+        )
 
     async def get_run(self, db: AsyncSession, run_id: uuid.UUID) -> WorkflowRun:
         """查询 Run 详情。"""

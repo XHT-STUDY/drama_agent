@@ -29,6 +29,7 @@ from app.events.publisher import EventPublisher
 from app.memory.continuity import ContinuityManager
 from app.prompts.loader import PromptLoader
 from app.skills.continuity_check import ContinuityCheckSkill
+from app.workflows.checkpoint import node_failure, raise_if_cancelled
 from app.workflows.state import CreationState
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,13 @@ async def continuity_check_node(state: CreationState) -> dict[str, Any]:
     project_id = uuid.UUID(state["project_id"])
     run_id = uuid.UUID(state["run_id"])
     progress = ctx.get("progress_callback", lambda *a: None)
+
+    # 协作式取消守卫（I-01）
+    raise_if_cancelled(state["run_id"])
+
+    # 失败短路（I-01）：上游节点已失败则跳过本节点，保持失败状态不变
+    if state.get("status") == "failed":
+        return {}
 
     if "continuity_check" in state.get("completed_nodes", []):
         return {}
@@ -217,4 +225,4 @@ async def continuity_check_node(state: CreationState) -> dict[str, Any]:
             payload={"node": "continuity_check", "error": str(e)},
             autocommit=True,
         )
-        return {"status": "failed", "error_node": "continuity_check", "error_detail": str(e)}
+        return node_failure("continuity_check", e)

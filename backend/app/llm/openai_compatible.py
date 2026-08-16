@@ -23,8 +23,14 @@ import httpx
 from pydantic import BaseModel
 
 from app.core.config import Settings
+from app.llm.budget import check_budget, record_call
 from app.llm.models import LLMCallResult, LLMErrorCode, LLMUsage
 from app.llm.protocol import LLMClient
+from app.llm.retry import (
+    RetryPolicy,
+    execute_with_retry,
+    parse_retry_after,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +116,13 @@ class OpenAICompatibleLLM(LLMClient):
 
         Schema 信息会被注入到 system prompt 中，
         要求 LLM 输出纯 JSON（不借助 tool calling）。
-        """
-        start = time.monotonic()
 
+        I-01：在客户端层实现统一重试——
+        - 可重试错误（429 / 超时 / 5xx / 连接失败）按 RetryPolicy 指数退避重试；
+        - 尊重 429/503 的 Retry-After 头；
+        - 每次真实尝试前检查 per-run 预算，超硬上限抛 BudgetExceededError。
+        协议契约保持：不抛普通异常，错误写 result.error_code。
+        """
         # 解析模型名
         resolved_model = model or self._resolve_model(kwargs.get("prompt_name", ""))
         if not resolved_model:
@@ -133,62 +143,86 @@ class OpenAICompatibleLLM(LLMClient):
             "stream": False,
         }
 
-        # 尝试调用 API
-        try:
-            response = await self.client.post(
-                "/chat/completions",
-                json=payload,
-                timeout=httpx.Timeout(
-                    connect=30.0,
-                    read=timeout_seconds,
-                    write=30.0,
-                    pool=10.0,
-                ),
-            )
+        policy = RetryPolicy(
+            base_delay=self.settings.llm_retry_base_delay_seconds,
+            factor=self.settings.llm_retry_factor,
+            max_retries=self.settings.llm_max_retries,
+            max_delay=self.settings.llm_retry_max_delay_seconds,
+        )
+        # 最近一次响应的 Retry-After（闭包捕获，重试时读取）
+        retry_after: float | None = None
 
-            duration_ms = int((time.monotonic() - start) * 1000)
-
-            if response.status_code == 200:
-                return self._handle_success_response(
-                    response, schema, duration_ms, resolved_model
+        async def _attempt(_attempt_no: int) -> LLMCallResult:
+            nonlocal retry_after
+            # 预算硬上限检查（BudgetExceededError 不被下方 except 吞掉）
+            check_budget()
+            start = time.monotonic()
+            try:
+                response = await self.client.post(
+                    "/chat/completions",
+                    json=payload,
+                    timeout=httpx.Timeout(
+                        connect=30.0,
+                        read=timeout_seconds,
+                        write=30.0,
+                        pool=10.0,
+                    ),
                 )
-            else:
-                return self._handle_error_response(
-                    response, duration_ms, resolved_model
+
+                duration_ms = int((time.monotonic() - start) * 1000)
+
+                if response.status_code == 200:
+                    result = self._handle_success_response(
+                        response, schema, duration_ms, resolved_model
+                    )
+                else:
+                    retry_after = parse_retry_after(
+                        response.headers.get("retry-after")
+                    )
+                    result = self._handle_error_response(
+                        response, duration_ms, resolved_model
+                    )
+
+            except httpx.TimeoutException:
+                duration_ms = int((time.monotonic() - start) * 1000)
+                result = LLMCallResult(
+                    model=resolved_model,
+                    duration_ms=duration_ms,
+                    error_code=LLMErrorCode.LLM_TIMEOUT,
+                    error_detail=f"请求超时（{timeout_seconds}s）",
                 )
+                self._call_history.append(result)
 
-        except httpx.TimeoutException:
-            duration_ms = int((time.monotonic() - start) * 1000)
-            result = LLMCallResult(
-                model=resolved_model,
-                duration_ms=duration_ms,
-                error_code=LLMErrorCode.LLM_TIMEOUT,
-                error_detail=f"请求超时（{timeout_seconds}s）",
+            except httpx.ConnectError as e:
+                duration_ms = int((time.monotonic() - start) * 1000)
+                result = LLMCallResult(
+                    model=resolved_model,
+                    duration_ms=duration_ms,
+                    error_code=LLMErrorCode.PROVIDER_ERROR,
+                    error_detail=f"连接失败: {e}",
+                )
+                self._call_history.append(result)
+
+            except Exception as e:
+                duration_ms = int((time.monotonic() - start) * 1000)
+                result = LLMCallResult(
+                    model=resolved_model,
+                    duration_ms=duration_ms,
+                    error_code=LLMErrorCode.PROVIDER_ERROR,
+                    error_detail=f"未知错误: {type(e).__name__}: {e}",
+                )
+                self._call_history.append(result)
+
+            # 预算计数（含重试的每次真实尝试）
+            record_call(
+                prompt_tokens=result.usage.prompt_tokens,
+                completion_tokens=result.usage.completion_tokens,
             )
-            self._call_history.append(result)
             return result
 
-        except httpx.ConnectError as e:
-            duration_ms = int((time.monotonic() - start) * 1000)
-            result = LLMCallResult(
-                model=resolved_model,
-                duration_ms=duration_ms,
-                error_code=LLMErrorCode.PROVIDER_ERROR,
-                error_detail=f"连接失败: {e}",
-            )
-            self._call_history.append(result)
-            return result
-
-        except Exception as e:
-            duration_ms = int((time.monotonic() - start) * 1000)
-            result = LLMCallResult(
-                model=resolved_model,
-                duration_ms=duration_ms,
-                error_code=LLMErrorCode.PROVIDER_ERROR,
-                error_detail=f"未知错误: {type(e).__name__}: {e}",
-            )
-            self._call_history.append(result)
-            return result
+        return await execute_with_retry(
+            _attempt, policy, retry_after_fn=lambda _r: retry_after
+        )
 
     # ---- 内部方法 ----
 

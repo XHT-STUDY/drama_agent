@@ -33,6 +33,7 @@ from app.skills.import_classifier import ImportClassifierSkill
 from app.storage.local import LocalFileStore
 from app.tools.file_parser import FileParserTool
 from app.tools.script_text import full_script_to_script_draft
+from app.workflows.checkpoint import node_failure, raise_if_cancelled
 from app.workflows.router import route_import
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class ImportState(TypedDict, total=False):
     needs_user_input: bool
     status: str
     error_node: str | None
+    error_code: str | None
     error_detail: str | None
     completed_nodes: list[str]
     prompt_versions: dict[str, str]
@@ -73,6 +75,13 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
     project_id = uuid.UUID(state["project_id"])
     run_id = uuid.UUID(state["run_id"])
     upload_id = ctx.get("upload_id") or state.get("upload_id")
+
+    # 协作式取消守卫（I-01）
+    raise_if_cancelled(state["run_id"])
+
+    # 失败短路（I-01）：上游节点已失败则跳过本节点，保持失败状态不变
+    if state.get("status") == "failed":
+        return {}
 
     if "import_file" in state.get("completed_nodes", []):
         logger.info("节点已跳过（已完成）: import_file")
@@ -200,11 +209,7 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
             payload={"node": "import_file", "error": str(e)},
             autocommit=True,
         )
-        return {
-            "status": "failed",
-            "error_node": "import_file",
-            "error_detail": str(e),
-        }
+        return node_failure("import_file", e)
 
 
 def build_import_workflow() -> CompiledStateGraph[ImportState, Any, Any, Any]:

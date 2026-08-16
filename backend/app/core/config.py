@@ -54,6 +54,18 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 180
     llm_max_retries: int = 2
 
+    # ---- LLM 重试与 per-run 预算（I-01） ----
+    # 重试退避：base_delay * factor^(attempt-1)，上限 max_delay；
+    # 429/503 服务端 Retry-After 优先（不超 max_delay）。
+    llm_retry_base_delay_seconds: float = 0.5
+    llm_retry_factor: float = 2.0
+    llm_retry_max_delay_seconds: float = 30.0
+    # per-run 软上限：超过发 run.warning（不阻断）。
+    run_max_llm_calls: int = 18
+    # per-run 硬上限：超过抛 RUN_BUDGET_EXCEEDED，Run 失败。
+    run_max_llm_calls_hard: int = 24
+    run_max_llm_tokens_hard: int = 200_000
+
     # ---- 各角色模型名 ----
     llm_normalizer_model: str = ""
     llm_planner_model: str = ""

@@ -27,6 +27,7 @@ from app.domain.retrieval import RetrievalResult
 from app.events.publisher import EventPublisher
 from app.rag.embedder import Embedder, load_embedder
 from app.rag.retriever import Retriever
+from app.workflows.checkpoint import raise_if_cancelled
 from app.workflows.state import CreationState
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,13 @@ async def retrieve_node(state: CreationState) -> dict[str, Any]:
     run_id = uuid.UUID(state["run_id"])
     project_id = uuid.UUID(state["project_id"])
     progress = ctx.get("progress_callback", lambda *a: None)
+
+    # 协作式取消守卫（I-01）
+    raise_if_cancelled(state["run_id"])
+
+    # 失败短路（I-01）：上游节点已失败则跳过本节点，保持失败状态不变
+    if state.get("status") == "failed":
+        return {}
 
     if "retrieve" in state.get("completed_nodes", []):
         return {}

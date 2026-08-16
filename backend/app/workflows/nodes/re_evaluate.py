@@ -26,6 +26,7 @@ from app.domain.evaluation import EvaluationReport
 from app.domain.revision import RevisionPlan
 from app.events.publisher import EventPublisher
 from app.prompts.loader import PromptLoader
+from app.workflows.checkpoint import node_failure, raise_if_cancelled
 from app.workflows.nodes.evaluate_episode import _build_eval_agent
 from app.workflows.state import CreationState
 
@@ -50,6 +51,13 @@ async def re_evaluate_node(state: CreationState) -> dict[str, Any]:
     project_id = uuid.UUID(state["project_id"])
     run_id = uuid.UUID(state["run_id"])
     progress = ctx.get("progress_callback", lambda *a: None)
+
+    # 协作式取消守卫（I-01）
+    raise_if_cancelled(state["run_id"])
+
+    # 失败短路（I-01）：上游节点已失败则跳过本节点，保持失败状态不变
+    if state.get("status") == "failed":
+        return {}
 
     if "re_evaluate" in state.get("completed_nodes", []):
         return {}
@@ -164,4 +172,4 @@ async def re_evaluate_node(state: CreationState) -> dict[str, Any]:
             payload={"node": "re_evaluate", "error": str(e)},
             autocommit=True,
         )
-        return {"status": "failed", "error_node": "re_evaluate", "error_detail": str(e)}
+        return node_failure("re_evaluate", e)

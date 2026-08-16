@@ -2787,3 +2787,46 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 建议的下一任务
 
 - **Phase G 收尾**：§13.2 G-01..G-06 状态与证据已齐、header「准备进入阶段 I」文案更新、全量回归 + Ruff/mypy 零新增复核；随后按计划进入 H 阶段(前端工作台)。
+
+## 2026-08-16 Phase I:I-01 幂等、重试、取消与成本保护
+
+### 做了什么
+
+- **LLM 重试层**（新增 [backend/app/llm/retry.py](../backend/app/llm/retry.py)）：`RetryPolicy(base_delay=0.5, factor=2.0, max_retries=2, max_delay=30.0)` 指数退避 `base*factor^(attempt-1)` 封顶 max_delay，尊重 429/503 的 `Retry-After`（秒或 HTTP-date，超 max_delay 仍封顶）；`is_retryable` 分类：RATE_LIMITED/LLM_TIMEOUT/PROVIDER_ERROR 可重试，INVALID_OUTPUT 不可重试（交给 Parser 带反馈重试）；`execute_with_retry(attempt_fn, policy)` 驱动循环并记录尝试序号；`LLM_ERROR_RUN_CODES` 把 LLM 错误码映射到 run 层错误码。`OpenAICompatibleLLM.generate_structured` 接入统一重试层（保留"不抛异常、错误写 result.error_code"协议）。
+- **per-run 预算**（新增 [backend/app/llm/budget.py](../backend/app/llm/budget.py)）：`RunBudgetRegistry` + contextvar 关联 run_id；软上限 `run_max_llm_calls=18` 只置 `soft_warned`（worker 发 `run.warning` 事件，不阻断），硬上限 `run_max_llm_calls_hard=24` / `run_max_llm_tokens_hard` 抛 `BudgetExceededError(RUN_BUDGET_EXCEEDED)`。FakeLLM 每次真实尝试前 `check_budget()`、结束后 `record_call()`——completed_nodes 早退时不计数，天然"不重复计费"。
+- **协作式取消**（重写 [backend/app/workflows/checkpoint.py](../backend/app/workflows/checkpoint.py)）：`RunCancelledError(BaseException)`（继承 BaseException 避免被节点 `except Exception` 吞掉）+ 模块级 `_cancel_registry`（run_id→bool，跨 asyncio Task 共享）+ `raise_if_cancelled` 各节点入口守卫；`run_service` 状态机加 `running→cancelled`，`cancel_run`：queued 立即 cancelled / running 置标记（worker 下一节点守卫中断）/ 其他 409 INVALID_TRANSITION。worker 捕获 RunCancelledError → transition cancelled + `run.cancelled` 事件。
+- **retry 端点 + checkpoint 恢复**（[backend/app/api/v1/runs.py](../backend/app/api/v1/runs.py)）：新增 `POST /runs/{id}/retry`——completed/cancelled→409 `RUN_NOT_RETRYABLE`，queued/running→409 `RUN_ALREADY_ACTIVE`，failed/needs_review→清空 error 字段→queued→`schedule_worker`；worker 每次执行后 `save_checkpoint(db, run_id, final_state)` 写 `state_summary`，retry 时读回并与 fresh initial_state 合并（剥离 status/error_node/error_code/error_detail），completed_nodes 早退 + write_episodes `existing_scripts` 跳过已写集 → 不重调 LLM、不重复建 Artifact、不重复推进 revision_round。
+- **error_code 落库**：`WorkflowRun` 加 `error_code`/`error_detail` 列 + migration 0004；`RunResponse` 暴露；`classify_error_code`（AppError.code 优先，LLM 错误码从 skill 抛的 `"LLM 调用失败: {code}"` 文本兜底）；所有节点 `except` 统一走 `node_failure(node, exc)` 保证"每失败有 error_code"。
+- **修复真 bug——节点失败级联**：`story_bible → outline → write_episodes` 是静态边，story_bible 失败（返回 status=failed）后 outline 仍执行并在 `uuid.UUID(state["story_bible_artifact_id"])`（None）崩溃，error_code 被级联覆盖为 None。给 12 个节点 + import_file 加 `status == "failed"` 短路守卫（`raise_if_cancelled` 之后、completed_nodes 早退之前），failed 状态下游节点返回 `{}`，条件路由干净终止到 END。
+- **FakeLLM 扩展**：`retry_policy` 构造参数（opt-in，默认 None 保持存量测试语义）、`_attempt_count`（含重试内每次尝试）、`inject_fault` 支持 timeout/rate_limited/invalid_schema/provider_error。
+- 测试：`tests/unit/llm/test_retry.py`(21)、`tests/integration/workflow/test_recovery_matrix.py`(6 测试类：429 后恢复/timeout 耗尽→LLM_TIMEOUT/invalid schema 带反馈重试/硬预算→RUN_BUDGET_EXCEEDED/协作式取消无新 Artifact/checkpoint 恢复不重调已完成节点)、`tests/integration/api/test_run_recovery.py`(9：retry 守卫与成功路径/cancel 三态/error_code 暴露)。`.env.example` 补 6 项 I-01 配置。
+
+### 为什么这么做
+
+- **三类错误三种策略**：429/timeout/5xx 是"服务端瞬时问题"→ HTTP 层指数退避重试（尊重 Retry-After）；invalid schema 是"输出质量问题"→ Parser 带错误反馈重试（模型有机会自我修正），HTTP 层重试无意义；硬预算超限是"不可恢复成本问题"→ 直接失败。这正对应验收第 1 项。
+- **预算用进程内 registry + contextvar 而非 DB**：MVP 单进程即可，避免每 LLM 调用一次 DB 写（本就该节流）；进程内丢失在单 worker 部署下可接受，写入 KNOWN_LIMITATIONS。
+- **cancel 协作式而非强制 kill**：LangGraph 节点内任意时刻强杀会留下半写 Artifact。用 BaseException + 节点安全点（入口 + 多 Artifact 循环内写入前）让取消"不创建新 Artifact"成为可验证保证。
+- **retry 恢复 = 重放 completed_nodes 而非重建 State**：State 只存 ID（§2.2），大文本在 Artifact；把完整 final_state 快照进 state_summary、恢复时剥离终态字段，即可"已完成节点早退、已写集跳过"——这是幂等 + 不重复计费的最廉价实现。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/llm/test_retry.py tests/integration/workflow/test_recovery_matrix.py tests/integration/api/test_run_recovery.py` | 36 passed |
+| `uv run pytest tests/`(全量回归) | 881 passed / 2 failed(均为存量 TestStructuredLogging，I-02 修复) |
+| `uv run ruff check app/ tests/` | clean |
+| `uv run mypy app/ --no-incremental` | 11 错误(全部存量，与基线一致，0 新增) |
+| `uv run mypy app/ tests/ --no-incremental` | 95 vs HEAD 103，逐行归一化对比 0 新增 |
+
+验收 5 项全满足：429/timeout/invalid schema 三种策略分别验证 / 硬预算→RUN_BUDGET_EXCEEDED+failed / cancel 后无新 Artifact / 恢复不重调已完成节点（resume_calls == fresh_calls - 4）/ 所有失败有 error_code（timeout→LLM_TIMEOUT、预算→RUN_BUDGET_EXCEEDED、级联短路不再覆盖）。
+
+### 学习收获
+
+- **LangGraph 静态边不会因上游节点返回 failed 而停止**：`story_bible → outline → write_episodes` 是静态边，节点返回 `{"status":"failed"}` 只是改 State 字段，图仍沿边前进，下游在缺 Artifact 时以 `uuid.UUID(None)` 崩溃。修复不是改图结构，而是在每个节点入口加 `status=="failed"` 短路守卫——对"每失败有 error_code"验收是必要的行为修复，否则 error_code 会被级联覆盖成 None。
+- **模块级取消注册表必须用 str 键、跨 Task 共享**：cancel 端点在 HTTP Task 写标记、worker 在自己 Task 读，asyncio context 不跨 Task 传递，contextvar 在此场景失效；模块级 dict 是正确选择。`RunCancelledError` 继承 BaseException 是让"节点 except Exception 不吞取消"的关键。
+- **mypy 增量缓存会低估基线**：此前记录的"11 错误"来自 warm cache（只重查变更文件）；冷缓存全量 `mypy app/ tests/` 实际是 103 个（LangGraph `ainvoke` 重载噪声 + 存量 unused type:ignore）。比较基线必须 `--no-incremental` 且按文件逐行对比，只看计数会被缓存骗到。
+- **FakeLLM 重试必须 opt-in**：给 FakeLLM 默认加 retry_policy 会改变存量测试的调用次数断言（原来 1 次现在 2 次）；构造参数默认 None 保住"无重试"语义，故障注入按 `_attempt_count`（含重试内尝试）才能精确模拟"第 1 次 429、第 2 次成功"。
+
+### 建议的下一任务
+
+- **I-02 可观测性与运行诊断**：`observability/`（进程内 metrics registry + Prometheus 文本 + tracing contextvar 关联）+ `GET /metrics`（配置开关）+ `GET /runs/{id}/diagnostics`（聚合事件表时间线）+ `core/logging.py` 加 RedactFilter（掩 sk-*/api_key/Bearer、超长截断），并修掉本次全量回归中唯一的 2 个存量 TestStructuredLogging 失败。

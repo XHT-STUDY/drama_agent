@@ -28,6 +28,7 @@ from app.memory.continuity import ContinuityManager
 from app.memory.summary import latest_project_summary_text
 from app.prompts.loader import PromptLoader
 from app.skills.episode_writer import EpisodeWriterSkill
+from app.workflows.checkpoint import node_failure, raise_if_cancelled
 from app.workflows.state import CreationState
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,13 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
     project_id = uuid.UUID(state["project_id"])
     run_id = uuid.UUID(state["run_id"])
     progress = ctx.get("progress_callback", lambda *a: None)
+
+    # 协作式取消守卫（I-01）
+    raise_if_cancelled(state["run_id"])
+
+    # 失败短路（I-01）：上游节点已失败则跳过本节点，保持失败状态不变
+    if state.get("status") == "failed":
+        return {}
 
     if "write_episodes" in state.get("completed_nodes", []):
         return {}
@@ -95,6 +103,9 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             if str(ep_num) in existing_scripts:
                 completed_scripts[str(ep_num)] = existing_scripts[str(ep_num)]
                 continue
+
+            # 多 Artifact 循环内的取消守卫：本集 Artifact 写入前检查
+            raise_if_cancelled(state["run_id"])
 
             episode_outline = _find_ep_outline(outline_set, ep_num)
             if episode_outline is None:
@@ -233,7 +244,8 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             autocommit=True,
         )
         return {
-            "status": "failed", "error_node": "write_episodes", "error_detail": str(e),
+            **node_failure("write_episodes", e),
+            # 保留已写入的剧本，retry 时不重复调用已完成集
             "script_artifact_ids": completed_scripts,
         }
 

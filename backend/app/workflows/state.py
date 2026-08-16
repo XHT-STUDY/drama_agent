@@ -69,6 +69,8 @@ class CreationState(TypedDict, total=False):
     """失败时记录失败的节点名称。"""
     error_detail: str | None
     """失败时记录错误详情。"""
+    error_code: str | None
+    """失败时记录机器可读错误码（I-01，如 RUN_BUDGET_EXCEEDED / LLM_TIMEOUT）。"""
 
     # ---- 重试与幂等 ----
     completed_nodes: list[str]

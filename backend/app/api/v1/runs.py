@@ -9,17 +9,30 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db
 from app.application.run_service import RunService
 from app.core.config import Settings
+from app.core.errors import AppError, RunAlreadyActiveError, RunNotRetryableError
+from app.db.models.workflow_run import WorkflowRun
 from app.events.stream import router as sse_router
+from app.llm.budget import enter_run, exit_run, get_budget
+from app.workflows.checkpoint import (
+    RunCancelledError,
+    classify_error_code,
+    clear_cancel,
+    save_checkpoint,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
 _service = RunService()
@@ -97,6 +110,8 @@ class RunResponse(BaseModel):
     action: str = Field(..., description="执行动作")
     status: str = Field(..., description="当前状态")
     config_snapshot: dict[str, Any] | None = Field(default=None, description="配置快照")
+    error_code: str | None = Field(default=None, description="机器可读错误码（failed 时，I-01）")
+    error_detail: str | None = Field(default=None, description="错误详情（failed 时，I-01）")
     created_at: str = Field(..., description="创建时间")
     updated_at: str = Field(..., description="更新时间")
 
@@ -108,6 +123,8 @@ class RunResponse(BaseModel):
             action=run.action,
             status=run.status,
             config_snapshot=run.config_snapshot,
+            error_code=run.error_code,
+            error_detail=run.error_detail,
             created_at=run.created_at.isoformat() if run.created_at else "",
             updated_at=run.updated_at.isoformat() if run.updated_at else "",
         )
@@ -212,8 +229,40 @@ async def cancel_run(
     run_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> RunResponse:
-    """取消 Run（仅 queued 状态可取消）。"""
+    """取消 Run（I-01 协作式）。
+
+    queued → 立即取消；running → 置内存取消标记，工作流在下一节点守卫
+    处中断（cancel 后不再创建新 Artifact），Run 由 Worker 转为 cancelled。
+    """
     run = await _service.cancel_run(db, run_id)
+    return RunResponse.from_orm(run)
+
+
+@router.post("/runs/{run_id}/retry", response_model=RunResponse)
+async def retry_run(
+    run_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RunResponse:
+    """重试失败的 Run（I-01）。
+
+    仅 failed / needs_review 可重试；以 state_summary 为初始状态重放，
+    已完成节点（completed_nodes）早退 → 不重调 LLM、不重复建 Artifact、
+    不重复推进 revision_round。completed / cancelled 不可重试，
+    queued / running 存在活跃 Worker 不可重复重试。
+    """
+    run = await _service.get_run(db, run_id)
+    if run.status in ("completed", "cancelled"):
+        raise RunNotRetryableError(detail=f"Run 已处于终态 {run.status}，不可重试")
+    if run.status in ("queued", "running"):
+        raise RunAlreadyActiveError(detail=f"Run 正在执行（{run.status}），不可重试")
+
+    # 开启新尝试：清空上一轮错误字段，回到队列
+    run.error_code = None
+    run.error_detail = None
+    await db.flush()
+    await _service.transition_status(db, run_id, "queued")
+
+    schedule_worker(run.id, run.action, run.config_snapshot or {})
     return RunResponse.from_orm(run)
 
 
@@ -336,6 +385,16 @@ async def _execute_workflow(
             if run.status != "queued":
                 return
             await run_svc.transition_status(db, run_id, "running")
+
+            # I-01：登记 per-run LLM 预算（软/硬上限来自 Settings）；并读取
+            # 上一轮 state_summary 作为 retry 恢复的基底（全新 run 为 None）。
+            enter_run(
+                str(run_id),
+                soft_calls=settings.run_max_llm_calls,
+                hard_calls=settings.run_max_llm_calls_hard,
+                hard_tokens=settings.run_max_llm_tokens_hard,
+            )
+            checkpoint = run.state_summary or {}
 
             if action == "export":
                 # action=export → 确定性导出（G-06）：组装 → 序列化 → 落盘
@@ -581,7 +640,36 @@ async def _execute_workflow(
                 }
                 workflow = build_revision_workflow()
 
+            # I-01 retry 恢复：以 state_summary 为基底重放。completed_nodes 早退 +
+            # write_episodes 的 existing_scripts 跳过已写集 → 不重调 LLM、
+            # 不重复建 Artifact、不重复推进 revision_round。剥离失败字段与
+            # status，让本轮 fresh 状态接管。
+            if checkpoint:
+                _resume = {
+                    k: v
+                    for k, v in checkpoint.items()
+                    if k not in ("status", "error_node", "error_code", "error_detail")
+                }
+                initial_state = {**initial_state, **_resume}
+
             final_state = await workflow.ainvoke(initial_state, workflow_config)
+
+            # 快照完整轻量状态（completed_nodes / script_artifact_ids 等全为 ID 与
+            # 小字段，符合 §2.2），供失败后 retry 恢复；即使本轮 failed 也保留部分产物。
+            await save_checkpoint(db, run_id, final_state)
+
+            # 软预算超限 → 发 run.warning（不阻断流程）
+            budget = get_budget(str(run_id))
+            if budget is not None and budget.soft_warned:
+                await publisher.publish(
+                    db, run_id=run_id, event_type="run.warning",
+                    payload={
+                        "code": "RUN_LLM_BUDGET_WARNING",
+                        "message": "LLM 调用量接近预算上限",
+                        "calls": budget.calls,
+                    },
+                    autocommit=True,
+                )
 
             # 事后处理用 elif 链（F-05）：needs_manual_review 与 needs_revision_decision
             # 可同时为真，独立 if 会触发 running→needs_review 的非法二次转换。
@@ -589,9 +677,15 @@ async def _execute_workflow(
             # needs_revision_decision（满轮仍低分）→ evaluate 收尾。
             if final_state.get("status") == "failed":
                 await run_svc.transition_status(db, run_id, "failed")
+                await _persist_run_error(
+                    db, run_id,
+                    final_state.get("error_code"),
+                    final_state.get("error_detail"),
+                )
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.failed",
                     payload={
+                        "error_code": final_state.get("error_code"),
                         "error_node": final_state.get("error_node"),
                         "error_detail": final_state.get("error_detail"),
                     },
@@ -672,22 +766,57 @@ async def _execute_workflow(
             #   此处作为最终安全网，防止因异常路径导致数据丢失）
             await db.commit()
 
+        except RunCancelledError:
+            # 协作式取消（I-01）：Run 转 cancelled，不视为失败
+            logger.info("Run 已取消: %s", run_id)
+            try:
+                await run_svc.transition_status(db, run_id, "cancelled")
+                await publisher.publish(
+                    db, run_id=run_id, event_type="run.cancelled",
+                    payload={"message": "Run 已取消"},
+                    autocommit=True,
+                )
+            except Exception:
+                pass
         except Exception as e:
-            import logging
-            _logger = logging.getLogger(__name__)
-            _logger.exception("Workflow 执行失败: run=%s", run_id)
+            logger.exception("Workflow 执行失败: run=%s", run_id)
             try:
                 await run_svc.transition_status(db, run_id, "failed")
+                error_code = e.code if isinstance(e, AppError) else classify_error_code(e)
+                await _persist_run_error(db, run_id, error_code, str(e))
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.failed",
-                    payload={"error": str(e)},
+                    payload={"error": str(e), "error_code": error_code},
                     autocommit=True,
                 )
             except Exception:
                 pass
         finally:
+            # I-01：清理预算与取消标记，避免 registry 泄漏
+            exit_run(str(run_id))
+            clear_cancel(str(run_id))
             if hasattr(llm_client, "close"):
                 await llm_client.close()  # type: ignore[union-attr]
+
+
+async def _persist_run_error(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    error_code: str | None,
+    error_detail: str | None,
+) -> None:
+    """把失败信息写入 WorkflowRun.error_code / error_detail（I-01）。
+
+    所有失败（final_state failed / 节点异常 / 外部异常）都经此落库，
+    保证验收"所有失败有 error_code"；成功路径无需调用（重试时已在端点清空）。
+    """
+    result = await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))
+    run = result.scalar_one_or_none()
+    if run is None:
+        return
+    run.error_code = error_code
+    run.error_detail = error_detail
+    await db.flush()
 
 
 def _register_fake_fixtures(llm: Any) -> None:

@@ -19,6 +19,7 @@ from app.application.evaluation_service import EvaluationService
 from app.prompts.loader import PromptLoader
 from app.skills.evaluator import EvaluationSkill
 from app.skills.registry import SkillRegistry
+from app.workflows.checkpoint import node_failure, raise_if_cancelled
 from app.workflows.state import CreationState
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,13 @@ async def evaluate_episodes_node(state: CreationState) -> dict[str, Any]:
     project_id = uuid.UUID(state["project_id"])
     run_id = uuid.UUID(state["run_id"])
     progress = ctx.get("progress_callback", lambda *a: None)
+
+    # 协作式取消守卫（I-01）
+    raise_if_cancelled(state["run_id"])
+
+    # 失败短路（I-01）：上游节点已失败则跳过本节点，保持失败状态不变
+    if state.get("status") == "failed":
+        return {}
 
     if "evaluate_episodes" in state.get("completed_nodes", []):
         return {}
@@ -148,6 +156,6 @@ async def evaluate_episodes_node(state: CreationState) -> dict[str, Any]:
             autocommit=True,
         )
         return {
-            "status": "failed", "error_node": "evaluate_episodes", "error_detail": str(e),
+            **node_failure("evaluate_episodes", e),
             "evaluation_artifact_ids": state.get("evaluation_artifact_ids", {}),
         }

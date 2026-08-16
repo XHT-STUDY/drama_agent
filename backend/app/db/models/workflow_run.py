@@ -51,6 +51,16 @@ class WorkflowRun(Base, UUIDMixin):
         default=None,
         comment="Run 创建时的配置快照（所有可配置的参数）",
     )
+    error_code: Mapped[str | None] = mapped_column(
+        String(50),
+        default=None,
+        comment="失败时的机器可读错误码（I-01，如 RUN_BUDGET_EXCEEDED / LLM_TIMEOUT）",
+    )
+    error_detail: Mapped[str | None] = mapped_column(
+        String(2000),
+        default=None,
+        comment="失败时的错误详情（I-01，已截断）",
+    )
 
     # 关系
     events: Mapped[list[WorkflowEvent]] = relationship(  # noqa: F821

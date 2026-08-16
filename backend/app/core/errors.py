@@ -139,6 +139,37 @@ class ExportFileMissingError(NotFoundError):
     code = "EXPORT_FILE_MISSING"
 
 
+class RunNotRetryableError(AppError):
+    """Run 处于终态，不可重试（409 RUN_NOT_RETRYABLE，I-01）。
+
+    completed / cancelled 状态的 Run 没有可恢复的中间状态，拒绝 retry。
+    """
+
+    status_code = 409
+    code = "RUN_NOT_RETRYABLE"
+
+
+class RunAlreadyActiveError(AppError):
+    """Run 正在执行，不可重试（409 RUN_ALREADY_ACTIVE，I-01）。
+
+    queued / running 状态已有活跃 Worker，重复 retry 会造成并发执行。
+    """
+
+    status_code = 409
+    code = "RUN_ALREADY_ACTIVE"
+
+
+class BudgetExceededError(AppError):
+    """Run 的 LLM 预算超限（409 RUN_BUDGET_EXCEEDED，I-01）。
+
+    超过 run_max_llm_calls_hard / run_max_llm_tokens_hard 时抛出，
+    由节点失败路径落库到 WorkflowRun.error_code。
+    """
+
+    status_code = 409
+    code = "RUN_BUDGET_EXCEEDED"
+
+
 # ---- 辅助函数 ----
 
 
