@@ -85,15 +85,22 @@ jobs:
         run: uv run mypy app/ tests/
         working-directory: backend
 
-      - name: 测试（排除 smoke）
+      - name: 测试（排除 smoke / performance，含总体覆盖率门禁）
         run: >
           uv run pytest
           --cov=app
           --cov-report=term-missing
           --cov-report=html
           --cov-report=xml
-          -m "not smoke"
+          -m "not smoke and not performance"
           -v
+        working-directory: backend
+
+      - name: 核心覆盖率门禁（domain / workflows / artifacts ≥ 85%）
+        run: >
+          uv run coverage report
+          --include="app/domain/*,app/workflows/*,app/artifacts/*"
+          --fail-under=85
         working-directory: backend
 
       - name: 上传覆盖率报告

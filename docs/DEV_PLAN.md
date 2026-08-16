@@ -2861,11 +2861,11 @@ Prompt 必须区分：
   - 核心覆盖率 85%、总体 75% 门禁；
   - 生成测试报告。
 - 验收：
-  - [ ] 达到第 1.6 节指标；
-  - [ ] 无未解释 flaky test；
-  - [ ] E2E 5/5 通过；
-  - [ ] 内存/连接在测试后释放；
-  - [ ] 报告区分含/不含 LLM 的耗时。
+  - [x] 达到第 1.6 节指标（普通 API p95 < 300ms、100 并发 SSE < 1s、1000 Artifact 分页 < 300ms，实测见 docs/TEST_REPORT.md §4）；
+  - [x] 无未解释 flaky test（E2E「创建项目」strict-mode 选择器竞态已修复；SSE 断开日志噪声为预期并写入 TEST_REPORT §7）；
+  - [x] E2E 5/5 通过（make e2e REPEAT=5，隔离 postgres/redis）；
+  - [x] 内存/连接在测试后释放（SSE gauge 回落基线断言 + 性能测试引擎显式 NullPool）；
+  - [x] 报告区分含/不含 LLM 的耗时（docs/TEST_REPORT.md §4.1）。
 - 测试：
   - make ci
   - make e2e
@@ -2981,7 +2981,7 @@ Prompt 必须区分：
 | I-02 | 可观测性 | 0.5d | I-01 | DONE | AI Agent | 验收 4 项全勾选：/runs/{id}/diagnostics 聚合事件表给出节点时间线(耗时/终态)、run.llm_stats 给出调用数与 prompt/completion token、日志脱敏 RedactFilter 自动测试通过、metrics 输出无 project_id/run_id 高基数标签(API 级断言)；新增 observability/metrics.py(进程内 Counter/Gauge/Histogram registry+Prometheus 文本渲染, 9 个命名指标按 §10.4, 标签低基数)+tracing.py(contextvar span 链 request→run→node, 跨 Task 隔离)+diagnostics.py(事件表聚合: node.started→completed/failed 耗时, run.llm_stats→llm_calls/llm_tokens, run.failed→errors, error_node 回退最近 node.failed); GET /metrics 端点(metrics_enabled 开关, 关→404, 埋点仍累积); 埋点接入 9 处(run_service/creation 节点 _timed_node/llm client/retry/artifact store/export/SSE stream/rag retriever); worker finally 发 run.llm_stats(在 exit_run 前读 budget registry); core/logging.py 加 RedactFilter+mask_secret(sk-*/api_key/Bearer/access_token 保留前缀掩蔽值+超长截断)+修复 2 个存量 TestStructuredLogging 失败; 测试 unit/observability 26(metrics/tracing/log_redaction)+API 7(metrics on/off+无高基数标签, diagnostics 时间线/llm_stats/errors/404)；全量 916 passed/0 failed, Ruff clean, mypy app/ 11 错误与 HEAD 完全一致(0 新增)；OPERATIONS.md(metrics/diagnostics 使用说明) |
 | I-03 | 安全回归 | 0.5d | G-03,H-07 | DONE | AI Agent | 验收 5 项全勾选（路径穿越/剧本不执行脚本/上传下载归属/Prompt 注入隔离/安全文档局限）；新增 core/security.py 集中安全工具(escape_html 五字符&先转/sanitize_filename_part/assert_safe_key/mask_secret/truncate_content)，logging/storage/local/markdown(深转义)/exporters __init__ 复用去重；Prompt 注入隔离 loader 层内容边界(manifest user_content_vars 声明→render 包裹 【用户内容开始/结束】+固定指令句，不改 10 个模板)，全 manifest 契约测试兜底声明变量与模板同步；前端 export.ts 镜像 escapeHtml+escapeDeep(buildExportMarkdown 深转义+项目名转义)；测试 backend/tests/security 40(注入 6+转义 7+日志扫描 2+CORS 6+路径安全 17)+frontend escaping 7；全量 939 passed/0 failed(916→939)，Ruff clean，mypy app/ 11 与 HEAD 完全一致(0 新增)；SECURITY.md(威胁模型/输入卫生/输出转义/访问控制/注入隔离/日志脱敏/数据删除策略/MVP 局限) |
 | I-04 | MCP/Skill 扩展契约 | 0.5d | B-07 | DONE | AI Agent | 验收 5 项全勾选（无 MCP 配置主流程可用/Fake MCP Tool 注册·调用·超时/外部错误不泄露内部连接信息/重名策略明确/文档提供新增 Skill 最小示例）；新增 integrations/mcp/{protocol,adapter}.py(MCPToolSpec+MCPAdapterConfig(enabled/base_url/timeout/prefix), MCPToolAdapter(Tool) 把外部 HTTP JSON-RPC 工具映射为内部 Tool, 注册名=prefix+spec.name, 429/5xx 复用 I-01 RetryPolicy+parse_retry_after 退避重试, 超时→EXTERNAL_TOOL_TIMEOUT 504/连接·HTTP≥400·JSON-RPC error·响应不可解析→泛化 EXTERNAL_TOOL_ERROR 502 均 from None 不泄漏, transport 可注入 MockTransport 测试)+register_mcp_tools(enabled=False 返回空列表不触碰注册表)+errors.py 两错误类+config.py mcp_enabled/base_url/timeout; ToolRegistry/SkillRegistry 增 get_metadata/list_metadata 元数据查询入口; 代表性工具 word_count/dialogue_ratio 补 input_schema/output_schema 样例(其余留空容忍); 测试 tests/contract/test_mcp_adapter.py 18(注册名前缀/schema 透传/成功调用 JSON-RPC 载荷/超时 504/5xx 重试耗尽 502/429+Retry-After 重试成功/400 不重试/JSON-RPC error/非 JSON/错误不泄漏 base_url 与连接细节/批量注册/enabled=False/重名 409/list_metadata/get_metadata 404/Skill 元数据查询); 全量 974 passed/0 failed(956→974), Ruff clean, mypy app/ 11 与 HEAD 完全一致(0 新增); EXTENSIONS.md(新增 Skill 最小示例+Tool schema+3.3 MCP 注册与错误表); .env.example 补 MCP_ENABLED/BASE_URL/TIMEOUT |
-| I-05 | 性能/覆盖率/回归 | 0.5d | I-01..I-04 | TODO | - | - |
+| I-05 | 性能/覆盖率/回归 | 0.5d | I-01..I-04 | DONE | AI Agent | 验收 5 项全勾选（§1.6 指标实测达标/无未解释 flaky/E2E 5/5/连接释放/报告区分含不含 LLM 耗时）；新增 tests/performance/{test_api_latency,test_concurrent_sse,test_1000_artifacts}.py 6 测试(普通 API p95 实测 28-31ms/100 并发 SSE 首块 701.8ms 且 gauge 回落基线/1000 Artifact 分页 45.3ms, 阈值 300/1000/300ms 全绿; 显式 NullPool 修 SSE 泄漏连接复检 InterfaceError, uvicorn 进程内随机端口, 合成 run_id 隔离 worker 污染); 覆盖率双门禁 pyproject fail_under=75(总体实测 88%)+coverage report --include=domain/workflows/artifacts --fail-under=85(核心实测 92%); pytest addopts -m not performance+marker 注册, CI -m "not smoke and not performance"+核心门禁步骤, Makefile perf/cov/ci; 修复 E2E flaky(startCreation「创建项目」substring 定位器在空态过渡帧 strict-mode 冲突 → 改点头部「+ 创建项目」唯一匹配); 修复 docker-compose.e2e.yml 与主 compose 共享 project name=drama_agent 导致 e2e 清理 down -v 连带移除开发库容器 → 加 name: drama-e2e 隔离; docs/TEST_REPORT.md(计数 974 passed/0 failed/6 deselected/覆盖率 88%+92%/性能实测表/含不含 LLM 耗时区分/E2E 5×); Ruff clean, mypy 与 HEAD 一致(11, 0 新增) |
 | I-06 | 文档与 RC 发布 | 0.25d | I-05 | TODO | - | - |
 
 ### 13.3 阶段验收记录

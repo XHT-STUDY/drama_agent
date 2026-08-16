@@ -2958,3 +2958,57 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - **I-05 性能、覆盖率与全量回归**：`tests/performance/`（p95<300ms、100 并发 SSE、1000 Artifact）+ 双覆盖率门禁（总体 ≥75% / 核心 domain·workflow·artifacts ≥85%，先测现状再校准）+ `make perf`/`make cov` + `make e2e REPEAT=5` + `docs/TEST_REPORT.md`。
+
+## I-05 性能、覆盖率与全量回归（2026-08-16）
+
+### 做了什么
+
+**性能测试** `backend/tests/performance/`（6 tests，`@pytest.mark.performance`，默认 `-m not performance` 排除，`make perf` 显式运行）：
+- `test_api_latency.py`：普通 API p95 < 300ms（GET /health/ready、GET /projects、POST /projects，各预热 5 次 + 测 50 次）。
+- `test_concurrent_sse.py`：**100 并发 SSE 连接**首事件块 p95 < 1s + 连接关闭后 `sse_connections_active` gauge 回落基线。用真实 uvicorn 进程内服务（`ASGITransport` 会缓冲完整流，无法逐块读）+ **合成 run_id**（SSE 端点不校验存在性，隔离 worker 污染测量）。
+- `test_1000_artifacts.py`：1000 Artifact 经 `ArtifactStore.create` 种子（episode 参与 input_hash 去重）+ 分页 API 100/页 × 10 全遍历 + p95 < 300ms。
+
+**覆盖率双门禁**：
+- `pyproject.toml`：`fail_under = 75`（总体）+ `markers` 注册 `performance` + `addopts -m not performance`。
+- CI：测试步骤 `-m "not smoke and not performance"`（pytest CLI `-m` 会覆盖 addopts，必须显式排 performance）+ 新增「核心覆盖率门禁（domain/workflows/artifacts ≥ 85%）」步骤。
+- `Makefile`：新增 `perf` / `cov` 目标，`ci = lint typecheck cov`。
+
+**实测数字**：总体覆盖率 **88%**（≥75 ✓）、核心 **92%**（≥85 ✓）；p95 health 28.1ms / projects list 30.4ms / create 31.2ms / 1000 Artifact 分页 45.3ms / 100 并发 SSE 首块 701.8ms。
+
+**回归修复**（2 处 E2E 基建问题，均非产品缺陷）：
+1. **E2E strict-mode 竞态**：`startCreation` 用 `getByRole("link", { name: "创建项目" })`，页面头部「+ 创建项目」与空态「创建项目」在列表加载完成的过渡帧同时匹配 → 改为 `{ name: "+ 创建项目" }` 唯一匹配头部链接。
+2. **compose 项目名冲突**：`docker-compose.e2e.yml` 与主 compose 同目录默认共享 project name `drama_agent`，e2e 清理的 `down -v` 会连带移除开发库容器 → 加 `name: drama-e2e` 隔离。
+
+**文档**：`docs/TEST_REPORT.md`（计数 / 覆盖率 / 性能实测表 / 含不含 LLM 耗时区分 / E2E / 已知噪声）。
+
+### 为什么这么做
+
+- **SSE 测试不用 ASGITransport**：httpx `ASGITransport` 缓冲完整响应体，`aiter_bytes` 永远收不到增量 chunk → 用进程内 uvicorn（`port=0` 随机端口，`server.servers[0].sockets[0].getsockname()[1]` 读实际端口）。
+- **合成 run_id 而非真实 Run**：POST /runs 会立即后台启动完整 workflow（FakeLLM），既污染连接延迟测量又拖垮 teardown。
+- **性能测试引擎显式 `NullPool`**：实证 `create_async_engine(poolclass=None)` 产生 `AsyncAdaptedQueuePool`（非 NullPool），SSE 生成器泄漏的 session 连接进入池后被复用为"已关闭"，导致 teardown `drop_all` 报 `InterfaceError`。改为 `poolclass=NullPool` 后连接不复用、drop_all 取全新连接。
+- **pytest `-m` 覆盖语义**：CLI `-m` 覆盖 addopts `-m`，故 CI 必须显式 `-m "not smoke and not performance"`，否则 performance 测试会跑进 CI。
+- **E2E 定位器竞态根因**：空态链接只在 `!isLoading && allItems.length===0` 渲染，加载完成到 useEffect 填 `allItems` 之间存在过渡帧，两链接同框 → substring 定位器触发 strict-mode violation，重复 1 过了、重复 2 撞上 → 必须用唯一精确名。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/performance/ -m performance` | **6 passed**（p95 实测见上） |
+| `make cov`（总体 + 核心双门禁） | 总体 **88%** / 核心 **92%**，双门禁通过 |
+| `uv run pytest`（全量，排除 performance） | **974 passed / 0 failed，6 deselected** |
+| `make e2e REPEAT=5`（修定位器后） | **5 passed**（14.9s） |
+| `ruff check app/ tests/` | All checks passed |
+| `mypy app/` | 11 errors，与 HEAD 完全一致（0 新增） |
+
+### 学到了什么
+
+1. **`poolclass=None` ≠ NullPool**：`create_async_engine(poolclass=None)` 实测产生 `AsyncAdaptedQueuePool`；要真 NullPool 必须显式 `poolclass=NullPool`。泄漏连接的坑在"池复用"而非"连接数"。
+2. **SSE 测试的 transport 陷阱**：ASGITransport 缓冲整个 StreamingResponse → 无限 SSE 流无法用 `client.stream()` 增量读；进程内 uvicorn + 真实网络 transport 是确定性正解。
+3. **pytest `-m` 覆盖 addopts**：凡 addopts 默认排除的 marker，CI 显式 `-m` 必须把排除条件写全，否则会被静默覆盖。
+4. **E2E 空态过渡帧竞态**：条件渲染 + 异步数据到达 = 元素闪现窗口；测试定位器应锚定"始终存在"的唯一元素，而不是"多数时候存在"的元素。
+5. **docker compose 项目名隐式共享**：同目录多 compose 默认共享 project name（目录名）；`down -v` 以 project label 匹配移除容器，跨文件也会误伤。隔离必须显式 `name:`。
+6. **import 绑定时机**：`from X import name` 在 import 时绑定；conftest 事后改 `X.name` 不会更新测试模块里的名字。性能测试读运行时状态要 `import X` 后属性访问。
+
+### 下一步
+
+- **I-06 交付文档、Demo 数据与发布候选**：OPERATIONS/SECURITY/EXTENSIONS（I-02/03/04 已写）之外补 DEMO/KNOWN_LIMITATIONS/CHANGELOG + README/API_CONTRACT/.env.example 更新 + pyproject 版本 `0.1.0-rc1` + git tag + §13.3 H→PASS、I→PASS + CLAUDE.md 进度修正。

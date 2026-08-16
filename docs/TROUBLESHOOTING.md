@@ -439,3 +439,23 @@ if state.get("status") == "failed":
 **解决方案**：将 `JsonFormatter` 输出键对齐契约 `timestamp / level / logger / message [/rid][/exception]`（`timestamp` 为北京时间、`logger` 为缩短名），并顺带在 I-02 为 formatter 输出加 `RedactFilter` 脱敏（sk-*/api_key/Bearer + 超长截断）。修改文件：[core/logging.py](backend/app/core/logging.py)；两个用例随之通过，全量回归 0 失败。
 
 **学习收获**：日志格式这类"契约即断言"的组件，键名一旦被测试锁定，实现改动必须同步跑对应测试；存量失败不应无限期挂账——每阶段收尾应把"存量失败"当成真 bug 排期（I-02 把它作为独立修掉项）。同时，日志改造与脱敏一起做，避免重复返工。
+
+## 2026-08-16 — SSE 性能测试 teardown 报 `InterfaceError: connection is closed`
+
+**症状**：`tests/performance/test_concurrent_sse.py` 中 `test_100_concurrent_connections_receive_first_event` **PASSED**，但第二个用例 `test_connections_released_after_close` **ERROR at teardown**——session 级 `test_engine` 夹具的 `drop_all`（conftest 第 67 行）报 `InterfaceError: connection is closed`。尝试 `contextlib.suppress(Exception)` 捕获取消、`await asyncio.sleep(0.2)` 收尾、`wait_for(..., timeout=15)` 均无效。
+
+**产生原因**：`tests/performance/conftest.py` 用 `create_async_engine(db_url, poolclass=None)` 建引擎，注释想当然写"NullPool"。**实证** `create_async_engine(poolclass=None)` 产生的是 `AsyncAdaptedQueuePool`（默认 5+10 溢出）而非 NullPool——SSE 生成器在客户端断开/服务端撤销时泄漏的 session 连接进入池，被后续复用为"已关闭"，`drop_all` 复检时检出坏连接抛 `InterfaceError`。`poolclass=None` 的语义不是"不池化"。
+
+**解决方案**：性能测试引擎显式 `poolclass=NullPool`（`from sqlalchemy.pool import NullPool`）——每个 session 独立取新连接、关闭即释放，泄漏连接不会被池复用，`drop_all` 每次取全新连接。SSE 两个用例随之 2 passed，全量性能套件 6 passed。
+
+**学习收获**：**`poolclass=None` ≠ NullPool**——SQLAlchemy 里 `None` 表示"用默认池"，真要禁池必须显式 `poolclass=NullPool`。凡涉及 SSE / 长连接 / 流式响应的测试夹具，别相信注释里的池类型，跑一次探针 `print(engine.pool.__class__.__name__)` 实证。泄漏连接的坑在"池复用坏连接"而非"连接数超标"，显式 NullPool 是测试侧最廉价的隔离。
+
+## 2026-08-16 — 两个 compose 文件同目录共享 project name，e2e 清理连带移除开发库容器
+
+**症状**：`make e2e REPEAT=5` 期间，开发库容器 `drama-postgres` / `drama-redis` 被停止并从 `docker ps -a` 消失；随后 `make perf` 报 `ConnectionRefusedError: ('127.0.0.1', 5432)`。同一时间 e2e 专用容器（drama-e2e-*）仍在运行。
+
+**产生原因**：`docker-compose.yml` 与 `docker-compose.e2e.yml` 位于同一目录 `/home/xie/drama_agent`，两个文件都没写 `name:` 字段，默认 project name = 目录名 `drama_agent`（已用 `docker compose config` 实证：二者均解析为 `name: drama_agent`）。`scripts/e2e.sh` 清理阶段执行 `docker compose -f docker-compose.e2e.yml down -v`，`docker compose down` 按 `com.docker.compose.project` label 匹配**移除整个项目的所有容器**——主 compose 的容器同样带 `drama_agent` label，被连带移除（e2e 文件的 volumes 不含 `postgres_data`，数据卷未受损）。
+
+**解决方案**：`docker-compose.e2e.yml` 顶部显式 `name: drama-e2e`，把 e2e 项目与开发项目隔离。修改后 e2e 清理只移除 drama-e2e-* 容器，`make e2e REPEAT=5` 与开发库互不干扰（已验证：e2e 跑完后主容器存活）。
+
+**学习收获**：**同目录多 compose 文件默认共享 project name（目录名），`down -v` 以 project label 移除容器、跨文件也会误伤**——隔离测试基建必须在文件里显式 `name:`。另外：`make e2e` 这类长命令经 `| tail` 管道后台跑时，tail 缓冲到 EOF 才输出，中途看不到进度；排查卡住的长任务要先看进程树（`ps --ppid`），别只盯输出文件。

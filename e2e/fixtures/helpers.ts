@@ -76,7 +76,10 @@ export function makeProjectName(): string {
  */
 export async function startCreation(page: Page): Promise<string> {
   await page.goto("/projects");
-  await page.getByRole("link", { name: "创建项目" }).click();
+  // 页面头部「+ 创建项目」始终存在；空态引导「创建项目」在列表加载完成前的
+  // 过渡帧也会闪现（与头部链接同框 → substring 定位器会触发 strict 冲突）。
+  // 用「+ 创建项目」精确唯一匹配头部链接，避免时序竞态。
+  await page.getByRole("link", { name: "+ 创建项目" }).click();
   await page.waitForURL(/\/projects\/new$/);
 
   const name = makeProjectName();

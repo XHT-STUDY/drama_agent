@@ -1,7 +1,7 @@
 # DramaAgent Makefile
 # 统一开发命令入口 — 详见 docs/DEV_PLAN.md
 
-.PHONY: install lint typecheck test ci up down doctor clean e2e-setup e2e e2e-down
+.PHONY: install lint typecheck test cov ci perf up down doctor clean e2e-setup e2e e2e-down
 
 ## 安装全部依赖
 install:
@@ -32,9 +32,24 @@ test:
 	@echo "=== 前端测试 (vitest) ==="
 	cd frontend && pnpm test
 
-## CI 流水线（lint + typecheck + test）
-ci: lint typecheck test
+## 覆盖率门禁（总体 ≥75% + 核心 domain/workflows/artifacts ≥85%）
+cov:
+	@echo "=== 后端总体覆盖率 (fail_under=75) ==="
+	cd backend && uv run pytest --cov=app --cov-report=term-missing --cov-report=html --cov-report=xml
+	@echo "=== 核心覆盖率门禁 (domain/workflows/artifacts ≥85%) ==="
+	cd backend && uv run coverage report --include="app/domain/*,app/workflows/*,app/artifacts/*" --fail-under=85
+	@echo "=== 覆盖率门禁全部通过 ==="
+
+## CI 流水线（lint + typecheck + 覆盖率门禁）
+ci: lint typecheck cov
 	@echo "=== CI 全部通过 ==="
+
+## 性能测试（需 make up：PostgreSQL + Redis）
+## §1.6：普通 API p95<300ms / 100 并发 SSE / 1000 Artifact 查询
+perf:
+	@echo "=== 性能测试 (make up 需先就绪) ==="
+	cd backend && uv run pytest -m performance -v
+	@echo "=== 性能测试完成 ==="
 
 ## 启动本地基础设施（PostgreSQL + Redis）
 up:

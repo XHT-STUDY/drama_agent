@@ -72,6 +72,9 @@ addopts = [
     "-q",
     "--strict-markers",
     "--strict-config",
+    # 性能测试默认跳过（make perf 显式运行），保证普通 CI 快且确定性
+    "-m",
+    "not performance",
 ]
 markers = [
     "unit: 纯领域规则、Schema、工具、选择器，不访问网络",
@@ -79,6 +82,7 @@ markers = [
     "contract: API、事件、Prompt 输出 Schema 快照测试",
     "workflow: FakeLLM 驱动的节点、分支、恢复测试",
     "smoke: 手工触发真实模型最小链路，不进入普通 CI",
+    "performance: 普通 API p95 / 并发 SSE / 1000 Artifact 查询（I-05），默认排除",
 ]
 
 [tool.mypy]
@@ -111,8 +115,11 @@ omit = [
 ]
 
 [tool.coverage.report]
-# MVP 阶段 70%；阶段 I 提升至 85%（core）/ 75%（overall）
-fail_under = 70
+# 阶段 I 门禁（§1.6 非功能指标）：
+# - 总体 fail_under=75：pytest --cov 结束时强制；
+# - 核心子集（domain/workflows/artifacts）≥85%：由 Makefile `cov` 目标与 CI
+#   用 `coverage report --include=... --fail-under=85` 复用同一份 .coverage 数据强制。
+fail_under = 75
 exclude_also = [
     "def __repr__",
     "if TYPE_CHECKING:",

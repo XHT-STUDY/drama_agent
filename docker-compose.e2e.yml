@@ -4,6 +4,12 @@
 # 后端 / 前端以宿主进程运行（scripts/e2e.sh 编排），避免新增镜像构建范围。
 #
 # 使用：make e2e   /   make e2e-down
+#
+# name 必须与 docker-compose.yml（项目 drama_agent）区分：
+# 两个 compose 同目录时默认共享目录名作为 project name，若不加 name 隔离，
+# e2e 脚本清理阶段的 `down -v` 会连带移除开发库容器（drama-postgres/drama-redis）。
+
+name: drama-e2e
 
 services:
   postgres:
