@@ -25,6 +25,7 @@ dependencies = [
     # C-07: LangGraph 工作流引擎
     "langgraph>=0.2",
     "python-multipart>=0.0.32",
+    "python-docx>=1.2.0",
 ]
 
 [project.optional-dependencies]

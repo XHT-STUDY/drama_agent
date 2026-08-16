@@ -85,14 +85,17 @@ class TestEnsureDirectories:
         with tempfile.TemporaryDirectory() as tmp:
             artifacts = Path(tmp) / "artifacts"
             uploads = Path(tmp) / "uploads"
+            exports = Path(tmp) / "exports"
             settings = Settings(
                 artifact_file_root=str(artifacts),
                 upload_file_root=str(uploads),
+                export_file_root=str(exports),
             )
             created = settings.ensure_directories()
-            assert len(created) == 2
+            assert len(created) == 3
             assert artifacts.exists() and artifacts.is_dir()
             assert uploads.exists() and uploads.is_dir()
+            assert exports.exists() and exports.is_dir()
 
     def test_idempotent_when_directories_exist(self) -> None:
         """目录已存在时 ensure_directories 不抛异常。"""
@@ -102,9 +105,10 @@ class TestEnsureDirectories:
             settings = Settings(
                 artifact_file_root=str(path),
                 upload_file_root=str(path),
+                export_file_root=str(path),
             )
             created = settings.ensure_directories()
-            assert len(created) == 2
+            assert len(created) == 3
 
 
 class TestLoadSettings:

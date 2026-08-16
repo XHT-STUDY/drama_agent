@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     # ---- 文件存储路径（相对于项目根目录） ----
     artifact_file_root: str = "./var/artifacts"
     upload_file_root: str = "./var/uploads"
+    export_file_root: str = "./var/exports"
 
     # ---- LLM 通用配置 ----
     llm_provider: str = "openai_compatible"
@@ -129,13 +130,17 @@ class Settings(BaseSettings):
         return self
 
     def ensure_directories(self) -> list[Path]:
-        """创建运行时需要的本地目录（var/artifacts、var/uploads）。
+        """创建运行时需要的本地目录（var/artifacts、var/uploads、var/exports）。
 
         目录内容不提交 Git（由 .gitignore 覆盖）。
         返回已创建（或已存在）的目录路径列表。
         """
         created: list[Path] = []
-        for root_str in (self.artifact_file_root, self.upload_file_root):
+        for root_str in (
+            self.artifact_file_root,
+            self.upload_file_root,
+            self.export_file_root,
+        ):
             path = Path(root_str).resolve()
             path.mkdir(parents=True, exist_ok=True)
             created.append(path)
