@@ -41,6 +41,7 @@ class KnowledgeChunk(Base, UUIDMixin):
     )
     embedding: Mapped[Any] = mapped_column(
         Vector(1536),  # 维度默认为 OpenAI text-embedding-3-small 的 1536
+        nullable=True,  # 与 0001 迁移一致：摄取先置空，向量化阶段（D-03）再回填
         comment="向量嵌入（pgvector 类型）",
     )
     chunk_metadata: Mapped[dict[str, Any] | None] = mapped_column(

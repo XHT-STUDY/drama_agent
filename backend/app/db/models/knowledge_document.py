@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from sqlalchemy import String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, UUIDMixin
@@ -44,6 +45,48 @@ class KnowledgeDocument(Base, UUIDMixin):
         Text,
         default="",
         comment="文档原始全文",
+    )
+
+    # ---- D-01 元数据列（与 app/rag/models.py KnowledgeDocMetadata 对齐） ----
+    source: Mapped[str] = mapped_column(
+        String(500),
+        default="",
+        comment="内容来源（合规必填）",
+    )
+    language: Mapped[str] = mapped_column(
+        String(16),
+        default="zh",
+        comment="语言代码",
+    )
+    genre: Mapped[str] = mapped_column(
+        String(100),
+        default="",
+        comment="题材（如 都市/战神/赘婿）",
+    )
+    stage: Mapped[str] = mapped_column(
+        String(100),
+        default="",
+        comment="适用创作阶段（story_bible/outline/writer）",
+    )
+    tags: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=list,
+        comment="检索标签",
+    )
+    version: Mapped[str] = mapped_column(
+        String(20),
+        default="1.0.0",
+        comment="文档版本",
+    )
+    corpus_version: Mapped[str] = mapped_column(
+        String(50),
+        default="",
+        comment="所属语料版本",
+    )
+    document_hash: Mapped[str] = mapped_column(
+        String(64),
+        default="",
+        comment="文档内容 SHA256（幂等摄取依据）",
     )
 
     # 关系

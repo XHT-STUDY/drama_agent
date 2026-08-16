@@ -1,0 +1,26 @@
+{
+  "story_bible": {
+    "expected_categories": ["genre_template", "character_archetype"],
+    "queries": [
+      "战神题材的套路结构与爽点安排",
+      "赘婿逆袭题材的剧情模板",
+      "被青训队抛弃的足球少年逆袭故事"
+    ]
+  },
+  "outline": {
+    "expected_categories": ["genre_template", "opening_hook"],
+    "queries": [
+      "开场三分钟如何制造悬念抓人",
+      "开篇即高潮的钩子写法",
+      "第一集开头的反转悬念设计"
+    ]
+  },
+  "writer": {
+    "expected_categories": ["payoff", "character_archetype"],
+    "queries": [
+      "主角逆袭打脸的爽点设计",
+      "身份揭露时刻的爽感爆发",
+      "冰山总裁人设的典型特征"
+    ]
+  }
+}

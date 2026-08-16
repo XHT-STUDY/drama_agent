@@ -5,8 +5,10 @@
 """
 
 from app.db.repositories.base import BaseRepository, Repository
+from app.db.repositories.knowledge import KnowledgeRepository
 
 __all__ = [
     "Repository",
     "BaseRepository",
+    "KnowledgeRepository",
 ]

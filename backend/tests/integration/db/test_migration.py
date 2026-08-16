@@ -21,6 +21,11 @@ def _import_migration() -> Any:
     return importlib.import_module("migrations.versions.0001_initial")
 
 
+def _import_migration_0002() -> Any:
+    """动态导入 0002_knowledge 模块（D-02）。"""
+    return importlib.import_module("migrations.versions.0002_knowledge")
+
+
 def _run_alembic_command(*args: str) -> subprocess.CompletedProcess[str]:
     """在 backend/ 目录下运行 alembic 命令。"""
     backend_dir = Path(__file__).resolve().parent.parent.parent.parent
@@ -122,3 +127,82 @@ class TestAlembicMigration:
         alembic_ini = backend_dir / "alembic.ini"
         assert alembic_ini.exists(), "alembic.ini 不存在"
         assert alembic_ini.is_file()
+
+
+@pytest.mark.integration
+class TestAlembicMigration0002:
+    """D-02 知识库迁移（0002）结构验证。
+
+    与 0001 一样，这些测试不连接实际数据库，只做静态结构校验。
+    """
+
+    def test_migration_file_exists(self) -> None:
+        """0002 迁移文件存在且可导入。"""
+        module = _import_migration_0002()
+        assert hasattr(module, "revision")
+        assert hasattr(module, "down_revision")
+        assert hasattr(module, "upgrade")
+        assert hasattr(module, "downgrade")
+
+    def test_revision_chain_valid(self) -> None:
+        """Revision 链正确：0002 的 down_revision 为 0001。"""
+        module = _import_migration_0002()
+        assert module.revision == "0002"
+        assert module.down_revision == "0001"
+
+    def test_upgrade_adds_metadata_columns(self) -> None:
+        """upgrade() 增加全部 D-01 元数据列。"""
+        import inspect
+
+        module = _import_migration_0002()
+        source = inspect.getsource(module.upgrade)
+        expected_columns = [
+            "source",
+            "language",
+            "genre",
+            "stage",
+            "tags",
+            "version",
+            "corpus_version",
+            "document_hash",
+        ]
+        for column in expected_columns:
+            assert column in source, f"0002 upgrade 缺少元数据列: {column}"
+
+    def test_upgrade_creates_hnsw_index(self) -> None:
+        """upgrade() 建立 pgvector HNSW cosine 向量索引。"""
+        import inspect
+
+        module = _import_migration_0002()
+        source = inspect.getsource(module.upgrade)
+        assert "hnsw" in source, "0002 upgrade 缺少 HNSW 向量索引"
+        assert "vector_cosine_ops" in source, "0002 upgrade 向量索引缺少 cosine 运算"
+
+    def test_upgrade_creates_category_index(self) -> None:
+        """upgrade() 为 category 过滤列建立索引。"""
+        import inspect
+
+        module = _import_migration_0002()
+        source = inspect.getsource(module.upgrade)
+        assert "ix_knowledge_documents_category" in source
+
+    def test_downgrade_symmetric(self) -> None:
+        """downgrade() 对称移除全部新增列与索引。"""
+        import inspect
+
+        module = _import_migration_0002()
+        source = inspect.getsource(module.downgrade)
+        expected_columns = [
+            "source",
+            "language",
+            "genre",
+            "stage",
+            "tags",
+            "version",
+            "corpus_version",
+            "document_hash",
+        ]
+        for column in expected_columns:
+            assert f'"{column}"' in source, f"0002 downgrade 未移除列: {column}"
+        assert "ix_knowledge_chunks_embedding_hnsw" in source
+        assert "ix_knowledge_documents_category" in source
