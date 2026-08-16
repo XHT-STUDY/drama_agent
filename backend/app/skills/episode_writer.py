@@ -94,13 +94,24 @@ class EpisodeWriterSkill(Skill):
         outline_json = _json.dumps(ew_input.episode_outline, ensure_ascii=False, indent=2)
         story_bible_json = _json.dumps(ew_input.story_bible, ensure_ascii=False, indent=2)
 
+        # G-02: write_episode 节点注入 assembled_context（ContextBuilder 组装）。
+        # 兼容旧调用方（无 assembled_context）——回退分段拼装，保证 Skill 独立可用。
+        if ew_input.assembled_context:
+            assembled = ew_input.assembled_context
+        else:
+            assembled = "\n\n".join(
+                [
+                    f"## 本集大纲\n{outline_json}",
+                    f"## 前集摘要\n{ew_input.previous_summary or '(第1集无前集)'}",
+                    f"## 连续性状态\n{ew_input.continuity_state or '(初始状态)'}",
+                    f"## StoryBible 参考\n{story_bible_json}",
+                    f"## 知识库参考\n{ew_input.rag_context or '(无知识库参考资料)'}",
+                ]
+            )
+
         rendered = tpl.render(
             episode_number=str(ew_input.episode_number),
-            episode_outline=outline_json,
-            story_bible=story_bible_json,
-            previous_summary=ew_input.previous_summary or "(第1集无前集)",
-            continuity_state=ew_input.continuity_state or "(初始状态)",
-            rag_context=ew_input.rag_context or "(无知识库参考资料)",
+            assembled_context=assembled,
         )
 
         # 2. 调用 LLM 生成结构化输出

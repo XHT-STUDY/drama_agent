@@ -1,7 +1,13 @@
-"""write_episode 节点 — 按集顺序生成剧本 (C-07)."""
+"""write_episode 节点 — 按集顺序生成剧本 (C-07 / G-02).
+
+G-02 集成：改用 ContextBuilder.build_for("writer", ...) 按预算组装创作上下文，
+previous_summary_continuity 段 = 会话摘要（中期记忆）+ ContinuityManager 连续性，
+满足「多轮会话继续生成能读取摘要」的 Exit Gate。
+"""
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import uuid
 from typing import Any
@@ -10,12 +16,16 @@ from langgraph.config import get_config
 
 from app.agents.base import BaseAgent
 from app.application.artifact_service import ArtifactService
+from app.core.config import load_settings
+from app.domain.context import TaskKind
 from app.domain.continuity import EpisodeSummary as EpSummary
 from app.domain.outline import EpisodeOutlineSet
 from app.domain.script import EpisodeWriterInput
 from app.domain.story_bible import StoryBible
 from app.events.publisher import EventPublisher
+from app.memory.context_builder import ContextBuilder
 from app.memory.continuity import ContinuityManager
+from app.memory.summary import latest_project_summary_text
 from app.prompts.loader import PromptLoader
 from app.skills.episode_writer import EpisodeWriterSkill
 from app.workflows.state import CreationState
@@ -25,7 +35,7 @@ _MVP_DEFAULT_SCRIPT_COUNT = 3  # 默认值，实际从 workflow config 读取
 
 
 def _ctx() -> dict[str, Any]:
-    return get_config()["configurable"]  # type: ignore[no-any-return]
+    return get_config()["configurable"]
 
 
 async def write_episodes_node(state: CreationState) -> dict[str, Any]:
@@ -97,6 +107,41 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                 if prev:
                     previous_summary = prev[0].summary
 
+            # ---- G-02 集成点：旧会话优先摘要（中期记忆进创作上下文） ----
+            conversation_summary = await latest_project_summary_text(
+                db, artifact_svc, project_id
+            )
+            previous_summary_continuity = "\n\n".join(
+                filter(None, [conversation_summary, continuity_text])
+            )
+
+            rag_context = ctx.get("writer_rag") or ctx.get("rag_context", "")
+            rag_chunk_ids = list(ctx.get("writer_rag_chunk_ids") or [])
+
+            # ContextBuilder 按 writer 策略组装上下文：current_target（本集大纲）
+            # 完整保留，超预算裁剪辅助段；放不下本集大纲则抛 ContextTooLargeError。
+            builder = ContextBuilder(
+                budget_tokens=load_settings().context_max_tokens
+            )
+            assembled_context, context_manifest = builder.build_for(
+                TaskKind.WRITER,
+                system_rules="",  # 静态系统规则已内嵌在模板中，不重复组装
+                user_request=ctx.get("user_input", ""),
+                story_bible_outline=_json.dumps(
+                    story_bible.model_dump(), ensure_ascii=False
+                ),
+                previous_summary_continuity=previous_summary_continuity,
+                rag_fragments=rag_context,
+                rag_chunk_ids=rag_chunk_ids,
+                current_target=_json.dumps(episode_outline, ensure_ascii=False),
+            )
+            logger.info(
+                "G-02 第 %d 集上下文组装: task=%s used=%s cut=%s rag_chunks=%d",
+                ep_num, context_manifest.task,
+                context_manifest.sections_used, context_manifest.sections_cut,
+                len(context_manifest.rag_chunk_ids),
+            )
+
             ew_input = EpisodeWriterInput(
                 episode_number=ep_num,
                 episode_outline=episode_outline,
@@ -104,7 +149,9 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                 previous_summary=previous_summary,
                 continuity_state=continuity_text,
                 # D-05: 优先消费本阶段检索结果，缺失时回退合并上下文（向后兼容）
-                rag_context=ctx.get("writer_rag") or ctx.get("rag_context", ""),
+                rag_context=rag_context,
+                # G-02: ContextBuilder 组装的完整创作上下文
+                assembled_context=assembled_context,
             )
 
             logger.info("正在调用 LLM 生成第 %d 集剧本…", ep_num)

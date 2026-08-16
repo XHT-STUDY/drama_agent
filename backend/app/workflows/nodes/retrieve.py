@@ -36,7 +36,7 @@ _CREATION_STAGES = ("story_bible", "outline", "writer")
 
 
 def _ctx() -> dict[str, Any]:
-    return get_config()["configurable"]  # type: ignore[no-any-return]
+    return get_config()["configurable"]
 
 
 async def _build_query(
@@ -143,6 +143,7 @@ async def retrieve_node(state: CreationState) -> dict[str, Any]:
     # 检索失败整体降级为空上下文，保证主流程不中断
     stage_texts: dict[str, str] = {}
     stage_hits: dict[str, int] = {}
+    stage_chunk_ids: dict[str, list[str]] = {}
     owned_embedder: Embedder | None = None
     try:
         settings = load_settings()
@@ -164,6 +165,9 @@ async def retrieve_node(state: CreationState) -> dict[str, Any]:
                 )
                 stage_texts[stage] = _format_stage_context(stage, result)
                 stage_hits[stage] = len(result.chunks)
+                # G-02: 记录本阶段命中的 chunk UUID，供 ContextBuilder 回填
+                # ContextManifest.rag_chunk_ids（RetrievalResult.chunks[i].chunk_id）。
+                stage_chunk_ids[stage] = [str(c.chunk_id) for c in result.chunks]
                 if result.chunks:
                     await _persist_trace(
                         db, artifact_svc,
@@ -182,9 +186,10 @@ async def retrieve_node(state: CreationState) -> dict[str, Any]:
             await owned_embedder.close()
 
     # 写入分阶段键（story_bible_rag / outline_rag / writer_rag）
-    # 与合并键（rag_context，向后兼容）
+    # 与合并键（rag_context，向后兼容）；以及分阶段 chunk IDs（G-02）
     for stage, text in stage_texts.items():
         ctx[f"{stage}_rag"] = text
+        ctx[f"{stage}_rag_chunk_ids"] = stage_chunk_ids.get(stage, [])
     ctx["rag_context"] = "\n\n".join(t for t in stage_texts.values() if t)
 
     total_hits = sum(stage_hits.values())

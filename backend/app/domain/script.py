@@ -34,6 +34,11 @@ class EpisodeWriterInput(BaseModel):
     rag_context: str = Field(
         default="", description="知识库检索片段 (MVP 可为空)"
     )
+    assembled_context: str = Field(
+        default="",
+        description="G-02：由 ContextBuilder 按预算组装的完整创作上下文（write_episode "
+        "节点注入；为空时 Skill 回退旧版分段渲染）",
+    )
 
 
 class DialogueLine(BaseModel):

@@ -45,6 +45,13 @@ prompts:
     owner: writer
     template: episode_writer.md
     changelog: "初始版本：基于大纲与连续性状态撰写单集完整剧本（场景/对白/旁白）"
+  - name: write_episode
+    version: "1.1.0"
+    input_schema: EpisodeWriterInput
+    output_schema: ScriptDraft
+    owner: writer
+    template: episode_writer_v2.md
+    changelog: "v1.1: 注入 ContextBuilder 按预算组装的创作上下文（G-02）——当前集大纲完整不截断，旧会话摘要经连续性段进入上下文"
 
   # ---- 剧集评估 ----
   - name: evaluate_episode
