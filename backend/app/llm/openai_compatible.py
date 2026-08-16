@@ -28,9 +28,12 @@ from app.llm.models import LLMCallResult, LLMErrorCode, LLMUsage
 from app.llm.protocol import LLMClient
 from app.llm.retry import (
     RetryPolicy,
+    error_code_label,
     execute_with_retry,
     parse_retry_after,
 )
+from app.observability.metrics import llm_calls_total, llm_token_usage_total
+from app.observability.tracing import get_span
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +215,21 @@ class OpenAICompatibleLLM(LLMClient):
                     error_detail=f"未知错误: {type(e).__name__}: {e}",
                 )
                 self._call_history.append(result)
+
+            # I-02：LLM 调用结果计数（node 取自 tracing 上下文；run_id 不入标签）
+            llm_calls_total.inc(
+                node=get_span().node_name or "unknown",
+                model=resolved_model,
+                status="ok" if result.error_code is None else error_code_label(result.error_code),
+            )
+            # I-02：token 用量（仅成功调用；error 时 usage 默认全 0，不计数）
+            if result.usage.total_tokens:
+                llm_token_usage_total.inc(
+                    kind="prompt", value=result.usage.prompt_tokens
+                )
+                llm_token_usage_total.inc(
+                    kind="completion", value=result.usage.completion_tokens
+                )
 
             # 预算计数（含重试的每次真实尝试）
             record_call(

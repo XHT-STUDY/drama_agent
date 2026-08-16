@@ -429,3 +429,13 @@ if state.get("status") == "failed":
 这样 story_bible 失败后 outline/write_episodes 直接返回 `{}`（不读取缺的 Artifact、不覆盖 error 字段），`_should_evaluate` 检测 failed → END，final_state 保留 error_node="story_bible"、error_code="RUN_BUDGET_EXCEEDED"。恢复矩阵其余断言（timeout→LLM_TIMEOUT、cancel 无新 Artifact、checkpoint 恢复）与全量 881 passed 验证无回归。
 
 **学习收获**：**LangGraph 的静态边不会因节点返回 failed 而停止**——"节点失败即终止"必须显式做成条件边或节点入口短路，二者等价；对"级联会覆盖错误码"的验收，入口短路守卫更廉价（改 1 行 × N 节点，不动图结构）。同时**在写恢复/韧性测试时，先确认测试暴露的是"上游失败"还是"下游被上游拖垮"**——TestHardBudget 最初的失败不是预算没生效，而是下游把错误码冲掉了，这类"真 bug"是 I-01 验收本该抓出来的。
+
+## 2026-08-16 — 结构化日志 JSON 键名与契约不一致（存量 2 失败）
+
+**症状**：`tests/integration/api/test_health.py` 的 `TestStructuredLogging` 两个用例失败——`test_log_output_is_json` 解析出的 JSON 里没有 `timestamp/message/exception` 键，只有 `time/msg/exc`；`test_log_output_includes_exception` 同样拿不到 `exception` 字段。该失败自日志格式引入后一直存在，被计入"存量 2 失败"。
+
+**产生原因**：`core/logging.py` 的 `JsonFormatter` 输出键名是 `time/msg/exc`，而测试（即格式契约）断言的是 `timestamp/message/exception`——契约是"测试即 spec"，formatter 的实现键名与 spec 漂移了。根因是 formatter 先写、契约后补，两者从未被同一断言拉齐。
+
+**解决方案**：将 `JsonFormatter` 输出键对齐契约 `timestamp / level / logger / message [/rid][/exception]`（`timestamp` 为北京时间、`logger` 为缩短名），并顺带在 I-02 为 formatter 输出加 `RedactFilter` 脱敏（sk-*/api_key/Bearer + 超长截断）。修改文件：[core/logging.py](backend/app/core/logging.py)；两个用例随之通过，全量回归 0 失败。
+
+**学习收获**：日志格式这类"契约即断言"的组件，键名一旦被测试锁定，实现改动必须同步跑对应测试；存量失败不应无限期挂账——每阶段收尾应把"存量失败"当成真 bug 排期（I-02 把它作为独立修掉项）。同时，日志改造与脱敏一起做，避免重复返工。

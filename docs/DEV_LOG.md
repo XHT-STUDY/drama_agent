@@ -2830,3 +2830,44 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 建议的下一任务
 
 - **I-02 可观测性与运行诊断**：`observability/`（进程内 metrics registry + Prometheus 文本 + tracing contextvar 关联）+ `GET /metrics`（配置开关）+ `GET /runs/{id}/diagnostics`（聚合事件表时间线）+ `core/logging.py` 加 RedactFilter（掩 sk-*/api_key/Bearer、超长截断），并修掉本次全量回归中唯一的 2 个存量 TestStructuredLogging 失败。
+
+## 2026-08-16 Phase I:I-02 可观测性与运行诊断
+
+### 做了什么
+
+- **进程内指标注册表**（新增 [backend/app/observability/metrics.py](../backend/app/observability/metrics.py)）：不引外部监控依赖，`MetricRegistry` 持有 Counter / Gauge / Histogram，`render_prometheus()` 输出 Prometheus 文本格式（TYPE/HELP/bucket/sum/count、标签有序、`le` 置于末位）。9 个命名指标按 §10.4 落地：`workflow_runs_total{action,status}`、`workflow_node_duration_seconds{node}`、`llm_calls_total{node,model,status}`、`llm_retry_total{reason}`、`llm_token_usage_total{kind}`、`artifact_created_total{artifact_type}`、`export_total{format,status}`、`sse_connections_active`(gauge)、`rag_retrieval_duration_seconds`。`registry.reset()` 供测试隔离。
+- **tracing 关联**（新增 [backend/app/observability/tracing.py](../backend/app/observability/tracing.py)）：contextvar 保存 `request_id → run_id → node` 链，`push_request/push_run/push_node` 为 contextmanager（`_derive` 保留继承、退出恢复外层），跨 asyncio Task 隔离。供 LLM 埋点读取当前 node、供日志 `rid` 串联。
+- **GET /metrics 端点**（[backend/app/main.py](../backend/app/main.py)）：`metrics_enabled` 开关（配置见 [backend/app/core/config.py](../backend/app/core/config.py)），`false` → 404（埋点仍累积）。
+- **9 处埋点接入**：`run_service`（workflow_runs_total 于 create/transition 后）、`workflows/creation.py` 用 `_timed_node` 包装全部 11 个节点（`workflow_node_duration_seconds` + `push_node`）、LLM client（`llm_calls_total` + `llm_token_usage_total`，node 取自 tracing 上下文，status=ok/错误码）、`retry.py`（`llm_retry_total{reason}`，error_code 归一化 `error_code_label`）、`artifacts/store.py`（`artifact_created_total`，幂等早退不计数）、`export_service.py`（`_instrument_export` 装饰器）、`events/stream.py`（`sse_connections_active` gauge，BackgroundTask 递减）、`rag/retriever.py`（`rag_retrieval_duration_seconds`）。
+- **Run 诊断接口**（新增 [backend/app/observability/diagnostics.py](../backend/app/observability/diagnostics.py) + `GET /runs/{id}/diagnostics`）：直接聚合 `workflow_events` 表——`node.started→completed/failed` 算节点耗时与终态、`run.llm_stats` 给调用数与 prompt/completion token、`run.failed` 给 `errors`（error_code；error_node 缺失时回退最近一次 node.failed 的节点名）。Worker 在 `finally`、`exit_run` 之前从预算 registry 发布 `run.llm_stats` 事件（`contextlib.suppress` 保证 finally 不掩盖原始异常）。run 不存在 → 404 `RUN_NOT_FOUND`。
+- **日志脱敏**（[backend/app/core/logging.py](../backend/app/core/logging.py)）：`RedactFilter`（handler 层先渲染消息再掩蔽）+ `mask_secret`（sk-*、api_key/apikey、Authorization/Bearer、access_token 保留字段前缀掩蔽值本身；正文 2000 字符 / 异常 4000 字符截断）。`JsonFormatter` 键名对齐 `timestamp/level/logger/message[/rid][/exception]` 契约——顺带修复 2 个存量 `TestStructuredLogging` 失败（此前键名为 time/msg/exc）。
+- 测试：`tests/unit/observability/{test_metrics,test_tracing,test_log_redaction}.py`(26：计数/渲染/标签序/reset 隔离、span 压入恢复/跨 Task 隔离、mask_secret/RedactFilter 脱敏与截断)；`tests/integration/api/{test_metrics_endpoint,test_diagnostics_endpoint}.py`(7：/metrics 开关 on/off、无 run_id/project_id 高基数标签、diagnostics 节点时间线/llm_stats/errors/404)。
+
+### 为什么这么做
+
+- **不引外部监控依赖**：MVP 单进程 + Prometheus 文本格式即可被 Grafana 抓取，比引入 OpenTelemetry/StatsD 栈省一整个部署面。需要时后续可平滑替换为 SDK 实现（指标名与标签保持 Prometheus 语义）。
+- **Run 诊断复用事件表而非新建存储**：`workflow_events` 是既有"SSE 事件事实记录"，已是权威时间线；按 run 聚合即可，满足验收"找到节点时间线"且不增加存储。
+- **`run.llm_stats` 由预算 registry 提供而非 LLMCall 表**：LLMCall 表从未写入（无持久化调用方），进程内预算在 worker finally 时可准确读出本次 Run 的真实调用数/token（含重试的每次尝试）。
+- **标签低基数纪律进测试**：API 级断言 `/metrics` 输出不含 run_id/project_id——这是把"指标爆炸防护"从约定变成可回归的验收。
+- **日志脱敏放在 handler 层而非 formatter**：RedactFilter 在格式化前改写 record，同一进程所有输出（console/json）自动脱敏；且"先渲染再脱敏、清空 args"避免 `%s` 占位参数在 formatter 二次读取时泄漏原文。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/observability/ tests/integration/api/test_metrics_endpoint.py tests/integration/api/test_diagnostics_endpoint.py` | 33 passed |
+| `uv run pytest tests/`(全量回归) | 916 passed / 0 failed（含此前 2 个存量 TestStructuredLogging 已修复） |
+| `uv run ruff check app/ tests/` | clean |
+| `uv run mypy app/ --no-incremental` | 11 错误，与 HEAD(9661dc6) worktree 对比逐行一致 → 0 新增 |
+| `make doctor` | DB / Redis 就绪 |
+
+### 学习收获
+
+- **mypy 基线对比必须用同一解释器跑 worktree**：直接 `cd worktree && .venv/bin/mypy` 会因 worktree 无 `.venv` 静默失败（输出为空被误判为"0 错误"）；用主 checkout 的 venv 解释器跑 worktree 源码才可比。这验证了"只看计数会被骗"的既有教训。
+- **脱敏正则的引号边界**：`api_key` 值字符类 `[^\s,;&"']+` 遇引号即停——`apikey: "tok-xxx"` 不会被 api_key 模式捕获；但 sk-* 模式不受引号影响，`api_key="sk-xxx"` 仍能正确掩蔽。测试断言必须对"实际定义的行为"负责，而不是想象中的行为。
+- **事件 payload 契约对聚合的影响**：`run.failed` 事件只带 `error_code` 不带 `error_node`，聚合端需回退到最近一次 `node.failed` 的节点名才能给出"在哪失败"。这提醒：新增事件类型时 payload 字段要一次定清楚，否则下游聚合要补回退逻辑。
+- **finally 里发布事件要 suppress**：worker 的 finally 同时承担预算清理、事件发布、client close，任何一步抛异常都会掩盖原始结果异常；用 `contextlib.suppress(Exception)` 只包事件发布一步，保证其他清理不被跳过。
+
+### 建议的下一任务
+
+- **I-03 安全、文件与内容回归**：新增 `app/core/security.py`（集中 sanitize/escape/mask/truncate，storage/local.py 复用去重）+ Prompt 注入隔离（loader 层内容边界定界）+ 转义/日志扫描/CORS 回归测试 + `docs/SECURITY.md`。

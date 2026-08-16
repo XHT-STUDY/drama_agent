@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     # ---- SSE ----
     sse_heartbeat_seconds: int = 15
 
+    # ---- 可观测性（I-02） ----
+    # GET /metrics 开关：false 时返回 404（埋点仍累积，不影响运行）
+    metrics_enabled: bool = True
+
     @classmethod
     def settings_customise_sources(
         cls,

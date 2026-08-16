@@ -4,25 +4,72 @@
 - Console: 彩色人类可读格式（local 环境默认）
 - JSON:   一行 JSON 格式（production 环境，供 ELK/Loki 解析）
 
-每条日志包含以下字段：
-- time: 北京时间（Asia/Shanghai）
-- level: 日志级别（彩色）
+每条 JSON 日志包含以下字段：
+- timestamp: 北京时间（Asia/Shanghai）
+- level: 日志级别
 - logger: logger 名称简写
-- msg: 日志消息
-- request_id: 当前请求 ID（截取前 8 位）
-- module: 产生日志的模块名
+- message: 日志消息
+- rid: 当前请求 ID（截取前 8 位）
+- exception: 异常信息（仅异常日志）
+
+I-02 新增 RedactFilter 与 mask_secret：对日志消息做密钥/令牌脱敏
+（sk-*、api_key、Bearer、Authorization）与超长截断，避免敏感信息
+泄漏到 ELK/Loki 等日志采集系统。
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # 北京时区 (UTC+8)
 _CST = timezone(timedelta(hours=8))
+
+# 单条日志消息最大长度：超过截断，避免全文泄漏到日志采集系统
+_MAX_LOG_CONTENT = 2000
+# 异常堆栈文本最大长度
+_MAX_EXC_TEXT = 4000
+
+# 需脱敏的密钥/令牌模式（I-02）。每项为 (正则, 替换串)，
+# 正则首组捕获字段前缀（如 api_key= / bearer ），替换保留前缀、掩蔽值本身。
+_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # OpenAI 风格 API Key：保留 sk- 前缀，掩蔽后续值
+    (re.compile(r"(sk-)[A-Za-z0-9_\-]{6,}"), r"\1***"),
+    # api_key / apikey 字段赋值
+    (re.compile(r"(?i)(api[_-]?key\s*[=:]\s*)[^\s,;&\"']+"), r"\1***"),
+    # Authorization: Bearer 授权头
+    (re.compile(r"(?i)(authorization\s*[=:]\s*)bearer\s+[A-Za-z0-9._~+/=\-]+"), r"\1***"),
+    # 裸 Bearer 令牌
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=\-]{6,}"), r"\1***"),
+    # access_token / token 字段赋值
+    (re.compile(r"(?i)(access[_-]?token\s*[=:]\s*)[^\s,;&\"']+"), r"\1***"),
+]
+
+
+def mask_secret(text: str, *, max_len: int | None = None) -> str:
+    """掩蔽文本中的密钥/令牌，可选截断超长内容（I-02）。
+
+    覆盖 sk-* API Key、api_key 字段、Bearer 令牌与 Authorization 头；
+    保留字段名前缀（如 api_key=），只掩蔽值本身。非字符串输入原样返回。
+    """
+    if not isinstance(text, str) or not text:
+        return text
+    for pattern, repl in _SECRET_PATTERNS:
+        text = pattern.sub(repl, text)
+    if max_len is not None and len(text) > max_len:
+        text = text[:max_len] + "…（已截断）"
+    return text
+
+
+def _exc_text(record: logging.LogRecord) -> str:
+    """取异常文本并脱敏截断；无异常时返回空字符串。"""
+    if record.exc_info and record.exc_info[1]:
+        return mask_secret(str(record.exc_info[1]), max_len=_MAX_EXC_TEXT)
+    return ""
 
 # ANSI 颜色码
 _COLORS = {
@@ -113,28 +160,53 @@ class ConsoleFormatter(logging.Formatter):
         # 消息
         parts.append(msg)
 
-        # 异常信息
+        # 异常信息（脱敏后展示）
         if record.exc_info and record.exc_info[1]:
-            parts.append(f"\n{_COLORS['ERROR']}{record.exc_info[1]}{_RESET}")
+            parts.append(f"\n{_COLORS['ERROR']}{_exc_text(record)}{_RESET}")
 
         return " ".join(parts)
 
 
+class RedactFilter(logging.Filter):
+    """日志脱敏过滤器（I-02）。
+
+    在格式化之前改写 record：先渲染消息再掩蔽密钥/令牌并截断超长内容。
+    因在 handler 层生效，同一进程内所有日志（console 与 json）均自动脱敏。
+    异常文本在 formatter 中经 _exc_text 统一处理。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            rendered = record.getMessage()
+            if isinstance(rendered, str):
+                record.msg = mask_secret(rendered, max_len=_MAX_LOG_CONTENT)
+                # 已渲染并脱敏，避免 formatter 二次 % 格式化或重新取原始 args
+                record.args = ()
+        except Exception:
+            pass  # 脱敏失败不得阻断日志输出
+        return True
+
+
 class JsonFormatter(logging.Formatter):
-    """结构化 JSON 格式，适合生产环境 / 日志采集系统。"""
+    """结构化 JSON 格式，适合生产环境 / 日志采集系统。
+
+    输出契约：timestamp / level / logger / message [+ rid / exception]。
+    该键名即 ELK/Loki 解析字段名，与 TestStructuredLogging 断言保持一致。
+    """
 
     def format(self, record: logging.LogRecord) -> str:
         log_entry: dict[str, Any] = {
-            "time": _now_cst(),
+            "timestamp": _now_cst(),
             "level": record.levelname,
             "logger": _logger_short(record.name),
-            "msg": record.getMessage(),
+            "message": record.getMessage(),
         }
         req_id = _request_id_short()
         if req_id:
             log_entry["rid"] = req_id
-        if record.exc_info and record.exc_info[1]:
-            log_entry["exc"] = str(record.exc_info[1])
+        exc_text = _exc_text(record)
+        if exc_text:
+            log_entry["exception"] = exc_text
 
         return json.dumps(log_entry, ensure_ascii=False)
 
@@ -161,6 +233,8 @@ def setup_logging(level: str = "INFO", fmt: str = "console") -> None:
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
+    # I-02：所有经根 handler 的日志统一脱敏（掩 sk-*/api_key/Bearer + 超长截断）
+    handler.addFilter(RedactFilter())
     root_logger.addHandler(handler)
 
     # ---- 抑制第三方库日志噪音 ----

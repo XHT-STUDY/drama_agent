@@ -157,5 +157,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- 注册路由 ----
     app.include_router(v1_router, prefix="/api/v1")
 
+    # ---- 运维端点（I-02）----
+    @app.get("/metrics", include_in_schema=False, tags=["ops"])
+    async def metrics_endpoint() -> Response:
+        """Prometheus 指标暴露点。
+
+        metrics_enabled=false 时返回 404（埋点仍累积，便于按需开启）。
+        """
+        app_settings: Settings = app.state.settings
+        if not app_settings.metrics_enabled:
+            return Response(status_code=404)
+        from app.observability.metrics import registry
+
+        return Response(
+            content=registry.render_prometheus(),
+            media_type="text/plain; version=0.0.4",
+        )
+
     logger.info("FastAPI 应用实例创建完成")
     return app

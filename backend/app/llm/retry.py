@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
 from app.llm.models import LLMCallResult, LLMErrorCode
+from app.observability.metrics import llm_retry_total
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,19 @@ RETRYABLE_CODES: frozenset[LLMErrorCode] = frozenset(
         LLMErrorCode.PROVIDER_ERROR,
     }
 )
+
+def error_code_label(code: str | None) -> str:
+    """把错误码转成指标标签文本（I-02）。
+
+    LLMCallResult.error_code 声明为 str 但实际常存 LLMErrorCode 枚举：
+    枚举取其 .value（如 rate_limited），纯 str 原样返回，None → "unknown"。
+    """
+    if code is None:
+        return "unknown"
+    if isinstance(code, LLMErrorCode):
+        return code.value
+    return code
+
 
 # LLMErrorCode 值文本 → run 层错误码（节点失败时用于落库）
 LLM_ERROR_RUN_CODES: dict[str, str] = {
@@ -139,6 +153,8 @@ async def execute_with_retry(
             return result
         if attempt < policy.max_attempts:
             delay = policy.compute_delay(attempt, retry_after_fn(result))
+            # I-02：重试计数（reason=错误码，低基数）
+            llm_retry_total.inc(reason=error_code_label(result.error_code))
             logger.warning(
                 "LLM 调用可重试错误（%s），第 %d 次尝试，%.2fs 后重试",
                 result.error_code,

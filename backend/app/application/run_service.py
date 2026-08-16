@@ -19,6 +19,7 @@ from app.core.errors import AppError, NotFoundError
 from app.db.models.project import Project
 from app.db.models.workflow_run import WorkflowRun
 from app.events.publisher import EventPublisher
+from app.observability.metrics import workflow_runs_total
 from app.workflows.checkpoint import request_cancel
 
 # 内存级幂等键存储（MVP 简化，后续可迁 Redis/DB）
@@ -88,6 +89,9 @@ class RunService:
         db.add(run)
         await db.flush()
 
+        # I-02：Run 创建计数（status=queued）
+        workflow_runs_total.inc(action=action, status="queued")
+
         # 存储幂等键
         if idempotency_key:
             _idempotency_store[idempotency_key] = run.id
@@ -130,6 +134,9 @@ class RunService:
 
         run.status = new_status
         await db.flush()
+
+        # I-02：状态变更计数（action 低基数；run_id 不入标签）
+        workflow_runs_total.inc(action=run.action, status=new_status)
 
         # 发布状态变更事件
         event_type = f"run.{new_status}"

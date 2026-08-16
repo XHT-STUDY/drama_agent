@@ -19,7 +19,9 @@ import contextlib
 import hashlib
 import json
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +33,7 @@ from app.core.config import load_settings
 from app.core.errors import AppError
 from app.domain.enums import ArtifactType
 from app.domain.export import ExportFileContent, ExportSelection
+from app.observability.metrics import export_total
 from app.storage.local import LocalFileStore
 from app.storage.protocol import FileStore
 from app.tools.exporters.docx import DocxExporter
@@ -65,6 +68,24 @@ class ExportError(AppError):
 
     status_code: int = 422
     code: str = "EXPORT_FAILED"
+
+
+def _instrument_export(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """导出成败计数装饰器（I-02）：成功/失败分别累加 export_total{format,status}。"""
+
+    @wraps(fn)
+    async def _wrapper(*args: Any, **kwargs: Any) -> Any:
+        selection = kwargs.get("selection")
+        fmt = getattr(selection, "format", "unknown")
+        try:
+            result = await fn(*args, **kwargs)
+        except Exception:
+            export_total.inc(format=fmt, status="failed")
+            raise
+        export_total.inc(format=fmt, status="success")
+        return result
+
+    return _wrapper
 
 
 class ExportService:
@@ -205,6 +226,7 @@ class ExportService:
 
     # ---- 主入口 ----
 
+    @_instrument_export
     async def export_project(
         self,
         db: AsyncSession,

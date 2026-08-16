@@ -16,11 +16,13 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 
 from app.core.config import Settings
 from app.db.models.workflow_event import WorkflowEvent
 from app.events.publisher import EventPublisher
 from app.events.schemas import WorkflowEventSchema
+from app.observability.metrics import sse_connections_active
 
 router = APIRouter(tags=["events"])
 
@@ -150,6 +152,8 @@ async def stream_events(
     settings: Settings = request.app.state.settings
     from app.db.session import _async_session_factory
 
+    # I-02：SSE 连接计数（连接建立 +1，流结束/断开后台 -1）
+    sse_connections_active.inc()
     return StreamingResponse(
         _event_generator(run_id, last_event_id, _async_session_factory, settings),
         media_type="text/event-stream",
@@ -158,4 +162,5 @@ async def stream_events(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+        background=BackgroundTask(sse_connections_active.dec),
     )

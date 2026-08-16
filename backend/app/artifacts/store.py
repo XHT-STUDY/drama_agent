@@ -19,6 +19,7 @@ from app.artifacts.versions import compute_checksum, compute_input_hash, compute
 from app.core.errors import NotFoundError
 from app.db.models.artifact import Artifact
 from app.db.repositories.artifacts import ArtifactRepository
+from app.observability.metrics import artifact_created_total
 
 
 class ArtifactStore:
@@ -126,6 +127,8 @@ class ArtifactStore:
             artifact.version = compute_next_version(current_max)
             await repo.add(artifact)
 
+        # I-02：新建 Artifact 计数（幂等命中已在上方 early-return，不计）
+        artifact_created_total.inc(artifact_type=artifact_type)
         return artifact
 
     # ---- 查询 ----

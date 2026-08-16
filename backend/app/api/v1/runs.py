@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from typing import Annotated, Any
@@ -25,6 +26,7 @@ from app.core.errors import AppError, RunAlreadyActiveError, RunNotRetryableErro
 from app.db.models.workflow_run import WorkflowRun
 from app.events.stream import router as sse_router
 from app.llm.budget import enter_run, exit_run, get_budget
+from app.observability.diagnostics import RunDiagnosticsResponse
 from app.workflows.checkpoint import (
     RunCancelledError,
     classify_error_code,
@@ -202,6 +204,21 @@ async def get_run(
     """查询 Run 状态。"""
     run = await _service.get_run(db, run_id)
     return RunResponse.from_orm(run)
+
+
+@router.get("/runs/{run_id}/diagnostics", response_model=RunDiagnosticsResponse)
+async def get_run_diagnostics(
+    run_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RunDiagnosticsResponse:
+    """Run 运行诊断（I-02）。
+
+    聚合事件表输出节点时间线 / LLM 调用统计 / 失败信息，满足
+    "根据 run_id 找到完整节点时间线"与"统计一次 Demo 调用次数与 token"。
+    """
+    from app.observability.diagnostics import build_run_diagnostics
+
+    return await build_run_diagnostics(db, run_id)
 
 
 @router.get(
@@ -793,6 +810,21 @@ async def _execute_workflow(
                 pass
         finally:
             # I-01：清理预算与取消标记，避免 registry 泄漏
+            # I-02：发布 run.llm_stats 事件（须在 exit_run 前读取预算），
+            # 供 GET /runs/{id}/diagnostics 聚合调用次数与 token 用量。
+            # 用 suppress 包裹：finally 不得因发布失败掩盖原始异常。
+            _budget = get_budget(str(run_id))
+            if _budget is not None:
+                with contextlib.suppress(Exception):
+                    await publisher.publish(
+                        db, run_id=run_id, event_type="run.llm_stats",
+                        payload={
+                            "calls": _budget.calls,
+                            "prompt_tokens": _budget.prompt_tokens,
+                            "completion_tokens": _budget.completion_tokens,
+                        },
+                        autocommit=True,
+                    )
             exit_run(str(run_id))
             clear_cancel(str(run_id))
             if hasattr(llm_client, "close"):

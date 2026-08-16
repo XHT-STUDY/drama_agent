@@ -15,6 +15,7 @@ Retriever 是检索业务逻辑的唯一入口：
 from __future__ import annotations
 
 import logging
+import time
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,7 @@ from app.db.repositories.knowledge import (
     KnowledgeSearchHit,
 )
 from app.domain.retrieval import RetrievalResult, RetrievedChunk
+from app.observability.metrics import rag_retrieval_duration_seconds
 from app.rag.embedder import Embedder
 from app.rag.models import load_corpus_version
 
@@ -95,6 +97,27 @@ class Retriever:
         Returns:
             RetrievalResult（含按相似度降序、稳定排序、短 ID 的命中）。
         """
+        # I-02：检索耗时直方图（无论成败都记录）
+        _start = time.monotonic()
+        try:
+            return await self._retrieve_impl(query, top_k=top_k, category=category,
+                                             genre=genre, stage=stage, min_score=min_score,
+                                             max_chunks_per_document=max_chunks_per_document)
+        finally:
+            rag_retrieval_duration_seconds.observe(time.monotonic() - _start)
+
+    async def _retrieve_impl(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        category: str | None = None,
+        genre: str | None = None,
+        stage: str | None = None,
+        min_score: float = 0.0,
+        max_chunks_per_document: int | None = None,
+    ) -> RetrievalResult:
+        """检索实现（被 retrieve 计时包装）。"""
         config = RetrieveConfig(
             top_k=top_k,
             min_score=min_score,
