@@ -32,6 +32,7 @@ from app.prompts.loader import PromptLoader
 from app.skills.import_classifier import ImportClassifierSkill
 from app.storage.local import LocalFileStore
 from app.tools.file_parser import FileParserTool
+from app.tools.script_text import full_script_to_script_draft
 from app.workflows.router import route_import
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class ImportState(TypedDict, total=False):
     action: str
     upload_id: str | None
     classification_artifact_id: str | None
+    script_artifact_id: str | None
     content_type: str | None
     route: str | None
     needs_user_input: bool
@@ -127,9 +129,41 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
         # 5. 确定性路由
         route = route_import(classification.content_type)
 
+        # 6. full_script → 持久化 script_draft（G-06：完整剧本能进入评估流程）。
+        # 确定性转换 full_script_to_script_draft 构造最小合法 ScriptDraft；
+        # 转换失败（结构不足）仅记录警告，不阻断分类（评估时会因无脚本跳过）。
+        script_artifact_id: str | None = None
+        if classification.content_type == "full_script":
+            title = (upload.original_name or "").rsplit(".", 1)[0] or "导入剧本"
+            script_content = full_script_to_script_draft(
+                parsed.text, title=title, episode_number=1
+            )
+            if script_content is None:
+                logger.warning(
+                    "完整剧本无法构造合法 ScriptDraft，跳过入库: upload=%s", upload_id
+                )
+            else:
+                script_artifact = await artifact_svc.create_validated_artifact(
+                    db,
+                    project_id=project_id,
+                    artifact_type="script_draft",
+                    episode_number=1,
+                    content=script_content,
+                    source_artifact_ids=[
+                        {
+                            "artifact_id": str(artifact.id),
+                            "version": artifact.version,
+                            "relation": "derived_from",
+                        }
+                    ],
+                    dedup_extra=f"upload:{upload_id}",
+                )
+                script_artifact_id = str(script_artifact.id)
+
         logger.info(
-            "导入分类完成: upload=%s type=%s route=%s artifact=%s",
+            "导入分类完成: upload=%s type=%s route=%s artifact=%s script=%s",
             upload_id, classification.content_type, route, artifact.id,
+            script_artifact_id,
         )
 
         await publisher.publish(
@@ -140,6 +174,7 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
                 "artifact_type": "import_classification",
                 "content_type": classification.content_type,
                 "route": route,
+                "script_artifact_id": script_artifact_id,
                 "progress": 1.0,
             },
             autocommit=True,
@@ -147,6 +182,7 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
 
         return {
             "classification_artifact_id": str(artifact.id),
+            "script_artifact_id": script_artifact_id,
             "content_type": classification.content_type,
             "route": route,
             "needs_user_input": route == "needs_user_input",

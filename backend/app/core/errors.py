@@ -129,6 +129,16 @@ class FileParseFailedError(AppError):
     code = "FILE_PARSE_FAILED"
 
 
+class ExportFileMissingError(NotFoundError):
+    """导出文件不存在或已丢失（404，G-06）。
+
+    下载导出文件时 Artifact 缺失 / 不是 export_file / 存储文件被清理
+    均归为此错误，便于前端统一提示"导出文件不可用"。
+    """
+
+    code = "EXPORT_FILE_MISSING"
+
+
 # ---- 辅助函数 ----
 
 

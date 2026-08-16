@@ -169,6 +169,8 @@ async def create_run(
         "platform_smoke",
         "revise",
         "import",
+        "export",
+        "evaluate",
     ):
         schedule_worker(run.id, body.action, config_snapshot)
 
@@ -253,6 +255,34 @@ def schedule_worker(
     _active_workers[key] = task
 
 
+async def _resolve_upload_text(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    upload_id: str,
+) -> str:
+    """读取上传文件的解析文本（G-06：导入内容进入创作/评估流程）。
+
+    Raises:
+        ValueError: 上传记录不存在（不属于该项目）或读取失败
+    """
+    from app.core.config import load_settings
+    from app.db.repositories.uploads import UploadRepository
+    from app.storage.local import LocalFileStore
+    from app.tools.file_parser import FileParserTool
+
+    repo = UploadRepository(db)
+    upload = await repo.get_for_project(project_id, uuid.UUID(upload_id))
+    if upload is None:
+        raise ValueError(f"上传记录不存在: {upload_id}")
+    settings = load_settings()
+    store = LocalFileStore(root=settings.upload_file_root)
+    data = await store.open(upload.path)
+    parsed = await FileParserTool(
+        upload_max_bytes=settings.upload_max_bytes
+    ).execute(filename=upload.original_name, data=data)
+    return parsed.text
+
+
 async def _execute_workflow(
     run_id: uuid.UUID,
     action: str,
@@ -307,6 +337,39 @@ async def _execute_workflow(
                 return
             await run_svc.transition_status(db, run_id, "running")
 
+            if action == "export":
+                # action=export → 确定性导出（G-06）：组装 → 序列化 → 落盘
+                # → ExportFile Artifact。无 LLM、无 LangGraph 工作流，
+                # 直接调用 ExportService；任一步失败由外层 except 标记 Run failed。
+                from app.application.export_service import ExportService
+                from app.domain.export import ExportSelection
+
+                export_options = config_snapshot.get("options", {})
+                selection = ExportSelection(
+                    kinds=export_options.get(
+                        "kinds",
+                        ["story_bible", "outline", "script", "evaluation", "revision"],
+                    ),
+                    format=export_options.get("format", "markdown"),
+                    artifact_ids=export_options.get("artifact_ids"),
+                )
+                artifact = await ExportService().export_project(
+                    db, project_id=run.project_id, selection=selection
+                )
+                await run_svc.transition_status(db, run_id, "completed")
+                await publisher.publish(
+                    db, run_id=run_id, event_type="run.completed",
+                    payload={
+                        "message": "导出完成",
+                        "artifact_id": str(artifact.id),
+                        "filename": artifact.content.get("filename"),
+                        "format": artifact.content.get("format"),
+                    },
+                    autocommit=True,
+                )
+                await db.commit()
+                return
+
             # platform_smoke 等未接入的 action → 直接完成
             if action not in ("create_script", "evaluate", "revise", "import"):
                 await run_svc.transition_status(db, run_id, "completed")
@@ -319,6 +382,16 @@ async def _execute_workflow(
 
             options: dict[str, Any] = config_snapshot.get("options", {})
             user_input = options.get("user_input", "")
+            # G-06 导入路径：config.upload_id 提供时优先用上传文件内容作为创作输入
+            # （"上传 Outline → 创作"：导入分类 route=create 后，客户端带 upload_id
+            #  重跑 create_script，Worker 解析上传文本注入创作管线）。
+            upload_id_cfg = config_snapshot.get("upload_id")
+            if upload_id_cfg:
+                upload_text = await _resolve_upload_text(
+                    db, run.project_id, upload_id_cfg
+                )
+                if upload_text:
+                    user_input = upload_text
             if not user_input:
                 user_input = "一个被青训队抛弃的足球少年逆袭故事"
 
@@ -414,6 +487,7 @@ async def _execute_workflow(
                     "action": action,
                     "upload_id": config_snapshot.get("upload_id"),
                     "classification_artifact_id": None,
+                    "script_artifact_id": None,
                     "content_type": None,
                     "route": None,
                     "needs_user_input": False,
@@ -563,6 +637,7 @@ async def _execute_workflow(
                         "content_type": final_state.get("content_type"),
                         "route": final_state.get("route"),
                         "classification_artifact_id": final_state.get("classification_artifact_id"),
+                        "script_artifact_id": final_state.get("script_artifact_id"),
                     },
                     autocommit=True,
                 )
