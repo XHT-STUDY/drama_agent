@@ -137,6 +137,26 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 | GET | `/projects/{id}/revisions` | 列出项目修订计划 |
 | GET | `/projects/{id}/revisions/{plan_id}` | 计划详情 + 解析结果链 |
 
+### 上传（G-03）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/projects/{id}/uploads` | 上传并解析 TXT/DOCX（≤10MB），落盘 + 返回解析元数据 |
+| GET | `/projects/{id}/uploads` | 列出项目上传记录 |
+
+### 导入分类（G-04）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/projects/{id}/runs`（`action=import`） | 对上传文件执行导入分类（规则 + LLM 兜底），持久化 `import_classification` 并路由 |
+
+### 导出（G-06）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/projects/{id}/exports` | 发起导出（kinds / format 可选显式版本），202 + Run |
+| GET | `/exports/{artifact_id}/download` | 下载导出文件（归属 + 类型 + 存储三层校验） |
+
 ## POST /projects/{id}/runs — 创建 Run
 
 ### 请求体
@@ -156,7 +176,7 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
-| `action` | string | 是 | `create_script` / `evaluate` / `revise` / `platform_smoke` |
+| `action` | string | 是 | `create_script` / `evaluate` / `revise` / `platform_smoke` / `import` / `export` |
 | `options` | object | `create_script` 时必需 | 创作选项 |
 | `options.user_input` | string (1-10000) | 是 | 用户创作的 Idea/Outline |
 | `options.source_type` | string | 否 | 默认 `"idea"` |
@@ -324,6 +344,66 @@ F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
 
 **错误码**：跨项目 403 `CROSS_PROJECT_ACCESS`；非修订计划 / 不存在 404 `ARTIFACT_NOT_FOUND`。
 
+## POST /projects/{id}/exports — 发起导出
+
+异步导出（确定性，不调 LLM）：Worker 组装各 kind 的 latest valid Artifact → 序列化 → 落盘 → 生成 `export_file` Artifact，随后 SSE 推送 `run.completed`。
+
+### 请求体
+
+```json
+{
+  "kinds": ["story_bible", "outline", "script", "evaluation", "revision"],
+  "format": "markdown",
+  "artifact_ids": null,
+  "idempotency_key": "optional-client-generated-key"
+}
+```
+
+| 字段 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `kinds` | string[] | 是（≥1） | `story_bible` / `outline` / `script` / `evaluation` / `revision` |
+| `format` | string | 否 | `markdown`（默认）/ `docx` |
+| `artifact_ids` | `dict<kind, artifact_id[]>` | 否 | 缺省各 kind 取 latest valid；提供时显式指定 Artifact 版本 |
+| `idempotency_key` | string | 否 | ≤128，幂等键 |
+
+### 响应（202）
+
+```json
+{
+  "run_id": "...",
+  "project_id": "...",
+  "action": "export",
+  "status": "queued",
+  "config_snapshot": {"options": {"kinds": [...], "format": "markdown"}},
+  "created_at": "...", "updated_at": "..."
+}
+```
+
+**错误码**：404 `PROJECT_NOT_FOUND`（项目不存在）；422 `VALIDATION_ERROR`（非法 kind / 空 kinds）。
+
+## GET /exports/{artifact_id}/download — 下载导出文件
+
+校验顺序：Artifact 存在且为 `export_file` → `project_id` 归属 → 本地文件存在 → 返回文件字节。
+
+### 请求
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `artifact_id` | UUID | 是 | 路径参数：`export_file` Artifact ID |
+| `project_id` | UUID | 是 | 查询参数：归属校验用，跨项目 403 |
+
+### 响应（200）
+
+- `content-type`：`text/markdown; charset=utf-8`（markdown）/ `application/vnd.openxmlformats-officedocument.wordprocessingml.document`（docx）；
+- `Content-Disposition: attachment; filename="ascii_fallback"; filename*=UTF-8''<percent-encoded>`：中文文件名经 RFC 5987 `filename*` 编码，ASCII 兜底，不含路径分隔符 / 控制字符。
+
+### 错误码
+
+| 状态码 | code | 含义 |
+|--------|------|------|
+| 403 | `CROSS_PROJECT_ACCESS` | artifact 不属于给定 project_id |
+| 404 | `EXPORT_FILE_MISSING` | Artifact 不存在 / 非 export_file / 存储文件已丢失 |
+
 ## Artifact 类型
 
 | Type | 说明 | 集数 |
@@ -336,3 +416,6 @@ F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
 | `evaluation_report` | 评估报告（绑定被评估剧本版本） | 1-3 |
 | `revision_plan` | 修订计划（引用原稿 / 评估 / 锁定事实） | 1-3 |
 | `continuity_check` | 修订稿连续性检查结果 | 1-3 |
+| `conversation_summary` | 会话滚动摘要（G-01，消息数达阈值触发） | — |
+| `import_classification` | 导入分类结果（G-04，`content_type` + 路由依据） | — |
+| `export_file` | 导出文件元数据（G-05/G-06，`storage_key` 指向 FileStore） | — |

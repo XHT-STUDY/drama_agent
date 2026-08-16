@@ -2,7 +2,7 @@
 
 > 文档版本：v1.4  
 > 编制日期：2026-07-26  
-> 项目阶段：MVP — Phase H 完成（H-01~07：工作台全链路 + 导出中心 + Playwright E2E，`make e2e REPEAT=5` 验收通过），准备进入阶段 I（稳定性/发布加固）  
+> 项目阶段：MVP — Phase G 完成（G-01~06：记忆 / Context Builder / 上传解析 / 导入分类路由 / Markdown+DOCX 导出 / Export API 与导入导出集成，后端为主）;Phase H 完成（H-01~07：工作台全链路 + 导出中心 + Playwright E2E，`make e2e REPEAT=5` 验收通过），准备进入阶段 I（稳定性/发布加固）  
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -2371,11 +2371,11 @@ Prompt 必须区分：
   - Redis miss 时从 DB 恢复；
   - 项目记忆通过最新 Artifact 指针读取，不复制全文。
 - 验收：
-  - [ ] Redis 丢失不丢消息；
-  - [ ] 摘要记录覆盖的消息范围；
-  - [ ] 新消息不会被旧摘要覆盖；
-  - [ ] 项目切换不串记忆；
-  - [ ] 摘要失败不阻断消息保存。
+  - [x] Redis 丢失不丢消息（TestRedisShortTermRecovery：清空 short_term key 后 recent 从 Message 表恢复）；
+  - [x] 摘要记录覆盖的消息范围（covered_from/to/message_count 落库）；
+  - [x] 新消息不会被旧摘要覆盖（覆盖区间 1..2 → 3..5 连续不重叠）；
+  - [x] 项目切换不串记忆（不同项目会话摘要互不可见，artifact 归属各自项目）；
+  - [x] 摘要失败不阻断消息保存（FakeLLM 未注册 → RuntimeError → 消息仍落库、无摘要 artifact）。
 - 测试：
   - pytest backend/tests/unit/memory/test_short_term.py backend/tests/integration/memory/test_summary.py
 
@@ -2384,9 +2384,16 @@ Prompt 必须区分：
 - 预计：0.75 人日
 - 依赖：G-01、D-05
 - 修改文件：
-  - backend/app/memory/context_builder.py
-  - backend/app/domain/context.py
-  - backend/tests/unit/memory/test_context_budget.py
+  - backend/app/domain/context.py（新增）
+  - backend/app/memory/context_builder.py（重写 build_for）
+  - backend/app/memory/summary.py（latest_project_summary_text）
+  - backend/app/workflows/nodes/write_episode.py（接入 build_for）
+  - backend/app/workflows/nodes/retrieve.py（回填 stage_chunk_ids）
+  - backend/app/domain/script.py（EpisodeWriterInput.assembled_context）
+  - backend/app/skills/episode_writer.py（渲染 assembled_context）
+  - backend/app/prompts/templates/episode_writer_v2.md（v1.1.0）+ manifest.yaml
+  - backend/tests/unit/memory/test_context_budget.py（新增）
+  - backend/tests/integration/memory/test_summary_reaches_writer.py（新增，Exit Gate）
 - 实现：
   - 针对 requirement/story_bible/outline/writer/evaluator/reviser 的不同策略；
   - token estimator adapter；
@@ -2394,38 +2401,44 @@ Prompt 必须区分：
   - context_manifest 保存 token 估算和裁剪原因；
   - 明确超限异常 ContextTooLarge。
 - 验收：
-  - [ ] 不同任务上下文组成不同；
-  - [ ] 任何构建结果都保留输出缓冲；
-  - [ ] 当前稿件不能无提示截断；
-  - [ ] 旧会话优先摘要；
-  - [ ] 测试覆盖边界 token 预算。
+  - [x] 不同任务上下文组成不同（6 任务策略各自独立，test_context_budget::TestTaskPolicies）；
+  - [x] 任何构建结果都保留输出缓冲（current_target 完整保留，TestOutputBuffer）；
+  - [x] 当前稿件不能无提示截断（超预算抛 ContextTooLargeError，TestContextTooLarge）；
+  - [x] 旧会话优先摘要（write_episode 节点 previous_summary_continuity = 会话摘要 + 连续性，集成测试 test_summary_reaches_writer 断言摘要进入组装上下文）；
+  - [x] 测试覆盖边界 token 预算（TestBoundaryBudget）。
 - 测试：
   - pytest backend/tests/unit/memory/test_context_budget.py
+  - pytest backend/tests/integration/memory/test_summary_reaches_writer.py
 
 ### G-03 安全上传与 TXT/DOCX Parser
 
 - 预计：1 人日
 - 依赖：B-03
 - 修改文件：
-  - backend/app/storage/protocol.py
-  - backend/app/storage/local.py
-  - backend/app/tools/file_parser.py
-  - backend/app/api/v1/uploads.py
+  - backend/app/storage/protocol.py（FileStore 协议：save/open/exists/delete）
+  - backend/app/storage/local.py（LocalFileStore：UUID 键、原子落盘、防路径穿越）
+  - backend/app/tools/file_parser.py（FileParserTool + ParsedFile）
+  - backend/app/core/errors.py（+InvalidFileTypeError 415/FileTooLargeError 413/FileParseFailedError 422）
+  - backend/app/db/models/upload.py（+original_name/parse_status/char_count/warnings）
+  - backend/migrations/versions/0003_upload_metadata.py
+  - backend/app/db/repositories/uploads.py（UploadRepository）
+  - backend/app/api/v1/uploads.py（POST/GET /projects/{id}/uploads）
+  - backend/app/api/v1/router.py（include uploads_router）
   - backend/tests/unit/tools/test_file_parser.py
   - backend/tests/integration/api/test_uploads.py
 - 实现：
-  - TXT 编码探测，优先 UTF-8；
-  - DOCX 读取段落和表格文本；
-  - 文件大小、MIME、签名和后缀联合校验；
-  - SHA-256、服务端文件名、原子落盘；
+  - TXT 编码探测，优先 UTF-8，GBK 回退（回退记 warning）；
+  - DOCX 读取段落和表格文本（python-docx）；
+  - 文件大小（upload_max_bytes）、MIME、签名（zip 魔数）和后缀联合校验；
+  - SHA-256、服务端 UUID 文件名、原子落盘（tmp + os.replace）；
   - 文本长度和解析警告；
-  - 拒绝宏、损坏压缩包和路径穿越。
+  - 拒绝宏（docm/vbaProject）、损坏压缩包（BadZipFile 映射 422）和路径穿越。
 - 验收：
-  - [ ] 中文 TXT/DOCX 不乱码；
-  - [ ] 空文件和损坏文件返回明确错误；
-  - [ ] 伪装扩展名被拒绝；
-  - [ ] 原始文件名不用于磁盘路径；
-  - [ ] 文件内容不写日志。
+  - [x] 中文 TXT/DOCX 不乱码（单元 test_chinese_docx_encoding + 集成 test_upload_chinese_txt 落盘回读一致）；
+  - [x] 空文件和损坏文件返回明确错误（空 TXT→201 char_count=0；.docx 非 zip→422 FILE_PARSE_FAILED）；
+  - [x] 伪装扩展名被拒绝（.txt 内容为 zip → 422；集成 test_upload_disguised_extension）；
+  - [x] 原始文件名不用于磁盘路径（集成断言 path 为 UUID 键不含客户端名；跨项目隔离测试）；
+  - [x] 文件内容不写日志（file_parser 仅 log warning 异常消息不含内容；上传 API 不写正文）。
 - 测试：
   - pytest backend/tests/unit/tools/test_file_parser.py backend/tests/integration/api/test_uploads.py
 
@@ -2434,26 +2447,34 @@ Prompt 必须区分：
 - 预计：0.75 人日
 - 依赖：G-03、C-02
 - 修改文件：
-  - backend/app/workflows/import_file.py
-  - backend/app/skills/import_classifier.py
-  - backend/app/prompts/templates/import_classifier.md
-  - backend/app/workflows/router.py
-  - backend/tests/workflow/test_import_workflow.py
+  - backend/app/domain/import_file.py（ImportClassificationInput / ImportClassification）
+  - backend/app/skills/import_classifier.py（ImportClassifierSkill：规则先行 + LLM 兜底）
+  - backend/app/workflows/router.py（route_import 纯函数路由表）
+  - backend/app/workflows/import_file.py（ImportFileWorkflow 单节点状态图）
+  - backend/app/prompts/templates/import_classifier.md + manifest.yaml 条目（owner classifier）
+  - backend/app/prompts/loader.py（_auto_register_domain_schemas 注册 ImportClassification(+Input)）
+  - backend/app/application/artifact_service.py（_SCHEMA_MAP += import_classification）
+  - backend/app/artifacts/versions.py（compute_input_hash：dedup_extra 无源时也参与哈希）
+  - backend/app/api/v1/runs.py（action=import 分支 + upload_id config + fake fixture 注册）
+  - backend/tests/golden/import_classification_{outline,full_script,unknown}.json
+  - backend/tests/integration/workflow/test_import_workflow.py
+  - backend/tests/unit/workflow/test_import_router.py
+  - backend/tests/unit/artifacts/test_versions.py（+dedup_extra 无源哈希测试）
 - 实现：
   - 分类：idea_or_notes、outline、full_script、reference、unknown；
-  - 规则特征先行，LLM 对模糊类型分类；
-  - outline -> requirement/creation；
-  - full_script -> parser 后进入 evaluation；
-  - reference 只在用户确认后进入知识摄取，本阶段默认不自动入库；
-  - unknown 返回 needs_user_input。
+  - 规则特征先行（字符数/行数/场景标记/分集标记/对白行数/参考关键词），命中即返回不调 LLM；
+  - LLM 兜底（prompt "import_classifier"）只处理规则未命中的模糊文本；
+  - route_import：outline/idea_or_notes -> create，full_script -> evaluate，reference -> hold，unknown -> needs_user_input；
+  - import_file 节点：读 FileStore + G-03 Parser 解析 → 分类 → 持久化 import_classification Artifact（dedup_extra=f"upload:{upload_id}" 幂等）→ 确定性路由；
+  - 修复 compute_input_hash：dedup_extra 单独出现（无源）时返回哈希而非 None，使无源独立产物（会话摘要/导入分类）可幂等去重。
 - 验收：
-  - [ ] 固定 Outline 和剧本 fixture 分类正确；
-  - [ ] reference 不会自动污染知识库；
-  - [ ] 分类 Artifact 可查询；
-  - [ ] unknown 不误启动昂贵生成；
-  - [ ] 路由行为有 contract test。
+  - [x] 固定 Outline 和剧本 fixture 分类正确（test_llm_fallback_outline → outline；test_rules_hit_full_script → full_script）；
+  - [x] reference 不会自动污染知识库（test_rules_hit_reference_no_llm → route=hold，不进入 create/evaluate）；
+  - [x] 分类 Artifact 可查询（各用例经 _get_classification_artifact 断言 content/content_type/detected_features）；
+  - [x] unknown 不误启动昂贵生成（unknown → needs_user_input=True，test_rules_hit_short_unknown / test_llm_fallback_unknown_needs_user_input）；
+  - [x] 路由行为有 contract test（tests/unit/workflow/test_import_router.py：全覆盖 + ImportRoute 字面量 + reference 不自动入库）。
 - 测试：
-  - pytest -m workflow backend/tests/workflow/test_import_workflow.py
+  - pytest tests/unit/workflow/test_import_router.py tests/integration/workflow/test_import_workflow.py（9 用例，含归属校验/幂等/失败路径）
 
 ### G-05 Markdown 与 DOCX Exporter
 
@@ -2474,11 +2495,11 @@ Prompt 必须区分：
   - 先写临时文件再原子发布；
   - 导出文件保存为 ExportFile Artifact。
 - 验收：
-  - [ ] Markdown 不包含内部 ID/Prompt/Token；
-  - [ ] DOCX 可打开，中文、表格和分页正常；
-  - [ ] 3 集按集号排序；
-  - [ ] 用户可显式选择版本；
-  - [ ] 导出失败不生成 valid ExportFile。
+  - [x] Markdown 不包含内部 ID/Prompt/Token；
+  - [x] DOCX 可打开，中文、表格和分页正常；
+  - [x] 3 集按集号排序；
+  - [x] 用户可显式选择版本；
+  - [x] 导出失败不生成 valid ExportFile。
 - 测试：
   - pytest backend/tests/unit/export/test_markdown.py backend/tests/integration/export/test_docx.py
 
@@ -2488,8 +2509,12 @@ Prompt 必须区分：
 - 依赖：G-04、G-05
 - 修改文件：
   - backend/app/api/v1/exports.py
+  - backend/app/api/v1/runs.py（action=export 分支 + _resolve_upload_text + evaluate 入 Worker 名单）
+  - backend/app/workflows/import_file.py（full_script → 确定性 script_draft 入库）
+  - backend/app/tools/script_text.py（full_script_to_script_draft）
   - backend/tests/integration/api/test_exports.py
-  - backend/tests/workflow/test_upload_to_export.py
+  - backend/tests/integration/api/test_upload_to_export.py（两条导入路径端到端；测试经 API + Worker 装配，故落在 integration/api）
+  - backend/tests/unit/tools/test_script_text.py
   - docs/API_CONTRACT.md
 - 实现：
   - POST export 返回 Run；
@@ -2498,13 +2523,13 @@ Prompt 必须区分：
   - 上传 Outline -> 创作 -> 导出测试；
   - 上传完整剧本 -> 评估 -> 导出测试。
 - 验收：
-  - [ ] 下载文件名安全且可读；
-  - [ ] 不能下载其他项目文件；
-  - [ ] 文件丢失返回 EXPORT_FILE_MISSING；
-  - [ ] 两条导入路径均端到端可运行；
-  - [ ] Export Artifact source links 完整。
+  - [x] 下载文件名安全且可读；
+  - [x] 不能下载其他项目文件；
+  - [x] 文件丢失返回 EXPORT_FILE_MISSING；
+  - [x] 两条导入路径均端到端可运行；
+  - [x] Export Artifact source links 完整。
 - 测试：
-  - pytest backend/tests/integration/api/test_exports.py backend/tests/workflow/test_upload_to_export.py
+  - pytest backend/tests/integration/api/test_exports.py backend/tests/integration/api/test_upload_to_export.py
 
 ### 阶段 G Exit Gate
 
@@ -2931,12 +2956,12 @@ Prompt 必须区分：
 | F-04 | Diff 与版本查询 | 0.75d | F-02,B-04 | DONE | AI Agent | 36 tests passed（unit 27 + integration 9）, Ruff/mypy clean(改动文件); domain/diff.py 纯模型(extra=forbid, 字段 ge/le) + tools/diff.py 确定性算法(两阶段场景对齐: 编号锚定 sim≥0.6 + Needleman-Wunsch sim≥0.35; 行级相似度规避 SequenceMatcher autojunk 病态; diff_lines 三计数 replace 块配对; 对称 change_ratio=(removed+added)chars/(from+to)chars; check_change_ratio 供 F-05 gate; 超大 diff truncated 保留统计清行明细) + DiffService(跨项目/类型/集数防护, content 无法解析回退 line diff) + GET /artifacts/diff(注册于 {artifact_id} 之前防路由吞噬); 集成测覆盖版本列表不可变/方向对称/跨项目拒绝/截断; 全量 582 passed/2 存量日志失败(546→582 恰为 F-04 新增 36) |
 | F-05 | Revision Workflow/重评 | 1d | F-01..F-04,E-04 | DONE | AI Agent | 修订分支接通主工作流: select_revision(确定性选集+revision_round 原子自增) → revise(候选稿 draft 落库) → continuity_check(规则+语义,pass 提升 valid/fail 保 draft 转人工) → re_evaluate(权威原分取自 plan,下降>5 转人工); creation.py 低分改走修订分支; runs.py 事后处理改 elif 链(manual_review/needs_revision_decision/needs_user_input); revision.py 独立图+路由; ArtifactType 增 continuity_check; 新 7 个 workflow 测试+fixtures; **修复 B 期存量 input_hash 跨集碰撞**(compute_input_hash 仅哈希 source ids,各集剧本共享 outline/sb → ep2+ 幂等复用 ep1,真实管线只产出第 1 集; 现把 episode_number+artifact_type 纳入哈希载荷); 全量 589 passed/2 存量 health 日志失败(582→589), Ruff clean, mypy 回到 14 存量基线(0 新增) |
 | F-06 | Revision API | 0.5d | F-05 | DONE | AI Agent | 修订闭环 HTTP 化: 新 app/api/v1/revisions.py(POST /projects/{id}/revisions 202+Run, script_artifact_id 任意合法版本/自动选集+user_instruction; 同步校验 SCRIPT_NOT_FOUND·CROSS_PROJECT_ACCESS·EVALUATION_NOT_FOUND; GET 列表/详情+result_chain 反查) + runs.py 接入 action=revise(schedule_worker 公开, 独立 build_revision_workflow 中途播种: 最新 valid 剧本+绑定评估, 用户指定剧本覆盖保证"任一合法版本"; elif 链加 revise→completed) + select_revision 尊重预置候选 + 独立图条件边(无候选直接 END) + RevisionPlanInput/Plan 增 user_instruction + revision_plan.md v1.1.0(用户补充要求段,不可违反锁定事实) + compute_input_hash 增 dedup_extra(仅非空加载荷,存量哈希逐字节不变) + find_referencing_artifacts 反查; 新 8 集成测试; 全量 597 passed/2 存量 health 日志失败(589→597), Ruff clean, mypy 0 新增 |
-| G-01 | 短期/中期/项目记忆 | 0.75d | B-03,C-06 | TODO | - | - |
-| G-02 | Context Builder 完整化 | 0.75d | G-01,D-05 | TODO | - | - |
-| G-03 | 上传与 TXT/DOCX Parser | 1d | B-03 | TODO | - | - |
-| G-04 | Import 分类与路由 | 0.75d | G-03,C-02 | TODO | - | - |
-| G-05 | Markdown/DOCX Exporter | 1d | B-04,F-04 | TODO | - | - |
-| G-06 | 导入导出集成 | 0.75d | G-04,G-05 | TODO | - | - |
+| G-01 | 短期/中期/项目记忆 | 0.75d | B-03,C-06 | DONE | AI Agent | 17 tests passed(unit 11 + integration 6), Ruff/mypy clean(改动文件); 新增 app/core/redis_client.py(惰性共享 Redis + TTL 帮助 + RedisUnavailableError 降级) + app/memory/short_term.py(ShortTermStore(ABC)→RedisShortTermStore: list+TTL 滑动窗口+miss 回退 DB / InMemoryShortTermStore: 单测与降级) + app/memory/summary.py(ConversationSummaryManager: 消息数达 threshold 整数倍→滚动摘要"超出短期窗口的旧消息", covered_from=上次 covered_to+1 保证连续不重叠, 服务端回填范围字段, dedup_extra=conv:covered_to 幂等, 失败只 log 不阻断) + domain/summary.py 增 ConversationSummary/Body/Input + conversation_summary.md 模板+manifest 条目(owner summarizer) + _SCHEMA_MAP+=conversation_summary + loader 注册 + MessageService.append DI 挂载(push+maybe_summarize 捕获异常) + conversations.py 惰性接线(测试 FakeLLM/生产 OpenAICompatible, Redis 不可用自动降级); config 增 short_term_ttl_seconds/conversation_summary_threshold; **验收 5 项全满足**: Redis 清空 DB 恢复 / 摘要覆盖范围 / 区间连续不重叠 / 项目不串记忆 / 摘要失败不阻断; 全量 pytest 与基线一致, Ruff clean, mypy 0 新增 |
+| G-02 | Context Builder 完整化 | 0.75d | G-01,D-05 | DONE | AI Agent | 19 个 unit tests 通过(test_context_budget.py)+ Exit Gate 集成测试 test_summary_reaches_writer 通过; Ruff clean, mypy 0 新增(改动文件); 新增 app/domain/context.py(TaskKind/ContextSection/TaskContextPolicy 六任务策略表+get_policy 未知回退 writer+ContextTooLargeError(413/CONTEXT_TOO_LARGE)+TokenEstimator(ABC)→CharacterRatioEstimator(1.5)) + context_builder.py 重写 build_for(task,*)分任务策略组装(current_target 输出缓冲永不静默截断, 超限抛 ContextTooLargeError, 非目标段按权重归一化裁剪+记录 truncation_reasons/section_estimates, rag_chunk_ids 从调用方回填 manifest, build() 兼容旧入口) + write_episode 节点最小接入(previous_summary_continuity=latest_project_summary_text 会话摘要+ContinuityManager 连续性, current_target=本集大纲, 注入 assembled_context) + episode_writer_v2.md 模板 v1.1.0(manifest.yaml 追加, v1.0.0 保持不变保住 hash 快照测试) + retrieve.py 回填 stage_chunk_ids + EpisodeWriterInput.assembled_context 字段; **验收 5 项全满足**(分任务组成不同/输出缓冲保留/当前稿件不静默截断/旧会话优先摘要进上下文/边界预算); 全量 pytest 734 passed/2 存量日志失败与基线一致, Ruff 45 存量 migration E501 仅预置, mypy 91 较基线 93 还少 2(移除无用 ignore) |
+| G-03 | 上传与 TXT/DOCX Parser | 1d | B-03 | DONE | AI Agent | 20 unit + 11 integration tests 全绿(test_file_parser.py: 编码探测 UTF-8→GBK 回退/表格提取/宏·损坏·伪装·路径穿越拒绝; test_uploads.py: 中文不乱码回读/GBK 告警/DOCX 落盘一致/空文件/损坏 422/伪装 422/超限 413/项目 404/跨项目隔离/列表倒序); Ruff clean(仅 45 存量 migration E501), mypy 0 新增(全 app 12 较基线 14 还少 2); 全量 pytest 765 passed/2 存量日志失败与基线一致; 新增 FileStore 协议+LocalFileStore(UUID 键/原子 os.replace/防穿越), FileParserTool(大小·扩展名·zip 魔数联合校验+拒绝 docm/vbaProject+BadZipFile 映射 422), Upload 模型+0003 migration 加 original_name/parse_status/char_count/warnings, UploadRepository, uploads.py POST+GET(分块读取提前止损, 原始名仅存 original_name 展示, 内容不写日志), router.py 挂载; 验收 5 项全满足 |
+| G-04 | Import 分类与路由 | 0.75d | G-03,C-02 | DONE | AI Agent | 20 unit(10 router contract + 9 workflow 集成 + versions 幂等新增)全绿, Ruff clean, mypy 0 新增(全 app 11 较会话基线 12 还少 1); 新增 domain/import_file.py(ImportClassificationInput/ImportClassification) + skills/import_classifier.py(规则先行: 特征提取 字符/行/场景/分集/对白/参考关键词, 命中即返回不调 LLM; 模糊文本回退 LLM prompt import_classifier) + workflows/router.py(route_import 纯函数: outline/idea→create, full_script→evaluate, reference→hold 不自动入库, unknown→needs_user_input) + workflows/import_file.py(单节点状态图: FileStore+Parser 解析→分类→持久化 import_classification Artifact dedup_extra=upload:{id} 幂等→确定性路由) + import_classifier.md 模板+manifest 条目 + loader/artifact_service 注册 + runs.py action=import 分支(upload_id 进 configurable, 事后 elif 链完成/needs_user_input 拦截) + golden fixtures(import_classification_outline/full_script/unknown); **修复 G-01 遗留**: compute_input_hash 对"无源仅 dedup_extra"返回 None 使会话摘要/导入分类的幂等去重从未生效, 现 dedup_extra 单独出现也参与哈希(有源哈希逐字节不变, 无源无 dedup_extra 仍 None), 存量测试全绿; 验收 5 项全满足 |
+| G-05 | Markdown/DOCX Exporter | 1d | B-04,F-04 | DONE | AI Agent | 14 unit + 8 docx + 10 service integration tests 全绿(test_markdown.py: 无内部 ID/Prompt/Token、3 集按集号升序、标题层级稳定 H1/H2/H3、缺数据占位、文件名清洗; test_docx.py: python-docx 重开中文/表格/页眉/页码域/分页; test_export_service.py: 组装 latest valid→序列化→FileStore 原子落盘→ExportFile Artifact, 幂等复用/显式版本选择/跨项目拒绝/失败不生成 valid/源链接完整); Ruff clean, mypy 0 新增(全 app 11 与基线一致); 新增 domain/export.py(ExportSelection[kinds/format/artifact_ids 显式版本]+ExportFileContent[storage_key/format/filename/size_bytes/sha256/source_artifact_ids/warnings], extra=forbid) + tools/exporters/markdown.py(移植前端 export.ts 序列化逻辑: story_bible/outline/script/evaluation/revision + build_export_markdown 按集号排序 + 文件名清洗+时间戳) + tools/exporters/docx.py(标题/页眉/PAGE 页码域/一级标题分页/中文字体 w:eastAsia fallback/GFM 管道表格) + application/export_service.py(组装各 kind latest valid→序列化→LocalFileStore.save 原子落盘→create_validated_artifact(EXPORT_FILE, source_artifact_ids, dedup_extra=selection 规范化 JSON); 幂等命中清理孤儿文件; 任一步失败抛错不生成 valid) + _SCHEMA_MAP+=export_file(非法 content→invalid) + config 增 export_file_root; 验收 5 项全满足 |
+| G-06 | Export API 与导入导出集成 | 0.75d | G-04,G-05 | DONE | AI Agent | 36 focused tests 全绿(test_exports.py 10 + test_upload_to_export.py 2 条端到端 + test_import_workflow.py + test_script_text.py 15), Ruff clean, mypy 0 新增(全 app 11 与基线一致); 新增 api/v1/exports.py(POST /projects/{id}/exports: ExportSelection 校验 kinds/format/artifact_ids→create_run(action=export)+schedule_worker 异步 202+Run; GET /exports/{artifact_id}/download: 项目归属校验(跨项目 403 CROSS_PROJECT_ACCESS)→FileStore.open→安全 Content-Disposition(中文 filename* RFC 5987+ASCII 兜底+禁路径分隔符/控制字符), Artifact 缺失/非 export_file/存储文件丢失→404 EXPORT_FILE_MISSING) + errors.py 增 ExportFileMissingError + router 挂载; runs.py action=export 确定性分支(无 LLM 无 LangGraph: ExportService.export_project 组装→序列化→落盘→run.completed SSE+Artifact ID) + _resolve_upload_text(upload_id 注入 create_script 创作输入, 支撑"Outline→创作") + **修复存量缺口: standalone action=evaluate 未在 schedule_worker 名单, 直接创建评估 Run 永不执行, 现补 evaluate**; import_file.py full_script 分类时用确定性 full_script_to_script_draft(纯正则+规则无 LLM: 场景/地点时间/对白/动作/首末钩子/plain_text/字数/对白比, <2 场返 None 仅告警) 持久化 script_draft Artifact(dedup_extra=upload:{id}), 支撑"完整剧本→评估"; 验收 5 项全满足(下载文件名安全/跨项目 403/文件丢失 EXPORT_FILE_MISSING/两条导入路径端到端/Export source links 完整 4 条) |
 | H-01 | 前端基座与 API 类型 | 0.5d | B-01 | DONE | AI Agent | 12 tests passed, ESLint/tsc clean; Tailwind CSS + TanStack Query + API Client + 布局 + 3 通用组件 |
 | H-02 | 项目列表与创建 | 0.5d | H-01,B-03 | DONE | AI Agent | 22 tests passed, ESLint/tsc clean; ProjectCard+StatusBadge+列表+创建表单, target_episode_count 类型对齐后端 |
 | H-03 | 对话、上传与 SSE | 1d | H-02,B-05,G-03 | DONE | AI Agent | 30 tests passed, ESLint/tsc clean; useRunEvents SSE hook + ChatInput + RunProgress + 项目工作台 |
@@ -2963,7 +2988,7 @@ Prompt 必须区分：
 | D | - | - | NOT RUN | - | - | - |
 | E | - | 2026-08-08 | PASS | AI Agent | 前 3 集生成合法报告; overall/need_revision 由服务端规则得出; 低分维度自动补 issue; Evaluation Artifact 绑定剧本版本; FakeLLM 全链路(449 tests)+ 真实模型手工 smoke 脚本就绪; 全量 2 存量失败(日志) | 阶段 H-06 需等 F Gate |
 | F | - | - | NOT RUN | - | - | - |
-| G | - | - | NOT RUN | - | - | - |
+| G | - | 2026-08-16 | PASS | AI Agent | 全量 845 passed/2 存量日志失败(与 HEAD 基线一致), Ruff clean, mypy 0 新增(11 存量); Exit Gate 6 项全满足: 多轮会话摘要进 writer 上下文(test_summary_reaches_writer) / Redis 清空 DB 恢复(test_summary) / TXT·DOCX 上传解析分类(test_uploads + test_import_workflow) / Outline→创作→导出(test_upload_to_export 路径 1) / 完整剧本→评估→导出(路径 2) / MD+DOCX 导出可打开(test_markdown + test_docx + test_exports) | 前端上传/导出 UI 入口为占位(后端为主范围外, 后续阶段实现) |
 | H | - | - | NOT RUN | - | - | - |
 | I / Release | - | - | NOT RUN | - | - | - |
 

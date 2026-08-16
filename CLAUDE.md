@@ -83,8 +83,9 @@ make doctor       # 环境健康检查(DB、Redis、配置)
 ## 当前进度
 
 - **已验收**:Phase A(工程基线)、B(后端基础设施)、C(创作能力)、E(评估)、F(修订)全部 DONE
+- **G 阶段全部 DONE(G-01~06)**:短期/中期/项目记忆 + Context Builder + 安全上传(TXT/DOCX Parser) + 导入分类路由 + Markdown/DOCX Exporter + Export API 与导入导出集成(后端为主;上传 Outline→创作、上传完整剧本→评估 两条路径端到端;导出下载三层校验)
 - **H 阶段全部 DONE(H-01~07)**:前端工作台 + 导出中心 + Playwright E2E 全链路闭环。`make e2e REPEAT=5` 验收通过(FakeLLM + 低分场景,隔离 postgres/redis)
-- **未开始**:Phase D(RAG)、G(记忆 / 导入导出)、I(发布加固)
+- **未开始**:Phase D(RAG)、I(发布加固)
 
 最新进度以 [docs/DEV_PLAN.md](docs/DEV_PLAN.md) §13 进度总表为准。
 

@@ -342,3 +342,72 @@ export LD_LIBRARY_PATH="$ROOT/var/pw-libs/usr/lib/x86_64-linux-gnu"
 **解决方案**：在 [retrieve.py](../backend/app/workflows/nodes/retrieve.py) 的 `_persist_trace` 里给 `create_validated_artifact` 传 `dedup_extra=stage`,让幂等键带上阶段维度(story_bible/outline/writer 各不相同)。同 source 派生的多实例 Artifact 用 dedup_extra 显式区分。
 
 **学习收获**："Artifact 不可变版本 + 幂等去重"双约束下,凡是一个 source 派生**多个"同类型但语义不同"的 Artifact**,都必须用 `dedup_extra` 把幂等键区分开;否则输入哈希相同会被静默合并成一条,且不报错(表面看起来"成功"),只在断言数量时才暴露。写多实例派生 Artifact 的持久化时,先问一句"它们的幂等键会不会撞"。
+
+---
+
+## 2026-08-16 — `.docx 非 zip` 传成 500：`except (BadZipFile, X): raise` 把原始异常透传
+
+**症状**：`test_docx_not_a_zip` 失败——对 `.docx` 但内容不是 zip 的文件,`FileParserTool._parse_docx` 抛出的不是业务错误 `FileParseFailedError`,而是裸 `zipfile.BadZipFile: File is not a zip file` 直达测试断言层。
+
+**产生原因**：解析器里写成了 `except (zipfile.BadZipFile, FileParseFailedError): raise`。意图是「宏/缺部件抛出的 FileParseFailedError 直接放行、其他异常统一映射」，但 `BadZipFile` 也落进了这个分支——`raise` 原样重抛,绕过映射,上层 FastAPI 异常处理器不认它,最终 500。
+
+**解决方案**：把 except 拆开——`FileParseFailedError` 单列 `raise` 保序;`BadZipFile` 单独捕获并显式转 `raise FileParseFailedError("不是有效的 DOCX 文件（损坏的压缩包）") from None`;其余异常才 `raise ... from exc`。模板：
+```python
+except FileParseFailedError:
+    raise
+except zipfile.BadZipFile:
+    raise FileParseFailedError(...) from None
+except Exception as exc:  # noqa: BLE001
+    logger.warning(...)
+    raise FileParseFailedError(...) from exc
+```
+
+**学习收获**：「catch 后 `raise` 原异常」是「把责任交给上层」，只有上层真的有对应 handler 才成立;做「统一映射成业务异常」时,`except 业务异常: raise` 只该列真正需要保序的自家异常,库抛的异常必须显式转成业务异常(`from None` 避免内部链)。写完 try/except 的映射先自问:这个 except 分支到底是想「放行」还是「转换」?
+
+---
+
+## 2026-08-16 — import_classification 幂等去重失效：`compute_input_hash` 无源短路返回 None
+
+**症状**：G-04 集成测试 `test_idempotent_same_upload_no_duplicate_artifact` 失败——同 upload 跑两次 import，`classification_artifact_id` 不一致，Artifact 版本号也不停 +1。期望同 upload 只产一个分类版本。
+
+**产生原因**：`ArtifactStore.create` 的幂等检查是 `input_hash = compute_input_hash(source_artifact_ids, ...)`;若 `input_hash is not None` 才走 `find_by_input_hash`。而 `compute_input_hash` 开头是 `if not source_artifact_ids: return None`——import_classification **没有 source**(不派生自任何 Artifact),dedup_extra 只在有源时才进哈希载荷,于是无源产物永远得到 `input_hash=None`,幂等分支从不触发。G-01 会话摘要(同样无源、依赖 dedup_extra 幂等)存在同一潜伏 bug,只是被 covered_to 递增掩盖未暴露。
+
+**解决方案**：改 [versions.py](../backend/app/artifacts/versions.py) `compute_input_hash`——把短路条件从 `if not source_artifact_ids` 改为 `if not source_artifact_ids and not dedup_extra`;有源分支保持原样(哈希逐字节不变),dedup_extra 单独出现(无源)时也构造载荷并参与哈希。这样「无源独立产物(会话摘要/导入分类)」仅凭 dedup_extra 即可幂等,而「无源且无 dedup_extra」仍返回 None(避免同类型同集的无输入产物相互碰撞)。补了 `test_dedup_extra_without_sources_hashes` 回归测试。
+
+**学习收获**：**幂等键不仅要看「传了什么参数」，还要看参数是否真的触达判重逻辑**——注释写「dedup_extra 幂等」不等于代码真的幂等，前置短路会把整个机制架空。凡是「无源产物 + dedup_extra」的用例，先确认 `compute_input_hash` 不会因无源提前返回 None；并给这类无源产物补「重复触发只产一条」的回归测试。
+
+---
+
+## 2026-08-16 — 嵌套函数 `lines += [...]` 触发 UnboundLocalError
+
+**症状**：G-05 编写 `markdown_from_story_bible` 时,单元测试运行报 `UnboundLocalError: local variable 'lines' referenced before assignment`——外层函数明明已 `lines = [...]` 初始化,嵌套的 `character_section` 块构造函数里做 `lines += [...]` 却报 unbound。
+
+**产生原因**：Python 对函数的局部变量判定是「凡在函数体内被赋值的名字都是局部变量」,而 `+=` 对 list 虽然语义是 in-place 修改,字节码仍会生成 `STORE` 指令(它按 `lines = lines + [...]` 对待,先取再赋)。于是嵌套函数里 `lines += [...]` 让解释器把 `lines` 标记为**该嵌套函数的局部变量**,在外层作用域的同名变量对它不可见——第一次执行取 `lines` 时还未赋值,抛 unbound。它不像 `list.append()` 那样只是「读取」外层变量,而是「绑定」了局部名。
+
+**解决方案**：嵌套块构造函数里一律用 `lines.extend([...])`(只读外层变量 + 原地扩展,不触发局部绑定);若确实需要重新绑定,先在嵌套函数里 `nonlocal lines` 声明。项目 markdown 组装大量用 list 拼接,凡 `build_xxx_markdown` 内部再分块构造的段落,统一用 extend。
+
+**学习收获**：**「看起来是 in-place」的增强赋值在函数作用域里是绑定语句**——`list += [...]` 与 `list.extend([...])` 在作用域语义上完全不同:前者把名字变成该函数局部变量,后者只是读取。排查 UnboundLocalError 时,先找函数体内所有出现赋值符号(`=`、`+=`、`*=`、`|=`)的名字,尤其是嵌套闭包里的,而不是怀疑外层初始化丢了。
+
+---
+
+## 2026-08-16 — 嵌套函数内 `lines +=` 误报 unbound 的补充：DOCX 东亚字体必须写进 `w:eastAsia`
+
+**症状**：`test_docx_chinese_preserved` 起初想用 `font.name = "宋体"` 设中文字体,中文段落渲染后字体仍回落默认(OpenXML 只写了 ascii/hAnsi,rFonts 缺 eastAsia),python-docx 重开测试虽不报错但字体不生效。
+
+**产生原因**：OpenXML 的 `rPr/rFonts` 分 ascii、hAnsi、eastAsia 三个槽位。python-docx 的 `font.name` 只写 ascii/hAnsi;中文属于 eastAsia 槽位,不写 `w:eastAsia` 就默认西文字体,中文显示为 fallback。这不是 python-docx 的 bug,而是 docx 格式对中文本来的要求。
+
+**解决方案**：写一个 `_apply_east_asia_font(style)` 帮助函数——先 `style.font.name = "Calibri"`(Latin),再用 `style.element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), "宋体")` 显式设置东亚字体;Normal 与 Heading 1/2/3 样式统一应用。
+
+**学习收获**：**「字体设置」在 docx 里是三分槽的**,中文化(或任何 CJK)导出必须显式写 `w:eastAsia`,只设 `font.name` 是常见坑;测试要验证中文字体生效,应检查 XML 里 `w:eastAsia` 属性值而非依赖重开成功。
+
+---
+
+## 2026-08-16 — 直接创建 evaluate Run 永久停在 queued
+
+**症状**：G-06 端到端测试 `test_full_script_upload_to_evaluate_to_export` 里 `POST /projects/{id}/runs`(action=`evaluate`)返回 202 后,轮询 `GET /runs/{id}` 直到 80×0.2s 超时状态仍是 `queued`,断言 `AssertionError: Run ... 未完成: queued`。HTTP 层一切正常(202、Run 行存在、无错误日志),只有状态永远不前进。
+
+**产生原因**：`create_run` 里 `schedule_worker(run.id, action, ...)` 有 allow 名单(白名单),名单只含当时接入的 action(create_script/platform_smoke/revise/import),**`evaluate` 不在名单里**——于是直接以 action=evaluate 创建的 Run 只落库、不派发 Worker,永远停在 queued。这是既有缺口:评估在标准管线里由创作 Run 的 elif 链内部触发,从未有人以独立 action 创建过 evaluate Run,所以名单一直漏它;G-06 的「完整剧本→评估→导出」第二条导入路径恰好需要独立评估,缺口立刻暴露。
+
+**解决方案**：把 `"evaluate"` 补进 `create_run` 的 schedule_worker 名单(与 `"export"` 一同加入)。修复后两条端到端路径都过。同时确认名单与 `_execute_workflow` 支持的所有 action 对齐,防再次遗漏。
+
+**学习收获**：**"永不执行"类的异步故障,最明显的暴露点是"等待终态超时",而不是报错**——HTTP 返回 202、Run 行存在、无异常日志,只有轮询等不到终态。凡新增一个 action,必须同时：(1) 进 `create_run` 的 schedule_worker 名单；(2) 有端到端测试断言"轮询到终态"。名单与执行分支是两份数据,靠人脑同步必漏,靠"轮询到终态"的测试兜底。

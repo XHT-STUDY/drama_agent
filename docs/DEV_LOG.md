@@ -2528,3 +2528,262 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 建议的下一任务
 
 - **Phase D 收尾 + G-02**:D-05 完成后 Phase D 全部 DONE(Exit Gate:空语料 creation_workflow 通过、摄取后 RetrievalTrace 记录三阶段、重复摄取幂等)。`rag_chunk_ids` 已在 ContextManifest 记录,G-02(记忆 / 导入导出)再真正接入上下文组装,把 chunk ID 映射回上下文引用。
+
+## 2026-08-16 Phase G:G-01 短期、中期与项目记忆
+
+### 做了什么
+
+- [backend/app/core/redis_client.py](../backend/app/core/redis_client.py)(新增)：惰性共享 Redis 客户端 `get_redis()`(decode_responses=True + 首次 ping 探测)+ `RedisUnavailableError` + `close_redis()`(测试收尾重置全局状态)。EventPublisher 私有 `_get_redis` 保持不动。
+- [backend/app/memory/short_term.py](../backend/app/memory/short_term.py)(新增)：`ShortTermStore(ABC)` 协议(`push/recent/drop`)→ 两个实现：
+  - `RedisShortTermStore`：key `short_term:{conversation_id}`(Redis list)，push 时 `RPUSH + LTRIM(-keep) + EXPIRE(ttl)` 滑动窗口；recent 命中即解析返回，miss/连接失败回退 `recover_from_db`；
+  - `InMemoryShortTermStore`：单测与降级用，同语义(只留最近 keep 条，内存 miss 同样回退 DB 恢复)。
+  - 模块级 `recover_from_db(db, conversation_id, n)`：从 Message 表(事实源)按 sequence 降序取最近 n 条后反转回升序。
+- [backend/app/memory/summary.py](../backend/app/memory/summary.py)(新增)：`ConversationSummaryManager` —— 消息数达 `threshold` 整数倍且 ≥ threshold 时，把「超出短期窗口(window)的旧消息」[covered_from..covered_to=count-window] 生成摘要：`covered_from = 上次摘要 covered_to + 1`(保证区间连续不重叠)，`_load_messages` 从 Message 表取区间，渲染 `conversation_summary.md` → `generate_structured(ConversationSummaryBody, prompt_name="conversation_summary")` → 服务端回填 conversation_id/covered_from/to/message_count → `create_validated_artifact(CONVERSATION_SUMMARY, dedup_extra=f"{conv}:{covered_to}")`。摘要失败抛异常，由挂载点捕获(只 log 不阻断)。
+- [backend/app/domain/summary.py](../backend/app/domain/summary.py)：增 `ConversationSummaryBody`(LLM 输出：summary+topics)、`ConversationSummary`(Artifact 内容：范围字段)、`ConversationSummaryInput`(manifest 校验用)。
+- [backend/app/prompts/templates/conversation_summary.md](../backend/app/prompts/templates/conversation_summary.md)(新增) + [manifest.yaml](../backend/app/prompts/manifest.yaml) 条目(owner summarizer)；[loader.py](../backend/app/prompts/loader.py) 注册三个新 Schema。
+- [backend/app/application/artifact_service.py](../backend/app/application/artifact_service.py)：`_SCHEMA_MAP` += `conversation_summary → ConversationSummary`(否则未知类型默认 valid，摘要范围字段不校验)。
+- [backend/app/application/conversation_service.py](../backend/app/application/conversation_service.py)：`MessageService` 构造注入可选 `short_term_store`/`summary_manager`(默认 None 保持既有调用不变)；`append` 落库后 → `push` → `maybe_summarize`，各自 try/except(摘要失败只 log)。
+- [backend/app/api/v1/conversations.py](../backend/app/api/v1/conversations.py)：`_build_msg_service()` 惰性接线(首次追加消息才构建)——test 环境 FakeLLM(注册 conversation_summary fixture)/生产 OpenAICompatibleLLM，`RedisShortTermStore` + `ConversationSummaryManager` 注入；Redis 不可用自动降级。
+- [backend/app/core/config.py](../backend/app/core/config.py)：增 `short_term_ttl_seconds=7d`、`conversation_summary_threshold=24`。
+- 测试：新增 `tests/unit/memory/test_short_term.py`(11 项：InMemory 窗口/顺序/drop/DB 恢复桩；Redis 假客户端验证 rpush+ltrim+expire、TTL 传递、key 格式、读取失败降级)、`tests/integration/memory/{conftest,test_summary}.py`(6 项：阈值触发覆盖区间、区间连续不重叠、未达阈值 None、项目不串记忆、摘要失败不阻断消息保存、真实 Redis 清空后从 DB 恢复)。
+
+### 为什么这么做
+
+- **ShortTermStore 协议镜像 Real/Fake 决策**：生产 Redis + 单测/降级 InMemory，行为语义完全一致(窗口裁剪 + miss 回退 DB)，测试不依赖真实 Redis 也能覆盖协议行为。
+- **PostgreSQL 是消息事实源，Redis 只是加速层**：push 把消息写入 DB(既有 append 逻辑)后同步一份到 Redis；Redis 丢失/不可用 → recent 从 Message 表恢复。这满足「Redis 丢失不丢消息」，代价是 Redis 不做事实判定。
+- **LLM 只产出 summary+topics，范围字段服务端回填**：与 EvaluationReport 的 overall/need_revision 服务端回填模式一致——避免 LLM 幻觉/编造覆盖区间，保证 Artifact 可校验、可追溯。
+- **covered_from = 上次 covered_to + 1**：每次都只摘要"新增的旧消息"，区间连续不重叠(验收「新消息不会被旧摘要覆盖」)；同时 dedup_extra=conv:covered_to 让同区间重复触发幂等去重。
+- **挂载点放在 MessageService.append 而非 Workflow 节点**：对话消息在创作流程之外，短期记忆/摘要与创作工作流解耦；依赖通过构造注入，`MessageService()` 无参调用(既有 B-03 测试与模块单例)不受影响。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/memory/test_short_term.py` | 11 passed |
+| `uv run pytest tests/integration/memory/test_summary.py` | 6 passed(真实 Docker Redis + 测试 DB) |
+| `uv run pytest tests/integration/api/test_conversations.py` | 9 passed(惰性接线未破坏既有消息接口) |
+| `uv run pytest tests/unit tests/integration/api/test_artifact_versions.py tests/integration/workflow` | 469 passed(回归) |
+| `uv run ruff check app/` + 改动测试 | All checks passed |
+| `uv run mypy` 改动源文件 | 无新增错误 |
+
+验收 5 项全满足：Redis 清空后 DB 恢复 / 摘要覆盖范围 / 区间连续不重叠 / 项目不串记忆 / 摘要失败不阻断消息保存。
+
+### 学习收获
+
+- **「服务端回填确定性字段」是 LLM 结构化输出的正确分工**：让 LLM 只产"语义内容"(摘要+标签)，把"编号/范围/计数"这类确定性字段留在服务端回填——既避免幻觉，又让 Artifact 满足 Pydantic 校验(ge/forbid)。
+- **惰性构建避免 import 期副作用**：API 层接线放在首次调用时构建(FakeLLM/真实 LLM 按 app_env 分支)，模块 import 零副作用，测试与生产共用一条路径，且 Redis 挂了也只降级不抛错。
+- **内存/Redis 实现同语义是降级可测的关键**：InMemoryShortTermStore 与 RedisShortTermStore 都实现"窗口 + miss 回退 DB"，单元测试能无 Redis 覆盖降级分支，集成测试再验证真实 Redis 恢复。
+
+### 建议的下一任务
+
+- **G-02 Context Builder 完整化**：把 G-01 的会话摘要作为 `previous_summary_continuity` 接入 ContextBuilder 分任务组装，`rag_chunk_ids` 从 RetrievalResult 回填 manifest，write_episode 节点最小接入，实现"多轮会话继续生成能读取摘要"的闭环。
+## 2026-08-16 Phase G:G-02 Context Builder 完整化
+
+### 做了什么
+
+- [backend/app/domain/context.py](../backend/app/domain/context.py)(新增)：上下文组装领域模型 —— `TaskKind`(requirement/story_bible/outline/writer/evaluator/reviser)、`ContextSection`(system_rules/user_request/story_bible_outline/previous_summary_continuity/rag_fragments/current_target)、`TaskContextPolicy`(分任务权重 + required_sections + allocation())、`_POLICIES` 六任务策略表 + `get_policy(task)`(未知任务回退 writer 防御)、`ContextTooLargeError(AppError, 413/CONTEXT_TOO_LARGE)`、`TokenEstimator(ABC)` + 默认 `CharacterRatioEstimator(1.5)`。
+- [backend/app/memory/context_builder.py](../backend/app/memory/context_builder.py)(重写)：`build_for(task, *, ...)` 按任务策略组装 —— `_allocate_with_output_buffer`：current_target 作为输出缓冲**永不静默截断**(单独超预算即抛 ContextTooLargeError，消息含保底 2000 tokens 口径)，其余段在「实际非空段落」之间按策略权重归一化分配剩余预算；`_fit_sections` 逐段裁剪到分配上限并记录 `truncation_reasons`/`section_estimates`；`_assemble` 固定标题顺序；`ContextManifest` 增 `task/truncation_reasons/section_estimates/rag_chunk_ids`；旧 `build()` 保留为 writer 策略兼容入口。
+- [backend/app/workflows/nodes/write_episode.py](../backend/app/workflows/nodes/write_episode.py)：最小接入 —— 每集用 `ContextBuilder(budget_tokens=load_settings().context_max_tokens).build_for(TaskKind.WRITER, ...)` 组装：`previous_summary_continuity` = 会话摘要(latest_project_summary_text)+ ContinuityManager 连续性文本；`current_target` = 本集大纲 JSON；`rag_fragments` = writer_rag 检索片段；结果注入 `EpisodeWriterInput.assembled_context`。
+- [backend/app/memory/summary.py](../backend/app/memory/summary.py)：增模块级 `latest_project_summary_text(db, artifact_service, project_id)` —— 取项目级 CONVERSATION_SUMMARY 中 `covered_to_sequence` 最大者的 summary 文本(跨会话项目记忆，无则空串)。
+- [backend/app/workflows/nodes/retrieve.py](../backend/app/workflows/nodes/retrieve.py)：分阶段检索后把命中的 chunk UUID 写入 `ctx[f"{stage}_rag_chunk_ids"]`，供 ContextBuilder 回填 manifest。
+- [backend/app/domain/script.py](../backend/app/domain/script.py)：`EpisodeWriterInput` 增 `assembled_context: str = ""`(G-02 组装上下文)。
+- [backend/app/skills/episode_writer.py](../backend/app/skills/episode_writer.py)：渲染逻辑 —— `assembled_context` 非空则直接用；为空(旧调用方/单元测试)回退旧版分段拼装，保证 Skill 独立可用。
+- [backend/app/prompts/templates/episode_writer_v2.md](../backend/app/prompts/templates/episode_writer_v2.md)(新增，v1.1.0)+ [manifest.yaml](../backend/app/prompts/manifest.yaml)：新增 `write_episode 1.1.0` 条目(渲染 episode_number + assembled_context)；**v1.0.0 保持不变**，保住 contract 的 prompt hash 快照测试。
+- 测试：新增 `tests/unit/memory/test_context_budget.py`(19 项：6 任务策略定义/requirement vs writer 裁剪差异/未知回退 writer/legacy build==writer/输出缓冲保留/空 current_target 可构建/超限抛 ContextTooLargeError/临界预算/rag_chunk_ids 回填与默认空/估算与裁剪原因/TokenEstimator 注入与非法比值/边界预算)、`tests/integration/memory/test_summary_reaches_writer.py`(G-02 Exit Gate：多轮对话超阈值 → 摘要 Artifact → write_episode 节点捕获 EpisodeWriterInput 断言摘要文本进入 assembled_context，且含「## 当前任务目标」「## 连续性状态」头)。
+
+### 为什么这么做
+
+- **输出缓冲(输出缓冲优先)是「当前稿件不能无提示截断」的落点**：创作上下文里 current_target(本集大纲)是本次要完成的目标，静默截断等于让 LLM 在残缺目标下创作；所以设计成「current_target 永不让步，放不下就抛 ContextTooLargeError，由调用方收缩输入(更短摘要/更少 RAG/更大预算)后重试」。这也天然满足验收「任何构建结果都保留输出缓冲」。
+- **分任务策略而非单一固定权重**：requirement 重用户请求、story_bible 重设定、writer 重设定/连续性/RAG —— 不同任务对上下文段的依赖不同，固定权重会浪费预算或砍掉关键段。策略表放 `domain/context.py` 纯数据，未知任务回退 writer 防挂。
+- **Prompt 用 v1.1.0 新模板而非改 v1.0.0**：既有 contract 测试对 `write_episode:1.0.0` 做了 hash 快照，改内容会破坏回归。加一个同 name 新版本、loader 返回最新 semver，让 v1.0.0 哈希保持不变。
+- **Skill 层做兼容回退而非强绑节点**：write_episode 节点注入 assembled_context，但 Skill 本身(单测 / 其他调用方)仍可独立渲染旧分段 —— 避免 G-02 改动让既有测试或独立使用方式失效。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/memory/test_context_budget.py` | 19 passed |
+| `uv run pytest tests/integration/memory/test_summary_reaches_writer.py` | 1 passed(G-02 Exit Gate) |
+| `uv run pytest tests/unit/memory tests/integration/memory tests/unit/skills tests/contract` | 280 passed |
+| `uv run pytest`(全量) | 734 passed / 2 存量日志失败(与基线一致) |
+| `uv run ruff check .` | 仅存量 migration E501(45 处预置，非改动文件) |
+| `uv run mypy .` | 91 错误，较基线 93 少 2(改动文件零新增；另移除 2 处无用 type: ignore) |
+
+验收 5 项全满足：不同任务上下文组成不同 / 任何构建结果保留输出缓冲 / 当前稿件不静默截断 / 旧会话优先摘要进上下文 / 边界 token 预算覆盖。
+
+### 学习收获
+
+- **「永不静默截断 + 明确异常」比「尽力截断」更符合创作工具的语义**：输出缓冲场景下静默截断是隐性 bug(用户不知道大纲被砍了)，宁可让上游显式处理。异常(而非静默)是对「当前稿件必须完整」这一不可谈判约束的显式表达。
+- **预算分配要在「实际非空段落」上归一化**：策略权重是相对比例，若按全 6 段归一化，某段为空时会浪费预算或压缩其他段；只对非空段归一化更接近直觉，且 `current_target` 单独吃掉剩余预算保证完整。
+- **兼容性由 Skill 层兜底、升级由新模板版本承载**：接入新能力时保留旧入口(episode_writer 回退拼装)+ 新增模板版本(v1.1.0)两条路，既向前兼容又向后可验证，是「Artifact 不可变」之外的另一条稳定推进模式。
+
+### 建议的下一任务
+
+- **G-03 安全上传与 TXT/DOCX Parser**：`storage/protocol.py + local.py`(FileStore 原子落盘防路径穿越)、`tools/file_parser.py`(TXT 编码探测/DOCX 段落表格/python-multipart 依赖)、`db/repositories/uploads.py + api/v1/uploads.py`，错误码 INVALID_FILE_TYPE/FILE_TOO_LARGE/FILE_PARSE_FAILED。
+
+## 2026-08-16 Phase G:G-03 安全上传与 TXT/DOCX Parser
+
+### 做了什么
+
+- [backend/app/storage/protocol.py](../backend/app/storage/protocol.py)(新增)：`FileStore(ABC)` 契约 —— `save(data, suffix)->key` / `open(key)->bytes` / `exists(key)` / `delete(key)`；key 为服务端生成存储键，实现方负责防路径穿越。
+- [backend/app/storage/local.py](../backend/app/storage/local.py)(新增)：`LocalFileStore(root)` —— 存储键 = `uuid4().hex + 安全后缀`（客户端原始名永不入盘）；`_resolve` 用正则 + `is_relative_to` 双重防穿越；原子落盘（同目录 `.tmp` 写后再 `os.replace`）；`_sanitize_suffix` 只留字母数字。
+- [backend/app/tools/file_parser.py](../backend/app/tools/file_parser.py)(新增)：`FileParserTool(Tool)` + `ParsedFile` —— TXT 编码探测 UTF-8→GBK 回退（回退记 warning，`encoding.upper()` 显示）；DOCX 先验 zip/宏(`word/vbaProject.bin`)/必需部件(`word/document.xml`)，再用 python-docx 提取段落+表格（单元格 ` | ` 连接）；大小/扩展名/内容签名(zip 魔数)联合校验；`BadZipFile` 映射 `FileParseFailedError(422)`；拒绝 `..`、`/`、`\` 文件名；超长文本只记 warning。
+- [backend/app/core/errors.py](../backend/app/core/errors.py)：新增 `InvalidFileTypeError(415/INVALID_FILE_TYPE)`、`FileTooLargeError(413/FILE_TOO_LARGE)`、`FileParseFailedError(422/FILE_PARSE_FAILED)` —— `app_error_handler` 已按 status_code/code 泛化处理。
+- [backend/app/db/models/upload.py](../backend/app/db/models/upload.py)：uploads 表增 `original_name`(255，仅展示)/`parse_status`(parsed/failed)/`char_count`(BigInteger)/`warnings`(JSONB)。
+- [backend/migrations/versions/0003_upload_metadata.py](../backend/migrations/versions/0003_upload_metadata.py)(新增)：为 uploads 加上述 4 列（server_default + 非空，仿 0002_knowledge 模式）。
+- [backend/app/db/repositories/uploads.py](../backend/app/db/repositories/uploads.py)(新增)：`UploadRepository` —— `list_by_project`(创建时间倒序)、`get_for_project`(归属校验)。
+- [backend/app/api/v1/uploads.py](../backend/app/api/v1/uploads.py)(新增)：`POST /projects/{id}/uploads`（项目存在→文件名缺失→分块读取+大小止损→解析→LocalFileStore 落盘→Upload 行+sha256→201 返回）；`GET /projects/{id}/uploads` 列表。磁盘键=服务端 UUID，原始名仅存 `original_name`，内容不写日志；`router.py` 挂载。
+- 依赖：`uv add python-multipart`(FastAPI UploadFile 必需) + `uv add python-docx`(DOCX 解析与 G-05 导出复用)。
+- 测试：`tests/unit/tools/test_file_parser.py`(20 项：UTF-8/GBK 回退告警/优先 UTF-8/空文本/不可解码拒绝/DOCX 段落表格/中文 DOCX/空 DOCX 告警/超限/不支持扩展名/无扩展名/大小写不敏感/路径穿越/伪装 txt=zip/DOCX 非 zip/缺必需部件/宏部件/extra=forbid/返回元数据/UUID 键名)、`tests/integration/api/test_uploads.py`(11 项：中文 TXT 不乱码回读+path 为 UUID 键/GBK 告警/DOCX 落盘一致/空 TXT/损坏 422/伪装 422/不支持扩展名 422/超限 413/项目不存在 404/跨项目隔离/列表倒序)。
+
+### 为什么这么做
+
+- **原始文件名永不用于磁盘路径是唯一可靠的上传安全基线**：文件系统层若接受客户端文件名就挡不住路径穿越（`../`、绝对路径、`\`）。FileStore 服务端生成 UUID 键 + 正则白名单 + `is_relative_to` 根目录校验三道防线，客户端名只进 `original_name` 展示字段。
+- **「内容签名 > 扩展名 > 客户端 Content-Type」的校验顺序**：HTTP multipart 的 Content-Type 是客户端自报的，不可信；先按扩展名分流，再用 zip 魔数/编码探测验证内容与声明一致，伪装扩展名（.txt 内藏 DOCX zip）直接 422。
+- **分块读取 + 提前止损**：python-multipart 已把大文件 spool 到磁盘，但 `file.read()` 全量读仍会整块进内存；按 1MB 分块边读边累积，超 `upload_max_bytes` 立即抛 413，避免 OOM。
+- **`BadZipFile` 显式映射而不是透传**：python-docx 对损坏 zip 抛的 `zipfile.BadZipFile` 若不捕获会变成 500；显式转 422 让「损坏文件返回明确错误」验收成立。初期误写成 `except (BadZipFile, FileParseFailedError): raise` 把原始异常透传出去（bug，见 TROUBLESHOOTING）。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/tools/test_file_parser.py` | 20 passed |
+| `uv run pytest tests/integration/api/test_uploads.py` | 11 passed |
+| `uv run pytest`(全量) | 765 passed / 2 存量日志失败(与基线一致) |
+| `uv run ruff check app migrations` | 仅存量 migration E501(45 处预置，非改动文件) |
+| `uv run mypy app --no-incremental` | 12 错误，较基线 14 还少 2(改动文件零新增) |
+
+验收 5 项全满足：中文 TXT/DOCX 不乱码 / 空和损坏文件明确错误 / 伪装扩展名拒绝 / 原始文件名不用于磁盘路径 / 文件内容不写日志。
+
+### 学习收获
+
+- **上传安全的四道闸门要分层放对位置**：大小(应用层分块止损)→ 扩展名(解析器)→ 内容签名(解析器魔数/编码)→ 磁盘路径(存储层 UUID 键)。每层只信任上一层的产出，客户端提供的一切都当不可信输入。
+- **「catch 后 raise 原异常」和「catch 后转业务异常」要分清**：`except BadZipFile: raise` 是把异常原样抛给上层（上层若没有 handler 就变 500）；正确姿势是 `except BadZipFile: raise FileParseFailedError(...) from None`。用 try/except 做「统一映射」时，用 `except FileParseFailedError: raise` 保序 + `except 具体异常: raise 业务异常 from None` 的模板最稳。
+- **警告与错误分开**：编码回退(GBK)、空内容、超长文本是可继续的降级，记 `warnings` 供前端展示；真正阻断的(损坏/伪装/宏/超限)才抛错误。这让上传 API 语义更贴近「能救的救、不能救的明说」。
+
+### 建议的下一任务
+
+- **G-04 Import Classification 与工作流路由**：`domain/import.py` + `skills/import_classifier.py`(规则先行+LLM 兜底) + `prompts/templates/import_classifier.md` + `workflows/{router,import_file}.py` + `runs.py action="import"` + golden fixtures。
+
+## 2026-08-16 Phase G:G-04 Import Classification 与工作流路由
+
+### 做了什么
+
+- [backend/app/domain/import_file.py](../backend/app/domain/import_file.py)(新增)：`ImportClassificationInput`(filename/text/upload_id，extra=forbid) + `ImportClassification`(content_type/confidence 0~1/reason/detected_features)。文件名用 `import_file` 避开 Python 关键字 `import`。
+- [backend/app/skills/import_classifier.py](../backend/app/skills/import_classifier.py)(新增)：`ImportClassifierSkill` —— 规则先行：`extract_import_features`(字符数/行数/场景标记 `第X场|scene N`/分集标记 `第X集`/对白行 `名称：对白`/参考关键词/扩展名) → `classify_by_rules` 按序判 4 类明确信号(过短<20→unknown；参考关键词→reference；短文本无结构<150→idea_or_notes；场景≥2+对白≥5→full_script)，命中即返回**不调 LLM**；未命中(模糊文本)才回退 `prompt "import_classifier"`，temperature=0.2，输出校验后把客观特征覆盖回 `detected_features`。
+- [backend/app/workflows/router.py](../backend/app/workflows/router.py)(新增)：`route_import(content_type) -> ImportRoute` 纯函数 —— idea_or_notes/outline→create，full_script→evaluate，reference→hold(仅归档不自动入库)，unknown→needs_user_input。
+- [backend/app/workflows/import_file.py](../backend/app/workflows/import_file.py)(新增)：`ImportFileWorkflow` 单节点状态图 —— 节点 `import_file_node`：读 UploadRepository(归属校验) → LocalFileStore.open → G-03 FileParserTool 解析 → ImportClassifierSkill 分类 → `create_validated_artifact(import_classification, dedup_extra=f"upload:{upload_id}")` 持久化 → `route_import` 决策 → `needs_user_input = (route == needs_user_input)`；publish node.started/completed/failed，completed_nodes 重跑跳过。
+- [backend/app/prompts/templates/import_classifier.md](../backend/app/prompts/templates/import_classifier.md) + manifest 条目(owner `classifier`)：五类定义 + 判断要点(结构信号/参考词/短文本/诚实返回 unknown)。
+- 接线：`prompts/loader.py` `_auto_register_domain_schemas` 注册 `ImportClassificationInput/ImportClassification`；`application/artifact_service.py` `_SCHEMA_MAP += ArtifactType.IMPORT_CLASSIFICATION`；`api/v1/runs.py` `action="import"` 分支(schedule 名单、known-action、upload_id 进 configurable、initial_state、事后 elif 链完成 + needs_user_input 拦截、`_register_fake_fixtures` 注册 import_classifier)。
+- [backend/app/artifacts/versions.py](../backend/app/artifacts/versions.py)(修改)：`compute_input_hash` 让 **dedup_extra 无源时也参与哈希** —— 修复 G-01 遗留：会话摘要与导入分类均无 source，旧逻辑 `not source_artifact_ids → return None` 使 `dedup_extra` 从未生效，幂等去重形同虚设；现仅「无源且无 dedup_extra」返回 None，有源哈希逐字节不变。
+- 测试：`tests/unit/workflow/test_import_router.py`(10 项契约：五类映射/全覆盖/ImportRoute 字面量/reference 不自动入库/unknown 需用户确认) + `tests/integration/workflow/test_import_workflow.py`(9 项：规则命中 reference/idea/unknown-过短/full_script 均不调 LLM 且路由正确、LLM 兜底 outline/unknown、幂等去重 version=1、upload 不存在失败、跨项目归属拒绝) + `tests/unit/artifacts/test_versions.py`(+2 项 dedup_extra 无源哈希) + golden `import_classification_{outline,full_script,unknown}.json`。
+
+### 为什么这么做
+
+- **规则先行 + LLM 兜底，而不是全交给 LLM**：确定性特征(扩展名/行数/结构)能稳判的类别(明显的参考素材、一句话灵感、强剧本结构)直接规则返回，零延迟零成本；只有规则拿不准的模糊文本才花一次 LLM 调用。也满足「CI 全 FakeLLM」——规则命中路径根本不触 LLM，集成测试覆盖两种路径。
+- **分类结果落 Artifact 而非只返回路由**：路由是可重算的纯函数，但「某次上传被分类成什么、依据什么」是审计事实，存成 `import_classification` Artifact(带 reason/detected_features)与 Run/SSE 关联，后续人工复核/再分类有据可依。
+- **dedup_extra=upload:{id} 使「同一上传重复触发」幂等**：import 可能因重试/前端重复提交跑多次，靠 upload_id 参与哈希保证只产一个分类版本；发现 G-01 summary 的同类 dedup 实际失效后顺手修了 `compute_input_hash` 的根因(无源直接 None)。
+- **reference 不自动入库、unknown 停 needs_user_input 是「保护性路由」**：参考素材误入创作管线会污染生成输入，分不清的内容硬塞进管线会浪费昂贵生成——两者都宁可停下来等用户，符合 MVP「宁缺毋滥」边界。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/workflow/test_import_router.py tests/integration/workflow/test_import_workflow.py` | 19 passed |
+| `uv run pytest tests/unit/artifacts/ tests/integration/workflow/`(含 hash 修复回归) | 全绿 |
+| `uv run pytest tests/integration/api/`(runs.py 改动回归) | 全绿 |
+| `uv run ruff check app tests/.../test_import_*` | clean |
+| `uv run mypy app --no-incremental` | 11 错误(全部存量，较会话基线 12 还少 1，新增文件零错误) |
+
+验收 5 项全满足：固定 Outline/剧本 fixture 分类正确 / reference 不污染知识库 / 分类 Artifact 可查询 / unknown 不误启动生成 / 路由行为 contract test。
+
+### 学习收获
+
+- **dedup_extra 语义曾被「无源短路」架空**：`compute_input_hash` 的 `if not source_artifact_ids: return None` 让依赖 dedup_extra 的无源产物(会话摘要、导入分类)永远走不到幂等分支——注释说幂等、代码不幂等。教训：**「幂等键」要单独验证触发条件**，不能只看传入参数而忽略前置短路；顺带为此类产物补了回归测试。
+- **TypedDict 强约束在多工作流胶水层要松绑**：`initial_state: CreationState` 在接入 import 分支后被 mypy 报 extra-keys/overload 两个错误。胶水层(runs.py)同时装配多种 State 时，用 `Any` 注解 + 注释说明比硬造 Union 更稳——Union 会反过来在 create_script 分支报 ImportState extra-keys。
+- **「不调 LLM」的规则路径是可测试的正确性红利**：`assert fake_llm.get_call_history() == []` 直接证明规则优先逻辑成立，也顺带验证了「确定性优先」的架构意图没有被悄悄绕过。
+
+### 建议的下一任务
+
+- **G-05 Markdown 与 DOCX Exporter**：`domain/export.py` + `tools/exporters/{markdown,docx}.py`(markdown 移植前端序列化逻辑，docx 设中文 eastAsia fallback) + `application/export_service.py`(组装 latest valid Artifact → 落盘 → ExportFile Artifact) + `uv add python-docx`。
+
+## 2026-08-16 Phase G:G-05 Markdown 与 DOCX Exporter
+
+### 做了什么
+
+- [backend/app/domain/export.py](../backend/app/domain/export.py)(新增)：`ExportContentKind`(story_bible/outline/script/evaluation/revision) + `EXPORT_KIND_LABELS` + `ExportSelection(kinds/format/artifact_ids)`(extra=forbid；`artifact_ids` 支持「用户显式选择版本」，缺省则取 latest valid) + `ExportFileContent(storage_key/format/filename/size_bytes ge=0/sha256 min_length=64/source_artifact_ids/warnings)`(extra=forbid)。
+- [backend/app/tools/exporters/markdown.py](../backend/app/tools/exporters/markdown.py)(新增)：移植前端 [export.ts](../frontend/src/lib/export.ts) 的纯函数序列化逻辑 —— `markdown_from_story_bible/outline/script/evaluation/revision` + `build_export_markdown`。模块常量 `EVAL_DIMENSION_LABELS/EVAL_DIM_ORDER/SEVERITY_LABELS`；**按集号排序内置在 build_export_markdown**(scripts/evaluations/revisions 均升序，验收在输出上)；无内部 ID/Prompt/Token/checksum/input_hash；缺数据输出「（无可用内容）」占位。`MarkdownExporter(Tool)`(确定性，不调 LLM)。
+- [backend/app/tools/exporters/docx.py](../backend/app/tools/exporters/docx.py)(新增)：python-docx 渲染 —— Heading 1/2/3 样式、页眉写项目名、页脚 PAGE 页码域(OxmlElement fldChar)、一级标题 `page_break_before`(文档抬头除外)、**中文字体 fallback `w:eastAsia=宋体`**(`style.element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), "宋体")`)、GFM 管道表格→Word 表格(Table Grid)、`> `引用→斜体。`DocxExporter(Tool)` 返回 `{"data": bytes, "size_bytes": int}`，`build_docx_bytes` 经 BytesIO 落盘。
+- [backend/app/application/export_service.py](../backend/app/application/export_service.py)(新增)：`ExportService.export_project` —— 取项目名(ProjectService) → 按 kind 组装 latest valid(显式 `artifact_ids` 走 `get_version`+类型/归属校验，缺省 `_collect_latest` 按集号升序) → markdown/docx 序列化 → `LocalFileStore.save(bytes, suffix=".md"/".docx")` 原子落盘 → `create_validated_artifact(EXPORT_FILE, source_artifact_ids=sources, dedup_extra=_selection_key(selection))` 幂等。**任一步失败抛 ExportError/NotFoundError 不生成 valid ExportFile**；幂等命中后清理孤儿文件(checksum 比对不一致才删)。`_selection_key` = selection JSON 规范化排序序列化，与 sources 共同构成 dedup 键。
+- 接线：`application/artifact_service.py` `_SCHEMA_MAP += ArtifactType.EXPORT_FILE: ExportFileContent`(非法 content → status=invalid)；`core/config.py` 增 `export_file_root="./var/exports"` + `ensure_directories()` 建 3 目录；`uv add python-docx`。
+- 测试：`tests/unit/export/test_markdown.py`(14 项：无内部字段/3 集排序/标题层级稳定 H1/H2/H3 无 ####/中文维度标签/对白父注/修订说明/revision 缺失占位/文件名清洗+时间戳) + `tests/integration/export/test_docx.py`(8 项：python-docx 重开中文/表格/页眉/页码域/分页/全链路) + `tests/integration/export/test_export_service.py`(10 项：latest valid 组装/源链接完整/source links 完整/幂等复用/显式版本选择/类型不匹配拒绝/跨项目拒绝/失败不生成 valid/缺 kind 出 warning 仍 valid)。
+
+### 为什么这么做
+
+- **markdown 移植前端而非重写**：前端 export.ts 的序列化是已验收的「用户看到的导出内容」，后端实现与它保持一致即保持产品语义唯一；内部字段(ID/checksum/input_hash)只在前端构建时存在，后端移植时显式剔除并用测试钉住「导出永不含内部字段」。
+- **排序内置在 build_export_markdown 而不是调用方**：验收项「3 集按集号排序」约束的是导出**输出**，若把排序留给 export_service 组装，未来新增调用方可能绕过；把 `sorted(key=episode_number)` 放进纯函数序列化器，一次实现处处生效(测试直接覆盖输出)。
+- **导出失败不生成 valid ExportFile 的机制 = Pydantic 校验 + 抛错**：内容先序列化/落盘才建 Artifact，任一步抛异常则无 Artifact；即便内容非法，`_SCHEMA_MAP` 已注册 schema，`create_validated_artifact` 会给 invalid 状态——两层兜底让「失败不留 valid 痕迹」成立。
+- **幂等键 = sources + selection JSON**：同一批源 + 同一导出选择在概念上是同一产物，靠 `compute_input_hash` 命中 ArtifactStore 去重；又因 G-04 修的 dedup_extra 参与哈希，无源 kind 也能靠 selection JSON 去重。孤儿文件(幂等命中但 checksum 不一致)主动删除，防止磁盘垃圾。
+- **显式版本选择走 artifact_ids 而非新增 API**：`ExportSelection.artifact_ids` 复用 get_version(已有版本寻址)，前端将来传 id 列表即可，不必为此发明新端点。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/export/` | 14 passed |
+| `uv run pytest tests/integration/export/` | 18 passed(8 docx + 10 service) |
+| `uv run pytest tests/unit/ tests/integration/export/ tests/integration/workflow/`(回归) | 全绿 |
+| `uv run pytest tests/integration/api/ tests/integration/artifacts/ tests/unit/artifacts/`(回归) | 全绿 |
+| `uv run ruff check app/ tests/` | clean |
+| `uv run mypy app --no-incremental` | 11 错误(全部存量，与基线一致，新增文件零错误) |
+
+验收 5 项全满足：Markdown 不含内部 ID/Prompt/Token / DOCX 可打开中文表格分页正常 / 3 集按集号排序 / 用户可显式选择版本 / 导出失败不生成 valid ExportFile。
+
+### 学习收获
+
+- **嵌套函数里 `lines += [...]` 会触发 UnboundLocalError**：在闭包内做原地拼接必须用 `lines.extend([...])`——`+=` 对 list 虽是 in-place 语义，但字节码会先把 `lines` 当本地变量，若外层同名变量未在闭包内声明就报 unbound。本项目 markdown 组装大量用 list 拼接，嵌套 block 构造函数尤其要小心。
+- **python-docx 的 API 有三处与直觉不同**：(1) `Document` 是工厂函数，类型要 `from docx.document import Document as _Document`；(2) 东亚字体 fallback 必须写进 run properties 的 `w:eastAsia`(仅设 `font.name` 对中文无效)；(3) section 对象没有 `element`，用 `_element` 才能拿到底层 XML。
+- **GFM 管道表格在 Word 里的兜底**：`| a | b |` + 分隔行 `| --- | --- |` 识别成 Table Grid 表格最稳；纯 `---` 分隔识别为规则线即可，别过度匹配。
+
+### 建议的下一任务
+
+- **G-06 Export API 与导入导出集成**：`api/v1/exports.py`(POST /projects/{id}/exports → create_run(action="export")+schedule_worker；GET /exports/{artifact_id}/download 安全 Content-Disposition + EXPORT_FILE_MISSING) + `runs.py` action="export" 分支 + `errors.py` + `router.py` include + API_CONTRACT.md 同步 + `tests/integration/api/test_exports.py` + `tests/integration/workflow/test_upload_to_export.py`(上传 Outline→创作→导出；上传完整剧本→评估→导出)。
+
+## 2026-08-16 Phase G:G-06 Export API 与导入导出集成
+
+### 做了什么
+
+- [backend/app/api/v1/exports.py](../backend/app/api/v1/exports.py)(新增)：`CreateExportRequest(kinds: list[ExportContentKind] min_length=1, format: ExportFormat="markdown", artifact_ids: dict[str, list[str]]|None, idempotency_key ≤128)`。`POST /projects/{id}/exports` → ProjectService 归属 404 → `create_run(action="export")` + `schedule_worker` → 202 + run_id(与 revisions/import 同一异步范式)。`GET /exports/{artifact_id}/download?project_id=...` → get_version(NotFoundError→`ExportFileMissingError`) → `type=="export_file"` 校验 → 项目归属校验(跨项目 403 `CROSS_PROJECT_ACCESS`) → `ExportFileContent.model_validate` → `LocalFileStore(root=export_file_root).open(storage_key)`(FileNotFoundError→`ExportFileMissingError`) → `Response`(media_type 按 format，Content-Disposition 用 `filename*=UTF-8''` 引号编码 + ASCII 兜底 `_ASCII_SAFE_RE`，禁路径分隔符/控制字符)。
+- [backend/app/api/v1/runs.py](../backend/app/api/v1/runs.py)(改)：`_execute_workflow` 增 `action == "export"` 确定性分支(在 action 名单 guard 之前：ExportService.export_project 组装→序列化→落盘→`transition_status(completed)`→`run.completed` SSE 带 artifact_id/filename/format→commit→return；无 LLM、无 LangGraph)。`create_run` 的 schedule_worker 名单补 `"export"` **并修复存量缺口 `"evaluate"`**(此前 standalone action=evaluate 创建后永不执行)。新增 `_resolve_upload_text(db, project_id, upload_id)`：UploadRepository 归属→LocalFileStore+FileParserTool 解析文本；create_script 分支在 `options.user_input` 之前优先用 `config.upload_id` 注入上传文本(「上传 Outline→创作」)。
+- [backend/app/workflows/import_file.py](../backend/app/workflows/import_file.py)(改)：`ImportState` 增 `script_artifact_id`；`import_file_node` 在 route 后若 `content_type == "full_script"` 调确定性 `full_script_to_script_draft(parsed.text, title=去扩展名的原始名, episode_number=1)`，成功则 `create_validated_artifact(SCRIPT_DRAFT, source_artifact_ids=[import_classification], dedup_extra=f"upload:{upload_id}")` 持久化并回填 `script_artifact_id`(转换失败仅告警不阻断；「完整剧本→评估」)。runs.py import 分支 initial_state 增 `script_artifact_id`、post-processing payload 透出。
+- [backend/app/tools/script_text.py](../backend/app/tools/script_text.py)(新增)：`full_script_to_script_draft(text, *, title, episode_number=1, referenced_outline_artifact_id=None) -> dict|None`。`_SCENE_RE`/`_SCENE_BARE_RE` 解析 `第X场 地点（时间）`，`_DIALOGUE_RE` 提取 `角色：对白`(中英文冒号)；非场景非对白行并入当前场 action(空则 `（转场）` 占位)；开头/结尾钩子取首/末对白；`plain_text` 原文保留、`word_count`/`dialogue_ratio` 用既有工具确定性计算；场景 <2 或空文本返回 None。
+- 接线：`core/errors.py` 增 `ExportFileMissingError(NotFoundError, code="EXPORT_FILE_MISSING")`；`api/v1/router.py` include exports_router。
+- 测试：`tests/unit/tools/test_script_text.py`(15 项：合法 ScriptDraft/场景地点时间/对白角色/动作并入/首末钩子/plain_text 与计数/引用 UUID/空·空白·单场·无标记→None/裸场景回退/ASCII 冒号/缺动作占位/畸形输入不崩) + `tests/integration/api/test_exports.py`(10 项：Markdown 下载流 200+安全 Content-Disposition、DOCX PK 魔数+python-docx 重开、source links 完整 4 条、跨项目 403、Artifact 不存在/非 export_file/存储文件被清理→404 EXPORT_FILE_MISSING、项目 404、非法/空 kinds 422) + `tests/integration/api/test_upload_to_export.py`(2 条端到端：上传 Outline→import→create_script(config.upload_id 注入)→导出含世界观与人物设定/十集大纲/第 1 集剧本；上传完整剧本→import 后 script_draft 落库(2 场/训练场)→evaluate→导出评估报告/开头钩子)。
+
+### 为什么这么做
+
+- **导出下载走"归属 + 类型 + 存储"三层校验**：文件是本地磁盘资产，安全重点是「不能跨项目读、不能把非导出物当导出下发、文件丢了要明确的 404」。Artifact 归属与 storage_key 都在 DB/Artifact，`project_id` 比对在返回字节之前完成，杜绝水平越权。
+- **中文文件名用 RFC 5987 `filename*` 而非转义**：HTTP 头只允许 ASCII，中文直接写进 `filename=` 会被代理/客户端解码错乱；`filename*=UTF-8''<percent-encoded>` 是标准做法，ASCII 兜底保证极端客户端也不崩(文件名绝不进磁盘路径——磁盘键始终是 FileStore 生成的 UUID)。
+- **两条导入路径不需要新 LLM 能力**：Outline→创作靠 `upload_id` 复用已有 create_script 管线(文本即输入)；完整剧本→评估靠**确定性正则转换**构造最小合法 ScriptDraft(避免为"看懂剧本"再引入一个 LLM 转换器，也避免规则外的文本被错误喂给评估)。这是"规则优先、LLM 兜底"决策在 G-06 的延续。
+- **standalone evaluate 补进 schedule_worker 是必要的存量修复**：测试发现直接 POST evaluate 的 Run 永远停在 queued——`create_run` 的 worker 名单漏了 evaluate。这不只是测试问题：导出中心若让用户"单独重评"也会死等，属真实功能缺口，必须修。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/tools/test_script_text.py tests/integration/workflow/test_import_workflow.py tests/integration/api/test_exports.py tests/integration/api/test_upload_to_export.py` | 36 passed |
+| `uv run pytest tests/integration/api/ tests/integration/workflow/ tests/integration/export/ tests/unit/`(回归) | 全绿 |
+| `uv run ruff check app/ tests/` | clean |
+| `uv run mypy app --no-incremental` | 11 错误(全部存量，与基线一致；新增文件零错误，修复一处新增 no-redef) |
+
+验收 5 项全满足：下载文件名安全且可读(filename* UTF-8 编码、ASCII 兜底、无路径分隔符/控制字符) / 不能下载其他项目文件(403 CROSS_PROJECT_ACCESS) / 文件丢失返回 EXPORT_FILE_MISSING(Artifact 缺失·非 export_file·存储文件被清理三种) / 两条导入路径均端到端可运行(test_upload_to_export.py) / Export Artifact source links 完整(StoryBible+3 集剧本 4 条 derived_from)。
+
+### 学习收获
+
+- **分支里的局部变量名会污染函数级作用域**：export 分支的 `options = ...` 与后续 `options: dict[str, Any] = ...` 同函数作用域冲突，mypy 报 `no-redef`。Python 没有块作用域，`if`/`for` 内第一次赋值即函数级定义；给"只在分支用"的变量起专属名(export_options)既消除告警也读得更清楚。
+- **异步 Run 的"永不执行"类故障最隐蔽的暴露点是测试超时而非报错**：evaluate 不在 worker 名单时，HTTP 202 正常返回、Run 行状态 queued、没有任何错误日志——只有轮询状态等不到 completed 才暴露。凡新增 action 必须同时进 `schedule_worker` 名单，且 E2E 要有"轮询到终态"的断言。
+- **完整剧本→ScriptDraft 的确定性转换要"宁可拒收不瞎猜"**：规则能解析 `第X场 地点（时间）` + `角色：对白` 就入库，解析不出(无场景标记/单场)就返回 None 仅告警，绝不生成缺字段的伪结构。这保住了 Artifact 不可变与"必须过 Pydantic 校验"两条约束，也让评估节点因"无脚本可评"自然跳过而非产出坏数据。
+
+### 建议的下一任务
+
+- **Phase G 收尾**：§13.2 G-01..G-06 状态与证据已齐、header「准备进入阶段 I」文案更新、全量回归 + Ruff/mypy 零新增复核；随后按计划进入 H 阶段(前端工作台)。
