@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     # GET /metrics 开关：false 时返回 404（埋点仍累积，不影响运行）
     metrics_enabled: bool = True
 
+    # ---- MCP 外部工具（I-04） ----
+    # 默认关：主流程完全不受影响。启用时把外部 JSON-RPC 工具注册到 ToolRegistry
+    # （见 integrations/mcp/adapter.py::register_mcp_tools）。
+    mcp_enabled: bool = False
+    mcp_base_url: str = ""
+    mcp_timeout_seconds: float = 10.0
+
     @classmethod
     def settings_customise_sources(
         cls,

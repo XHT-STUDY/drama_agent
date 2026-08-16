@@ -72,6 +72,20 @@ class WordCountTool(Tool):
         name="compute_word_count",
         version="1.0",
         description="统计文本中中文字符 (含标点) 的数量——覆盖 LLM 自报值",
+        input_schema={
+            "type": "object",
+            "properties": {"plain_text": {"type": "string"}},
+            "required": ["plain_text"],
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "chinese_chars": {"type": "integer"},
+                "chinese_chars_with_punct": {"type": "integer"},
+                "total_chars": {"type": "integer"},
+            },
+            "required": ["chinese_chars", "chinese_chars_with_punct", "total_chars"],
+        },
     )
 
     async def execute(self, **kwargs: Any) -> dict[str, int]:

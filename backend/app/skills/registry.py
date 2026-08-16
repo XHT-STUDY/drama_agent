@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.core.errors import AppError
-from app.skills.protocol import Skill
+from app.skills.protocol import Skill, SkillMetadata
 
 
 class SkillRegistry:
@@ -35,3 +35,11 @@ class SkillRegistry:
     def list_all(self) -> list[Skill]:
         """列出所有已注册技能。"""
         return list(self._skills.values())
+
+    def get_metadata(self, name: str) -> SkillMetadata:
+        """按名称获取技能元数据（I-04，供扩展注册表查询）。"""
+        return self.get(name).metadata
+
+    def list_metadata(self) -> list[SkillMetadata]:
+        """列出全部技能元数据（I-04）。"""
+        return [s.metadata for s in self._skills.values()]

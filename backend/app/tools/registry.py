@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.core.errors import AppError
-from app.tools.protocol import Tool
+from app.tools.protocol import Tool, ToolMetadata
 
 
 class ToolRegistry:
@@ -38,3 +38,11 @@ class ToolRegistry:
     def list_all(self) -> list[Tool]:
         """列出所有已注册工具。"""
         return list(self._tools.values())
+
+    def get_metadata(self, name: str) -> ToolMetadata:
+        """按名称获取工具元数据（I-04，供扩展注册表查询）。"""
+        return self.get(name).metadata
+
+    def list_metadata(self) -> list[ToolMetadata]:
+        """列出全部工具元数据（I-04，含 input_schema/output_schema 声明）。"""
+        return [t.metadata for t in self._tools.values()]

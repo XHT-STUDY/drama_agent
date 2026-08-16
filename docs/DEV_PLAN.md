@@ -2836,11 +2836,11 @@ Prompt 必须区分：
   - 使用本地 FakeMCP Server 做 contract test；
   - 核心 File/RAG/Export 仍使用内部实现。
 - 验收：
-  - [ ] 无 MCP 配置时主流程完全可用；
-  - [ ] Fake MCP Tool 可注册、调用、超时；
-  - [ ] 外部错误不会泄露内部连接信息；
-  - [ ] 重名策略明确；
-  - [ ] 文档提供新增 Skill 的最小示例。
+  - [x] 无 MCP 配置时主流程完全可用；
+  - [x] Fake MCP Tool 可注册、调用、超时；
+  - [x] 外部错误不会泄露内部连接信息；
+  - [x] 重名策略明确；
+  - [x] 文档提供新增 Skill 的最小示例。
 - 测试：
   - pytest backend/tests/contract/test_mcp_adapter.py
 
@@ -2980,7 +2980,7 @@ Prompt 必须区分：
 | I-01 | 恢复与成本保护 | 0.75d | H Gate | DONE | AI Agent | 恢复矩阵 6 测试类(27)+API 9+retry 单元全绿，全量 881 passed/2 存量日志失败(与 HEAD 一致)，Ruff clean，mypy 全 app 95 较基线 103 还少 8(0 新增)；新增 llm/retry.py(RetryPolicy 指数退避 base*factor^(attempt-1)+max_delay+Retry-After 解析秒/HTTP-date, is_retryable: 429/timeout/provider_error 可重试, execute_with_retry 驱动, LLM_ERROR_RUN_CODES 映射)+llm/budget.py(RunBudgetRegistry+contextvar: 软上限 run.warning 事件/硬上限抛 RUN_BUDGET_EXCEEDED)+checkpoint.py 重写(协作式取消 RunCancelledError 继承 BaseException 不被 except Exception 吞、_cancel_registry 跨 Task 共享、raise_if_cancelled 各节点入口、classify_error_code AppError.code 优先/文本兜底、node_failure、save/load_checkpoint)+FakeLLM retry_policy opt-in+inject_fault 新类型(timeout/rate_limited/invalid_schema/provider_error)+_attempt_count 含重试; run_service 状态机 running→cancelled, cancel_run 协作式(queued 立即 cancelled/running 置标记); runs.py POST /runs/{id}/retry(守卫 409 RUN_NOT_RETRYABLE/RUN_ALREADY_ACTIVE, failed/needs_review→queued 清 error 字段→schedule_worker)+worker enter_run/exit_run 预算登记+retry 以 state_summary 恢复(剥离 status/error 字段, completed_nodes 早退+write_episodes existing_scripts 跳过→不重调 LLM/不重写集/不重推 revision_round)+save_checkpoint+RunCancelledError→cancelled+run.cancelled+_persist_run_error; WorkflowRun error_code/error_detail 列+0004 migration+RunResponse 暴露; **修复真 bug: 节点失败级联**(story_bible 失败后 outline 静态边仍执行 uuid.UUID(None) 崩溃, error_code 被覆盖→12 节点+import_file 加 status==failed 短路守卫, _should_evaluate 干净终止); 验收 5 项全满足(见任务卡勾选) |
 | I-02 | 可观测性 | 0.5d | I-01 | DONE | AI Agent | 验收 4 项全勾选：/runs/{id}/diagnostics 聚合事件表给出节点时间线(耗时/终态)、run.llm_stats 给出调用数与 prompt/completion token、日志脱敏 RedactFilter 自动测试通过、metrics 输出无 project_id/run_id 高基数标签(API 级断言)；新增 observability/metrics.py(进程内 Counter/Gauge/Histogram registry+Prometheus 文本渲染, 9 个命名指标按 §10.4, 标签低基数)+tracing.py(contextvar span 链 request→run→node, 跨 Task 隔离)+diagnostics.py(事件表聚合: node.started→completed/failed 耗时, run.llm_stats→llm_calls/llm_tokens, run.failed→errors, error_node 回退最近 node.failed); GET /metrics 端点(metrics_enabled 开关, 关→404, 埋点仍累积); 埋点接入 9 处(run_service/creation 节点 _timed_node/llm client/retry/artifact store/export/SSE stream/rag retriever); worker finally 发 run.llm_stats(在 exit_run 前读 budget registry); core/logging.py 加 RedactFilter+mask_secret(sk-*/api_key/Bearer/access_token 保留前缀掩蔽值+超长截断)+修复 2 个存量 TestStructuredLogging 失败; 测试 unit/observability 26(metrics/tracing/log_redaction)+API 7(metrics on/off+无高基数标签, diagnostics 时间线/llm_stats/errors/404)；全量 916 passed/0 failed, Ruff clean, mypy app/ 11 错误与 HEAD 完全一致(0 新增)；OPERATIONS.md(metrics/diagnostics 使用说明) |
 | I-03 | 安全回归 | 0.5d | G-03,H-07 | DONE | AI Agent | 验收 5 项全勾选（路径穿越/剧本不执行脚本/上传下载归属/Prompt 注入隔离/安全文档局限）；新增 core/security.py 集中安全工具(escape_html 五字符&先转/sanitize_filename_part/assert_safe_key/mask_secret/truncate_content)，logging/storage/local/markdown(深转义)/exporters __init__ 复用去重；Prompt 注入隔离 loader 层内容边界(manifest user_content_vars 声明→render 包裹 【用户内容开始/结束】+固定指令句，不改 10 个模板)，全 manifest 契约测试兜底声明变量与模板同步；前端 export.ts 镜像 escapeHtml+escapeDeep(buildExportMarkdown 深转义+项目名转义)；测试 backend/tests/security 40(注入 6+转义 7+日志扫描 2+CORS 6+路径安全 17)+frontend escaping 7；全量 939 passed/0 failed(916→939)，Ruff clean，mypy app/ 11 与 HEAD 完全一致(0 新增)；SECURITY.md(威胁模型/输入卫生/输出转义/访问控制/注入隔离/日志脱敏/数据删除策略/MVP 局限) |
-| I-04 | MCP/Skill 扩展契约 | 0.5d | B-07 | TODO | - | - |
+| I-04 | MCP/Skill 扩展契约 | 0.5d | B-07 | DONE | AI Agent | 验收 5 项全勾选（无 MCP 配置主流程可用/Fake MCP Tool 注册·调用·超时/外部错误不泄露内部连接信息/重名策略明确/文档提供新增 Skill 最小示例）；新增 integrations/mcp/{protocol,adapter}.py(MCPToolSpec+MCPAdapterConfig(enabled/base_url/timeout/prefix), MCPToolAdapter(Tool) 把外部 HTTP JSON-RPC 工具映射为内部 Tool, 注册名=prefix+spec.name, 429/5xx 复用 I-01 RetryPolicy+parse_retry_after 退避重试, 超时→EXTERNAL_TOOL_TIMEOUT 504/连接·HTTP≥400·JSON-RPC error·响应不可解析→泛化 EXTERNAL_TOOL_ERROR 502 均 from None 不泄漏, transport 可注入 MockTransport 测试)+register_mcp_tools(enabled=False 返回空列表不触碰注册表)+errors.py 两错误类+config.py mcp_enabled/base_url/timeout; ToolRegistry/SkillRegistry 增 get_metadata/list_metadata 元数据查询入口; 代表性工具 word_count/dialogue_ratio 补 input_schema/output_schema 样例(其余留空容忍); 测试 tests/contract/test_mcp_adapter.py 18(注册名前缀/schema 透传/成功调用 JSON-RPC 载荷/超时 504/5xx 重试耗尽 502/429+Retry-After 重试成功/400 不重试/JSON-RPC error/非 JSON/错误不泄漏 base_url 与连接细节/批量注册/enabled=False/重名 409/list_metadata/get_metadata 404/Skill 元数据查询); 全量 974 passed/0 failed(956→974), Ruff clean, mypy app/ 11 与 HEAD 完全一致(0 新增); EXTENSIONS.md(新增 Skill 最小示例+Tool schema+3.3 MCP 注册与错误表); .env.example 补 MCP_ENABLED/BASE_URL/TIMEOUT |
 | I-05 | 性能/覆盖率/回归 | 0.5d | I-01..I-04 | TODO | - | - |
 | I-06 | 文档与 RC 发布 | 0.25d | I-05 | TODO | - | - |
 

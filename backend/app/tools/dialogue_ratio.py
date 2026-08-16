@@ -65,6 +65,26 @@ class DialogueRatioTool(Tool):
         name="compute_dialogue_ratio",
         version="1.0",
         description="计算剧本中对白字符占总字符的比例——覆盖 LLM 自报值",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "scenes": {
+                    "type": "array",
+                    "description": "剧本场次列表，每项含 dialogue 数组",
+                },
+                "plain_text": {"type": "string"},
+            },
+            "required": ["scenes", "plain_text"],
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "dialogue_ratio": {"type": "number"},
+                "dialogue_chars": {"type": "integer"},
+                "total_chars": {"type": "integer"},
+            },
+            "required": ["dialogue_ratio", "dialogue_chars", "total_chars"],
+        },
     )
 
     async def execute(self, **kwargs: Any) -> dict[str, float]:

@@ -2910,3 +2910,51 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 建议的下一任务
 
 - **I-04 MCP Adapter 与 Skill 插件契约**：`integrations/mcp/`（`MCPToolAdapter(Tool)` HTTP JSON-RPC，超时/外部错误泛化不泄漏连接信息、重名 409、无配置主流程不受影响）+ Skill 注册表元数据查询 + `tests/contract/test_mcp_adapter.py`（本地 FakeMCP server）+ `docs/EXTENSIONS.md`。
+
+---
+
+## I-04 MCP Adapter 与 Skill 插件契约（2026-08-16）
+
+### 做了什么
+
+新增 `backend/app/integrations/mcp/`（`protocol.py` + `adapter.py`）：
+- **MCPToolSpec / MCPAdapterConfig**：外部工具描述（name/description/input_schema/output_schema，`extra=forbid`）+ 连接配置（enabled/base_url/timeout_seconds/prefix）。
+- **MCPToolAdapter(Tool)**：把外部 HTTP JSON-RPC 工具映射为内部 Tool 协议。注册名 = `config.prefix + spec.name`（默认 `mcp_`）；`execute(**kwargs)` 发送 JSON-RPC 2.0 POST；`httpx.TimeoutException` 先于 `httpx.HTTPError` 捕获（TimeoutException 是其子类）→ 超时 `ExternalToolTimeoutError`（504 EXTERNAL_TOOL_TIMEOUT）；连接失败 / HTTP≥400 / JSON-RPC error / 响应不可解析 → 泛化 `ExternalToolError`（502 EXTERNAL_TOOL_ERROR），一律 `from None` 不泄漏 base_url / 内部地址 / 异常文本；429/5xx 复用 I-01 `RetryPolicy` + `parse_retry_after` 退避重试；`transport` 可注入（测试用 MockTransport）。
+- **register_mcp_tools(registry, specs, config)**：`enabled=False`（默认）返回空列表、不触碰注册表 —— **无 MCP 配置时主流程完全可用**；重名冲突由 `ToolRegistry.register` 抛 `409 TOOL_ALREADY_REGISTERED`。
+- **errors.py** 增 `ExternalToolTimeoutError`/`ExternalToolError`；**config.py** 增 `mcp_enabled/mcp_base_url/mcp_timeout_seconds`；`.env.example` 补 `MCP_ENABLED/MCP_BASE_URL/MCP_TIMEOUT_SECONDS`。
+
+注册表元数据查询入口（I-04）：
+- `ToolRegistry`/`SkillRegistry` 各增 `get_metadata(name)` / `list_metadata()`；
+- 代表性工具 `word_count.py`/`dialogue_ratio.py` 补 `input_schema`/`output_schema` 样例（其余工具留空可容忍，符合"元数据可序列化供未来 MCP Adapter 使用"）。
+
+测试与文档：
+- `backend/tests/contract/test_mcp_adapter.py` **18 tests**（MockTransport 进程内 FakeMCP，无真实网络）：注册名前缀 / schema 透传 / 成功调用 JSON-RPC 载荷断言（method/params/id/jsonrpc）/ 超时 504 / 5xx 重试耗尽 502（断言恰好 2 次尝试）/ 429+Retry-After 重试成功 / 400 不重试 / JSON-RPC error body / 非 JSON 响应 / **错误不泄漏 base_url 与连接细节**（detail == "外部工具 web_search 调用失败"）/ 批量注册 / `enabled=False` 返回空 / 重名 409 / `list_metadata`+`get_metadata` / 未注册 404 / Skill 元数据查询。
+- `docs/EXTENSIONS.md`：新增 Skill 最小示例（`WordStatsSkill` 纯确定性）+ Tool schema 声明 + MCP 注册与错误映射表 + 扩展边界。
+
+### 为什么这么做
+
+- MCP 契约测试用 `httpx.MockTransport`（与 test_embedder.py 一致）：进程内完成请求/响应，无真实网络，符合 CI Fake 约束；超时用 handler 直接 `raise httpx.ReadTimeout` 触发（MockTransport 不强制超时测量，最确定的触发方式）。
+- `AsyncBaseTransport` 类型：`httpx.MockTransport` 的 MRO 是 `[MockTransport, AsyncBaseTransport, BaseTransport, object]`，参数注解 `httpx.BaseTransport` 会让 mypy 报 `AsyncClient transport arg-type`；改为 `httpx.AsyncBaseTransport | None` 后 mypy 回到基线。
+- 错误 detail 一律泛化为固定句式，把"不泄露内部连接信息"从验收条款变成显式断言（`test_error_does_not_leak_internal_info`）。
+- 修改文件：`backend/app/integrations/mcp/{__init__,protocol,adapter}.py`、`backend/app/core/{errors,config}.py`、`backend/app/tools/registry.py`、`backend/app/tools/{word_count,dialogue_ratio}.py`、`backend/app/skills/registry.py`、`backend/tests/contract/test_mcp_adapter.py`、`docs/EXTENSIONS.md`、`.env.example`。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `APP_ENV=test .venv/bin/python -m pytest tests/contract/test_mcp_adapter.py -q` | 18 passed |
+| `APP_ENV=test .venv/bin/python -m pytest -o addopts=""`（全量） | **974 passed / 0 failed**（956→974，+18） |
+| `ruff check`（本次全部改动文件） | All checks passed |
+| `mypy app/ --no-incremental` | 11 errors，与 HEAD 完全一致（0 新增） |
+
+### 学到了什么
+
+1. **MockTransport 不测量超时**：它同步调用 handler，不会因 handler 耗时触发 timeout；要确定性测超时分支，直接让 handler `raise httpx.ReadTimeout`。真实超时语义由生产网络 transport 保证。
+2. **httpx 异常捕获顺序**：`TimeoutException` 是 `HTTPError` 的子类，`except httpx.TimeoutException` 必须先于 `except httpx.HTTPError`，否则超时会被连接错误分支吞掉。
+3. **httpx transport 类型三态**：`MockTransport` 同时继承 `AsyncBaseTransport` 与 `BaseTransport`；给 `AsyncClient` 注入 transport 时注解用 `AsyncBaseTransport | None`，否则 mypy 报 arg-type。
+4. **ruff SIM102 嵌套 if**：`if A: if B:` 折叠为 `if A and B:`；`is_retryable_status` 先算布尔再 and，可读性也更好。
+5. **扩展注册表查询是"最小面"**：给两个注册表加 `get_metadata/list_metadata` 镜像方法即可满足元数据序列化，不用动注册语义。
+
+### 下一步
+
+- **I-05 性能、覆盖率与全量回归**：`tests/performance/`（p95<300ms、100 并发 SSE、1000 Artifact）+ 双覆盖率门禁（总体 ≥75% / 核心 domain·workflow·artifacts ≥85%，先测现状再校准）+ `make perf`/`make cov` + `make e2e REPEAT=5` + `docs/TEST_REPORT.md`。

@@ -170,6 +170,28 @@ class BudgetExceededError(AppError):
     code = "RUN_BUDGET_EXCEEDED"
 
 
+class ExternalToolTimeoutError(AppError):
+    """外部 MCP 工具调用超时（504 EXTERNAL_TOOL_TIMEOUT，I-04）。
+
+    MCPToolAdapter 在配置的超时时间内未收到外部工具响应时抛出。
+    detail 只说明超时，不泄漏外部服务内部信息。
+    """
+
+    status_code = 504
+    code = "EXTERNAL_TOOL_TIMEOUT"
+
+
+class ExternalToolError(AppError):
+    """外部 MCP 工具调用失败（502 EXTERNAL_TOOL_ERROR，I-04）。
+
+    外部工具返回错误 / 连接失败 / 响应无法解析时抛出。
+    detail 使用泛化描述，不泄漏内部连接信息（地址、凭据、内部异常文本）。
+    """
+
+    status_code = 502
+    code = "EXTERNAL_TOOL_ERROR"
+
+
 # ---- 辅助函数 ----
 
 
