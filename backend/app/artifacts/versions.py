@@ -48,22 +48,30 @@ def compute_input_hash(
     dedup_extra 仅在非空时加入载荷 —— 使"同一原稿、不同指令"的修订计划
     拥有不同幂等键（F-06），同时保持存量哈希逐字节不变。
 
+    G-04 修复：dedup_extra 单独出现（无源）时也返回哈希而非 None ——
+    使"无源的独立产物"（会话摘要 conversation_summary、导入分类
+    import_classification）仅凭 dedup_extra 即可幂等去重；
+    既有有源产物的哈希逐字节不变，纯无源且无 dedup_extra 仍返回 None。
+
     Args:
         source_artifact_ids: [{"artifact_id": "uuid", "version": 1, "relation": "derived_from"}, ...]
         episode_number: 所属集号（参与幂等键，区分不同集的同源产物）。
         artifact_type: Artifact 类型（参与幂等键，避免不同类型共享源时误复用）。
-        dedup_extra: 附加去重因子（如 user_instruction），非空时纳入哈希。
+        dedup_extra: 附加去重因子（如 user_instruction、upload_id），非空时纳入哈希。
 
     Returns:
-        64 位 SHA256 十六进制字符串；无输入时返回 None。
+        64 位 SHA256 十六进制字符串；既无源也无 dedup_extra 时返回 None。
     """
-    if not source_artifact_ids:
+    if not source_artifact_ids and not dedup_extra:
         return None
     payload: dict[str, Any] = {
         "episode_number": episode_number,
         "artifact_type": artifact_type,
-        "sources": sorted(source_artifact_ids, key=lambda x: x.get("artifact_id", "")),
     }
+    if source_artifact_ids:
+        payload["sources"] = sorted(
+            source_artifact_ids, key=lambda x: x.get("artifact_id", "")
+        )
     if dedup_extra:
         payload["dedup_extra"] = dedup_extra
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")

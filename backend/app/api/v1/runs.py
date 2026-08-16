@@ -164,7 +164,12 @@ async def create_run(
     )
 
     # 异步启动后台 Worker（best effort，不阻塞响应）
-    if body.action in ("create_script", "platform_smoke", "revise"):
+    if body.action in (
+        "create_script",
+        "platform_smoke",
+        "revise",
+        "import",
+    ):
         schedule_worker(run.id, body.action, config_snapshot)
 
     return RunResponse.from_orm(run)
@@ -282,8 +287,8 @@ async def _execute_workflow(
     from app.prompts.loader import PromptLoader
     from app.workflows.creation import build_creation_workflow
     from app.workflows.evaluation import build_evaluation_workflow
+    from app.workflows.import_file import build_import_workflow
     from app.workflows.revision import build_revision_workflow
-    from app.workflows.state import CreationState
 
     agent = BaseAgent(name="planner", llm=llm_client)
     prompt_loader = PromptLoader()
@@ -303,7 +308,7 @@ async def _execute_workflow(
             await run_svc.transition_status(db, run_id, "running")
 
             # platform_smoke 等未接入的 action → 直接完成
-            if action not in ("create_script", "evaluate", "revise"):
+            if action not in ("create_script", "evaluate", "revise", "import"):
                 await run_svc.transition_status(db, run_id, "completed")
                 await publisher.publish(
                     db, run_id=run_id, event_type="run.completed",
@@ -332,6 +337,7 @@ async def _execute_workflow(
                     "event_publisher": publisher,
                     "user_input": user_input,
                     "source_type": options.get("source_type", "idea"),
+                    "upload_id": config_snapshot.get("upload_id"),
                     "script_count": options.get("script_count", 3),
                     "outline_count": options.get("outline_count", 10),
                     "rag_context": "",
@@ -340,7 +346,10 @@ async def _execute_workflow(
                 },
             }
 
-            initial_state: CreationState
+            # initial_state / workflow 由各 action 分支赋不同工作流的状态结构
+            #（CreationState / ImportState 等），此处用 Any 避免 TypedDict 强约束。
+            initial_state: Any
+            workflow: Any
             if action == "create_script":
                 # 完整 Creation Workflow（写完后自动进入评估）
                 initial_state = {
@@ -394,6 +403,26 @@ async def _execute_workflow(
                     "prompt_versions": {},
                 }
                 workflow = build_evaluation_workflow()
+            elif action == "import":
+                # action=import → 单节点导入分类工作流（G-04）：
+                # parse（FileStore + Parser）→ classify（规则+LLM）→ 持久化
+                # import_classification Artifact → route。
+                workflow = build_import_workflow()
+                initial_state = {
+                    "run_id": str(run_id),
+                    "project_id": str(run.project_id),
+                    "action": action,
+                    "upload_id": config_snapshot.get("upload_id"),
+                    "classification_artifact_id": None,
+                    "content_type": None,
+                    "route": None,
+                    "needs_user_input": False,
+                    "status": "running",
+                    "error_node": None,
+                    "error_detail": None,
+                    "completed_nodes": [],
+                    "prompt_versions": {},
+                }
             else:
                 # action=revise → 独立修订工作流（F-06）：中途播种状态。
                 # 每集取最新 valid 剧本与其绑定评估；用户指定剧本时覆盖对应集，
@@ -523,6 +552,20 @@ async def _execute_workflow(
                     },
                     autocommit=True,
                 )
+            elif action == "import":
+                # action=import 且无拦截标志 → 导入分类完成。
+                # route=needs_user_input（unknown）已在上方 needs_user_input 分支拦截。
+                await run_svc.transition_status(db, run_id, "completed")
+                await publisher.publish(
+                    db, run_id=run_id, event_type="run.completed",
+                    payload={
+                        "message": "导入分类完成",
+                        "content_type": final_state.get("content_type"),
+                        "route": final_state.get("route"),
+                        "classification_artifact_id": final_state.get("classification_artifact_id"),
+                    },
+                    autocommit=True,
+                )
             elif action == "evaluate":
                 # action=evaluate 且无任何拦截标志 → 直接完成
                 # （evaluation workflow 无 finalize 节点，由 API 层收尾）
@@ -595,6 +638,7 @@ def _register_fake_fixtures(llm: Any) -> None:
         return data
 
     from app.domain.evaluation import EvaluationReport
+    from app.domain.import_file import ImportClassification
     from app.domain.outline import EpisodeOutlineSet
     from app.domain.requirement import NormalizedRequirement
     from app.domain.revision import (
@@ -625,4 +669,9 @@ def _register_fake_fixtures(llm: Any) -> None:
     llm.register(
         "continuity_semantic_check",
         ContinuitySemanticCheck.model_validate(_load("continuity_semantic_check_valid")),
+    )
+    # 导入分类 fixture（G-04）：默认 outline golden；API 集成测试按上传内容覆盖。
+    llm.register(
+        "import_classifier",
+        ImportClassification.model_validate(_load("import_classification_outline")),
     )

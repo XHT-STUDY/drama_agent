@@ -21,6 +21,7 @@ from app.core.errors import NotFoundError
 from app.domain.continuity import ContinuityState
 from app.domain.enums import ArtifactType
 from app.domain.evaluation import EvaluationReport
+from app.domain.import_file import ImportClassification
 from app.domain.outline import EpisodeOutlineSet
 from app.domain.revision import ContinuityCheckResult, RevisionPlan
 from app.domain.script import ScriptDraft
@@ -37,6 +38,7 @@ _SCHEMA_MAP: dict[str, Any] = {
     ArtifactType.CONTINUITY_CHECK: ContinuityCheckResult,
     ArtifactType.CONTINUITY_STATE: ContinuityState,
     ArtifactType.CONVERSATION_SUMMARY: ConversationSummary,
+    ArtifactType.IMPORT_CLASSIFICATION: ImportClassification,
 }
 
 

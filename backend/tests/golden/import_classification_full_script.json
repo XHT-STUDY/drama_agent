@@ -1,0 +1,22 @@
+{
+  "input": {
+    "filename": "episode_1_script.docx",
+    "text": "第1场 训练场（日）\n教练：你被开除了。\n林峰：为什么？我训练从未偷懒。\n教练：因为你不够强。\n\n第2场 宿舍（夜）\n林峰：我绝不会放弃。\n室友：可你已经没有机会了。",
+    "upload_id": "generated-fixture"
+  },
+  "expected_output": {
+    "content_type": "full_script",
+    "confidence": 0.95,
+    "reason": "含场景标记且对白行成段，构成完整剧本正文",
+    "detected_features": {
+      "char_count": 94,
+      "line_count": 10,
+      "scene_markers": 2,
+      "episode_markers": 0,
+      "dialogue_lines": 6,
+      "dialogue_ratio": 0.6,
+      "has_reference_keywords": false,
+      "extension": "docx"
+    }
+  }
+}

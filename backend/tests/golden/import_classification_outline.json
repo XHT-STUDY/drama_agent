@@ -1,0 +1,22 @@
+{
+  "input": {
+    "filename": "outline_draft.txt",
+    "text": "第1集 开场悬念：主角被青训队抛弃；第2集 低谷期遇到伯乐教练；第3集 组建草根球队",
+    "upload_id": "generated-fixture"
+  },
+  "expected_output": {
+    "content_type": "outline",
+    "confidence": 0.92,
+    "reason": "文本以「第X集」结构推进剧情纲要，判定为分集大纲",
+    "detected_features": {
+      "char_count": 58,
+      "line_count": 1,
+      "scene_markers": 0,
+      "episode_markers": 3,
+      "dialogue_lines": 0,
+      "dialogue_ratio": 0.0,
+      "has_reference_keywords": false,
+      "extension": "txt"
+    }
+  }
+}

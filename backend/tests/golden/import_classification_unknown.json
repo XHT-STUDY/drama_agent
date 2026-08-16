@@ -1,0 +1,22 @@
+{
+  "input": {
+    "filename": "misc_notes.txt",
+    "text": "周末去买球鞋，顺便想想故事后面的走向。最近熬夜写稿有点累。",
+    "upload_id": "generated-fixture"
+  },
+  "expected_output": {
+    "content_type": "unknown",
+    "confidence": 0.6,
+    "reason": "文本内容混杂日常笔记与创作随笔，无法确定内容类别",
+    "detected_features": {
+      "char_count": 34,
+      "line_count": 1,
+      "scene_markers": 0,
+      "episode_markers": 0,
+      "dialogue_lines": 0,
+      "dialogue_ratio": 0.0,
+      "has_reference_keywords": false,
+      "extension": "txt"
+    }
+  }
+}

@@ -51,6 +51,21 @@ class TestComputeInputHash:
         """不同输入产生不同哈希。"""
         assert compute_input_hash([{"artifact_id": "a"}]) != compute_input_hash([{"artifact_id": "b"}])
 
+    def test_dedup_extra_without_sources_hashes(self) -> None:
+        """无源但带 dedup_extra → 返回哈希（G-04：无源独立产物可幂等去重）。"""
+        h1 = compute_input_hash(None, dedup_extra="upload:abc")
+        h2 = compute_input_hash(None, dedup_extra="upload:abc")
+        h3 = compute_input_hash(None, dedup_extra="upload:xyz")
+        assert h1 is not None
+        assert h1 == h2, "同 dedup_extra 应幂等"
+        assert h1 != h3, "不同 dedup_extra 应不同哈希"
+
+    def test_source_hash_unchanged_without_dedup(self) -> None:
+        """有源无 dedup_extra 时哈希逐字节不变（存量兼容）。"""
+        src = [{"artifact_id": "a", "version": 1}]
+        assert compute_input_hash(src) == compute_input_hash(src)
+        assert compute_input_hash(src, dedup_extra="x") != compute_input_hash(src)
+
 
 class TestComputeNextVersion:
     """版本号计算。"""

@@ -106,3 +106,12 @@ prompts:
     owner: summarizer
     template: conversation_summary.md
     changelog: "初始版本：把超出短期窗口的旧会话消息滚动摘要为可读创作背景 (G-01)"
+
+  # ---- 导入内容分类 ----
+  - name: import_classifier
+    version: "1.0.0"
+    input_schema: ImportClassificationInput
+    output_schema: ImportClassification
+    owner: classifier
+    template: import_classifier.md
+    changelog: "初始版本：把上传文本分类为 idea_or_notes / outline / full_script / reference / unknown (G-04)"
