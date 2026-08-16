@@ -51,14 +51,15 @@ class TestEnums:
         assert values == {"draft", "planning", "writing", "evaluating", "revising", "completed", "archived"}
 
     def test_artifact_type_values(self) -> None:
-        """ArtifactType 包含 MVP 所需的全部 11 种类型（F-05 增 continuity_check）。"""
+        """ArtifactType 包含 MVP 所需的全部 12 种类型（D-05 增 retrieval_trace）。"""
         values = {t.value for t in ArtifactType}
-        assert len(values) == 11
+        assert len(values) == 12
         assert "story_bible" in values
         assert "script_draft" in values
         assert "evaluation_report" in values
         assert "revision_plan" in values
         assert "continuity_check" in values
+        assert "retrieval_trace" in values
 
     def test_artifact_status_values(self) -> None:
         """ArtifactStatus 只允许 draft/valid/invalid 三种状态。"""

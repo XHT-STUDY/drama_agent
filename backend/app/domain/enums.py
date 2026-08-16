@@ -39,6 +39,7 @@ class ArtifactType(StrEnum):
     CONVERSATION_SUMMARY = "conversation_summary"
     IMPORT_CLASSIFICATION = "import_classification"
     EXPORT_FILE = "export_file"
+    RETRIEVAL_TRACE = "retrieval_trace"
 
 
 class ArtifactStatus(StrEnum):

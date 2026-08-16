@@ -103,7 +103,8 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                 story_bible=story_bible.model_dump(),
                 previous_summary=previous_summary,
                 continuity_state=continuity_text,
-                rag_context=ctx.get("rag_context", ""),
+                # D-05: 优先消费本阶段检索结果，缺失时回退合并上下文（向后兼容）
+                rag_context=ctx.get("writer_rag") or ctx.get("rag_context", ""),
             )
 
             logger.info("正在调用 LLM 生成第 %d 集剧本…", ep_num)

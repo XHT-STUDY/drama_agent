@@ -59,7 +59,8 @@ async def outline_node(state: CreationState) -> dict[str, Any]:
 
         ol_input = OutlineInput(
             story_bible=story_bible.model_dump(),
-            rag_context=ctx.get("rag_context", ""),
+            # D-05: 优先消费本阶段检索结果，缺失时回退合并上下文（向后兼容）
+            rag_context=ctx.get("outline_rag") or ctx.get("rag_context", ""),
             outline_count=outline_count,
         )
 

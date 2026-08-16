@@ -2344,3 +2344,187 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 建议的下一任务
 
 - **Phase I（稳定性与发布加固）：I-01 幂等/重试/取消/成本保护 → I-02 可观测性 → I-03 安全回归**——MVP 全链路（含 E2E）已闭环，可按阶段 I 逐卡推进；Phase D（RAG 记忆）与 Phase G（导入导出后半、真导出 API）仍是大块待做。
+
+---
+
+## 2026-08-16 Phase D 起步:D-01 知识分类与治理 + D-02 Loader/Chunker/摄取命令
+
+### 做了什么
+
+**D-01(知识分类、元数据与内容治理)**
+
+- [knowledge/](../knowledge/)：语料根目录,mvp_v1 版。含 [README.md](../knowledge/README.md)(7 分类表 + 元数据字段约定 + 摄取/校验说明)、[VERSION](../knowledge/VERSION)(`mvp_v1`)、18 篇原创短内容：`templates/`(genre_template ×3)、`hooks/`(opening_hook ×3 + ending_hook ×3)、`examples/`(payoff ×3 + character_archetype ×3)、`compliance/`(compliance ×3),全部带统一 frontmatter(source=drama-agent-self-auth / license=MIT / title / category / genre / stage / tags / version)。
+- [backend/app/rag/models.py](../backend/app/rag/models.py)：`KnowledgeCategory(StrEnum)`(genre_template / opening_hook / ending_hook / payoff / character_archetype / rubric / compliance)、`CORPUS_DOC_CATEGORIES`(除 rubric 的 6 类,对应独立文档)、`KnowledgeDocMetadata`(Pydantic v2,`extra=forbid`,source/license 必填)、`KnowledgeMetadataError`、`parse_frontmatter()`、`knowledge_root()` / `load_corpus_version()`。
+- [backend/app/db/models/knowledge_document.py](../backend/app/db/models/knowledge_document.py)：ORM 扩展 source / language / genre / stage / tags(JSONB)/ version / corpus_version / document_hash 列。
+- [backend/tests/unit/rag/test_knowledge_metadata.py](../backend/tests/unit/rag/test_knowledge_metadata.py)：11 项语料元数据扫描测试(必有 source/license/title/category、值合法、不含 rubric 误扫)。
+
+**D-02(Loader、Chunker 与摄取命令)**
+
+- [backend/migrations/versions/0002_knowledge.py](../backend/migrations/versions/0002_knowledge.py)：`knowledge_documents` 增 8 元数据列 + `ix_knowledge_documents_category` + `knowledge_chunks.embedding` HNSW cosine 索引(downgrade 对称)。dev DB 真实 downgrade→upgrade 往返验证通过,数据不丢。
+- [backend/tests/integration/db/test_migration.py](../backend/tests/integration/db/test_migration.py)：补 0002 静态校验(6 项: revision/down_revision/新列/HNSW 索引/category 索引/downgrade 对称),共 12 项全绿。
+- [backend/app/rag/loader.py](../backend/app/rag/loader.py)：加载 .md(frontmatter)/.json,`strip_frontmatter()`、确定性 `compute_document_hash()`(规范元数据 + 正文 SHA256)、`discover_knowledge_files()`(跳过 README/VERSION/rubric)、`load_knowledge_corpus()`。
+- [backend/app/rag/chunker.py](../backend/app/rag/chunker.py)：`KnowledgeChunk` frozen dataclass(index/content/heading_path/chunk_hash),按标题层级切块、保留父标题路径、超长 section 按空行段落拆分。
+- [backend/app/db/repositories/knowledge.py](../backend/app/db/repositories/knowledge.py)：`KnowledgeRepository`,`ingest_document()` 返回 `(doc, created, changed)` 三态;document_hash 相同跳过、(category,title) 相同 hash 不同 → 只按 chunk_hash 重建变化的块(未变化块保留,为 D-03 回填 embedding 留余地)、否则新建;删源文件不物理删除线上记录。
+- [backend/app/cli/knowledge.py](../backend/app/cli/knowledge.py) + `app/cli/__init__.py`：argparse 子命令 `ingest` / `status`,入口 `uv run python -m app.cli.knowledge`,零新增依赖;test 环境守卫拒绝真实摄取。
+
+### 为什么这么做
+
+- **分三态 `(created, changed, skipped)` 而非二态**：二态 `(created, skipped)` 把"更新"和"跳过"混为一谈,CLI 无法准确汇报新增/更新/跳过。三态是幂等摄取语义的最小完备集。
+- **chunk 级重建而非整体删除重建**：D-03 会回填 embedding,整体重建会让所有向量白算。按 chunk_hash 保留未变化块,变更只波及变化块。
+- **CLI 用 argparse 而非 typer/click**：仓库无 typer/click 依赖,既有脚本模式是 argparse,新增依赖违反零依赖原则。
+- **embedding 列置空写入**：D-02 只做文本摄取,D-03 才向量化。计划假设 0001 迁移 `nullable=True`,但 ORM 模型 `Mapped[Any]` 未显式 nullable → 测试 conftest `create_all` 建成 NOT NULL → 集成测试插入 embedding=None 报错。修复为 ORM 显式 `nullable=True`,与迁移对齐。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/rag/test_chunker.py` | 11 passed |
+| `uv run pytest tests/integration/db/test_migration.py` | 12 passed(0001 + 0002 静态校验) |
+| `uv run pytest tests/integration/rag/` | 16 passed(幂等摄取 / 部分重建 / 删源文件保留 / chunk 元数据) |
+| `uv run pytest tests/unit tests/integration/rag tests/integration/db/test_migration.py` | **398 passed** |
+| `uv run ruff check ...` | All checks passed |
+| `uv run mypy ...` | Success, no issues |
+| `uv run alembic upgrade head`(dev DB) | 0001 → 0002 成功;downgrade 0001 → upgrade 0002 往返成功,18 文档/18 块完好 |
+| `uv run python -m app.cli.knowledge ingest knowledge/` | 首次 新增 18,二次 跳过 18(幂等) |
+| `uv run python -m app.cli.knowledge status` | 语料版本 mvp_v1,文档 18,Chunk 18 |
+
+### 学习收获
+
+- **ORM 模型与 Alembic 迁移可漂移,测试 conftest 用 `create_all` 时以 ORM 为准**:集成测试建表不走 alembic,`Mapped[Any]` 不写 `nullable=True` 就是 NOT NULL,哪怕迁移文件里写了 nullable。新迁移/新列必须同时核对 ORM 模型的显式可空性。
+- **幂等摄取的三态返回值让 CLI 汇报与测试断言都更清晰**:created=True 表示新建,changed=True 表示内容有变,两者皆 False 才是跳过。
+- **`make doctor` 在系统无 `python` 可执行文件时会误报环境损坏**:doctor 用 `@python --version` 探测,但本项目用 uv 虚拟环境,WSL 系统未装裸 python。判断服务就绪应直接 `docker compose exec` 探测(pg_isready / redis-cli ping)。
+
+### 建议的下一任务
+
+- **D-03(Embedder 与 pgvector)**:`rag/embedder.py`(Embedder ABC + OpenAICompatibleEmbedder HTTP 批处理/重试/缓存 + FakeEmbedder 确定性伪向量 + load_embedder 工厂 + 维度校验),`KnowledgeRepository` 增 cosine 相似度查询(`<=>` 走 HNSW),`EmbeddingResult` 模型;unit test_embedder + integration test_pgvector(top-k 稳定返回相似度与 metadata)。
+
+---
+
+## 2026-08-16 Phase D:D-03 Embedder 与 pgvector 存储
+
+### 做了什么
+
+- [backend/app/rag/embedder.py](../backend/app/rag/embedder.py)：向量化模块,镜像 LLM 层模式 ——
+  - `Embedder(ABC)`：`embed(texts)` / `embed_one()` / `close()` 协议;
+  - `FakeEmbedder`：确定性伪向量,同文本 SHA256 → 种子 → 归一化单位向量,带缓存,零网络;默认维度 1536 与 pgvector 模型一致;
+  - `OpenAICompatibleEmbedder`：HTTP 调 `/embeddings`,复用 LLM base_url/api_key/超时/重试;批处理(默认 32/批)、重试(失败重试 llm_max_retries 次)、同文本缓存、维度一致性校验;
+  - `load_embedder(settings)` 工厂：test 环境 / provider=fake → FakeEmbedder,否则真实实现;
+  - `resolve_embedding_dimension()`：配置 >0 用配置,否则回退 DB 固定维度 1536;`validate_embedding_dimension()` 写入前失败。
+- [backend/app/rag/models.py](../backend/app/rag/models.py)：补 `EmbeddingResult`(vectors/model/dimension/duration_ms/calls/cached_count)。
+- [backend/app/db/repositories/knowledge.py](../backend/app/db/repositories/knowledge.py)：补 `KnowledgeSearchHit`(chunk + score + title + category + chunk_index)与三个方法 —— `update_chunk_embedding`(单块回填)、`backfill_document_embeddings`(按 chunk_index 顺序整文档回填,数量不符报错)、`search_similar`(pgvector `<=>` cosine 相似度,`1 - cosine_distance` 打分,支持 category / min_score 过滤 + top_k 截断,排除 embedding 为空的块)。
+- [backend/tests/unit/rag/test_embedder.py](../backend/tests/unit/rag/test_embedder.py)：21 项(FakeEmbedder 确定性/缓存/归一化/零网络、维度解析与校验、工厂分发、OpenAICompatibleEmbedder 响应解析/批处理/缓存/重试/维度不符,httpx MockTransport 无真实网络)。
+- [backend/tests/integration/rag/test_pgvector.py](../backend/tests/integration/rag/test_pgvector.py)：8 项(摄取→回填→相似度 top-k 排序与元数据、category 过滤、min_score 过滤、top_k 截断、未回填块排除、回填数量校验、单块更新)。
+
+### 为什么这么做
+
+- **镜像 LLM 层而非自造轮子**：Embedder ABC / 工厂 / httpx 客户端惰性创建 / 错误处理全部照抄 `app/llm/` 既有惯例,仓库内模式统一,零新增依赖。
+- **FakeEmbedder 归一化到单位长度**：pgvector `<=>` 是 cosine 距离,只有归一化向量才能让 1−distance 表达真正相似度排序;哈希种子保证同文本向量确定(幂等),不同文本向量近似正交(测试可断言 min_score 高阈值必空)。
+- **维度校验前置**：pgvector 列固定 Vector(1536),维度不符会在 insert 时报 pgvector 自己的错;前置校验让错误信息明确(实际 N vs 期望 M)。
+- **`calls` 语义 = 本次实际 HTTP 请求数**：初版误把 embed() 调用计数当作请求数,批处理下不对;改为 embed() 内统计 requests_made。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/rag/test_embedder.py` | 21 passed |
+| `uv run pytest tests/integration/rag/test_pgvector.py` | 8 passed |
+| `uv run pytest tests/unit tests/integration/rag tests/integration/db/test_migration.py` | **427 passed** |
+| `uv run ruff check ...` | All checks passed |
+| `uv run mypy ...` | Success, no issues |
+
+### 学习收获
+
+- **httpx `MockTransport` 需要 base_url**：手动给客户端注入 mock transport 时若不带 base_url,相对路径 `/embeddings` 会在 cookie jar 的 urllib 解析处抛 `unknown url type`。测试里构造 mock 客户端必须带 `base_url`。
+- **Ruff B905 要求 `zip()` 显式 `strict`**：项目启用了该规则,长度已知相等的 zip 用 `strict=True` 反而更严谨(能捕获静默截断)。
+- **B027 对 ABC 中空方法的要求**：抽象基类里的空方法要么 `@abstractmethod`,要么在子类实现;FakeEmbedder 因此补了显式 `close()`。
+
+### 建议的下一任务
+
+- **D-04(Retriever、过滤与 RetrievalTrace)**:`rag/retriever.py`(query + category/genre/stage 过滤、top_k/最低相似度/每文档最大块数、去重稳定排序)+ `domain/retrieval.py`(RetrievedChunk 短 ID slug-n + RetrievalResult + RetrievalTrace + NullRetriever)+ `tests/golden/rag_queries.json` 固定 query 夹具。
+
+---
+
+## 2026-08-16 Phase D:D-04 Retriever、过滤与 RetrievalTrace
+
+### 做了什么
+
+- [backend/app/domain/retrieval.py](../backend/app/domain/retrieval.py)：检索领域类型 ——
+  - `RetrievedChunk`(frozen dataclass: 短 ID `slug-<n>` + chunk_id + content + score + title + category);
+  - `RetrievalResult`(query + chunks + top_k + min_score + filters + corpus_version + `to_trace()`);
+  - `RetrievalTrace`(query / chunk_ids[str] / scores / filters / corpus_version / top_k + `model_dump()` 供持久化,**不含全文**);
+  - `NullRetriever`(降级检索器,签名与 Retriever 一致,始终返回空结果)。
+- [backend/app/rag/retriever.py](../backend/app/rag/retriever.py)：`RetrieveConfig`(Pydantic,全可选)+ `Retriever` —— query → embedder.embed_one → repo.search_similar → 后处理(防御性去重 / 每文档最大块数 / 短 ID 连续编号);filters 从实际生效条件构造。
+- [backend/app/db/repositories/knowledge.py](../backend/app/db/repositories/knowledge.py)：`search_similar` 增 `genre` / `stage` 过滤参数,排序加 `chunk_index` 次键(同分稳定)。
+- [backend/tests/golden/rag_queries.json](../backend/tests/golden/rag_queries.json)：7 类各 2-3 条固定中文 query 夹具。
+- [backend/tests/unit/rag/test_retriever.py](../backend/tests/unit/rag/test_retriever.py)：12 项(FakeEmbedder + 脚本化假 repo,不连库)—— category 过滤传递、rubric 类空结果、无结果空列表、去重、稳定排序、短 ID 序号、每文档上限、Trace 不含全文、Trace chunk_ids 一致、NullRetriever 空结果与签名兼容、golden 夹具结构。
+- [backend/tests/integration/rag/test_pgvector.py](../backend/tests/integration/rag/test_pgvector.py)：增 genre / stage 过滤 2 项集成测试。
+
+### 为什么这么做
+
+- **RetrievalTrace 不含全文**：Exit Gate 4 只要求可追溯 corpus_version + chunk IDs;全文会膨胀 Artifact 且检索片段可经 chunk_id 反查。Trace 只记"检索了什么、命中了什么"。
+- **chunk_ids 存字符串**：UUID 原生不可 JSON 序列化,`to_trace()` 直接转 str,`model_dump()` 即安全。
+- **NullRetriever 放 domain 层且不依赖 rag**：避免 domain → rag 反向依赖;用普通关键字参数签名而非 RetrieveConfig,保证两侧可替换同时不引入循环导入。
+- **genre/stage 过滤下沉到 repo SQL**：genre/stage 是文档列,在 SQL WHERE 里过滤比取回再内存过滤更高效且命中更准确。
+- **短 ID 在 retriever 分配**：slug-n 是"给 Prompt 看的引用编号",应在结果生成处一次性分配,而非仓库层。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/rag/test_retriever.py` | 12 passed |
+| `uv run pytest tests/integration/rag/test_pgvector.py` | 10 passed(新增 genre/stage 过滤) |
+| `uv run pytest tests/unit tests/integration/rag tests/integration/db/test_migration.py` | **441 passed** |
+| `uv run ruff check ...` | All checks passed |
+| `uv run mypy ...` | Success, no issues |
+
+### 学习收获
+
+- **`from __future__ import annotations` 下前向引用无需引号**：UP037 会把 `-> "Type"` 标记为多余,直接写 `-> Type`。
+- **retriever 的过滤分为两层**：category/genre/stage 这类"结构性过滤"下推到 SQL(join 文档列),去重/上限/短 ID 这类"结果整形"放在内存后处理。分清两层让代码意图清晰,也避免把业务整形塞进仓库。
+
+### 建议的下一任务
+
+- **D-05(创作链路接入与检索质量测试)**:`retrieve_for_stage(story_bible→genre_template/character_archetype;outline→genre_template/opening_hook;writer→payoff/character_archetype)` 三阶段映射;改 `workflows/nodes/retrieve.py` 直通占位为真实检索 + 每阶段持久化 RetrievalTrace Artifact;三 Skill 消费各自阶段 rag_context;`ContextManifest` 增 `rag_chunk_ids`;`ArtifactType` 增 `retrieval_trace`;`tests/golden/rag_expectations.json` + `test_creation_with_rag.py`(hit@5≥90%、三阶段过滤不同、NullRetriever 降级主流程可运行)。
+
+---
+
+## 2026-08-16 Phase D:D-05 创作链路接入与检索质量测试
+
+### 做了什么
+
+- [backend/app/rag/retriever.py](../backend/app/rag/retriever.py)：增 `_CREATION_STAGE_CATEGORIES` 阶段→分类映射(story_bible→genre_template+character_archetype;outline→genre_template+opening_hook;writer→payoff+character_archetype)+ `retrieve_for_stage(stage, query, *, top_k=5, min_score=-1.0)` —— 逐分类调用 `retrieve` → 合并/去重/按相似度降序 → 截断 top_k → 重编 `slug-1..N`,filters 记 stage 与 categories。默认 `min_score=-1.0`(阶段检索语义是"收集参考材料",不做相似度门槛)。
+- [backend/app/domain/retrieval.py](../backend/app/domain/retrieval.py)：`NullRetriever` 补 `retrieve_for_stage`(同签名,返回空结果 + `filters={"stage": stage}`),与 Retriever 可替换。
+- [backend/app/workflows/nodes/retrieve.py](../backend/app/workflows/nodes/retrieve.py)：直通占位改为真实检索 —— 从 `requirement_artifact_id` 取归一化需求构建 query(genre/tone/title/logline/protagonist/conflict/must_have/must_avoid,缺需求回退用户原始输入);按三阶段各检索一次,`_format_stage_context` 把每块格式化为 `[slug-N] 来源: 《title》(category)` + 正文;写入 `ctx["story_bible_rag"]/["outline_rag"]/["writer_rag"]` 与合并 `ctx["rag_context"]`(向后兼容);每阶段命中时 `_persist_trace` 持久化 RetrievalTrace Artifact(query/chunk IDs/scores/filters/corpus_version/stage,不含全文,`dedup_extra=stage`);检索失败整体降级为空上下文(设计决策 6),支持 ctx 注入 NullRetriever。`load_embedder(load_settings())` 自建 embedder,用后 close。
+- [backend/app/skills/story_bible.py](../backend/app/skills/story_bible.py) / [outline.py](../backend/app/skills/outline.py) / [episode_writer.py](../backend/app/skills/episode_writer.py)：三 Skill 改为消费各自阶段 `rag_context`(`ctx.get(f"{stage}_rag") or ctx.get("rag_context","")`),模板 `{{ rag_context }}` 兜底不变。
+- [backend/app/memory/context_builder.py](../backend/app/memory/context_builder.py)：`ContextManifest` 增 `rag_chunk_ids: list[str]`(D-05 只记录,G-02 才完整接入组装)。
+- [backend/app/domain/enums.py](../backend/app/domain/enums.py)：`ArtifactType` 增 `retrieval_trace`(12 类);[backend/tests/contract/test_domain_schemas.py](../backend/tests/contract/test_domain_schemas.py) 同步断言。
+- 新增 [backend/tests/golden/rag_expectations.json](../backend/tests/golden/rag_expectations.json)(三阶段 × expected_categories + 3 queries)、[backend/tests/integration/workflow/test_creation_with_rag.py](../backend/tests/integration/workflow/test_creation_with_rag.py)(`_CorpusIngester` 用 FakeEmbedder 摄取 8 篇覆盖三阶段分类的最小语料):`TestRetrievalQuality`(固定 query 的 expected category hit@5≥90% —— FakeEmbedder 下由分类过滤结构性保证;三阶段分类集互不相同)+ `TestCreationWorkflowWithRag`(完整创作 → 三阶段 RetrievalTrace Artifact 持久化,含 stage/chunk_ids/corpus_version 且不含全文;ctx 注入 NullRetriever 删除 RAG 后主流程仍 completed 且 0 trace)。
+- [backend/tests/unit/rag/test_retriever.py](../backend/tests/unit/rag/test_retriever.py)：增 `TestRetrieverForStage` 5 项 + `TestGoldenQueries.test_expectations_load_with_stages`(golden 夹具结构)。
+
+### 为什么这么做
+
+- **retrieve_node 是图中唯一检索点**:normalize → retrieve → SB → outline → write 一次遍历三个创作阶段,每阶段一个 Context 键 —— 三个 Skill 消费各自阶段的资料,满足"三类节点检索过滤不同"的验收,又保持 `ctx["rag_context"]` 合并文本兼容旧逻辑。
+- **RetrievalTrace 用 dedup_extra=stage**:三阶段 trace 的 source 都是同一个需求 Artifact,`ArtifactStore.create` 按 input_hash 幂等去重会把它们缩成一条。用 `dedup_extra=stage` 显式区分幂等键,同源多实例 Artifact 各存一条。
+- **min_score 默认 -1.0**:FakeEmbedder 生成近似正交的确定性伪向量,cosine≈0,`min_score=0.0` 会随机过滤掉一半块导致阶段检索不确定。阶段检索的语义是"收集参考材料"(题材模板/钩子/爽点直接进 Prompt 当素材),不需要相似度门槛;确定性语义检索(评估 rubric 等)才用阈值。
+- **trace 只记 chunk IDs 不含全文**:Exit Gate 4 只要求可追溯 corpus_version + chunk IDs;片段可经 chunk_id 反查,避免把大文本塞进 Artifact。
+- **检索失败逐阶段降级**:任一阶段网络异常/语料为空 → 该阶段回退空串,主流程不中断;NullRetriever 注入即模拟"删除 RAG"。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest tests/unit/rag/test_retriever.py` | 17 passed(新增 6 项) |
+| `uv run pytest tests/integration/workflow/test_creation_with_rag.py` | 4 passed(hit@5≥90% / 三阶段过滤不同 / trace 持久化 / NullRetriever 降级) |
+| `uv run pytest tests/contract/test_domain_schemas.py` | 全绿(ArtifactType 12 类) |
+| 后端全量 `uv run pytest` | **697 passed, 2 failed**(仅 2 存量日志失败,基线已记录) |
+| `uv run ruff check ...` / `uv run mypy ...` | All checks passed / 无新增错误 |
+
+### 学习收获
+
+- **同源多实例 Artifact 必须显式区分幂等键**:`ArtifactStore.create` 用 input_hash(源 Artifact + 类型 + dedup_extra)做幂等去重 —— 当同一 source 派生多个"同类型不同语义"的 Artifact(如三阶段各一条 RetrievalTrace)时,必须用 `dedup_extra` 把幂等键区分开,否则会被静默去重成一条。这是"Artifact 不可变 + 幂等"双约束下的组合陷阱。
+- **阈值过滤 vs 收集参考的检索语义不同**:相似度阈值是"确定性检索"(筛掉低质量命中)的语义;阶段 RAG 检索是"收集素材"(题材模板/钩子进 Prompt)的语义,设默认 min_score 会把随机向量/小语料下本应命中的块随机丢掉 —— 设计 API 时默认参数要贴合调用语义。
+- **分阶段 Context 键 + 合并键兼容是渐进接入的通用模式**:新机制按阶段细分,同时保留旧的合并键,让下游节点逐个切换、旧逻辑不破。
+
+### 建议的下一任务
+
+- **Phase D 收尾 + G-02**:D-05 完成后 Phase D 全部 DONE(Exit Gate:空语料 creation_workflow 通过、摄取后 RetrievalTrace 记录三阶段、重复摄取幂等)。`rag_chunk_ids` 已在 ContextManifest 记录,G-02(记忆 / 导入导出)再真正接入上下文组装,把 chunk ID 映射回上下文引用。

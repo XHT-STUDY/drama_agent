@@ -330,3 +330,15 @@ export LD_LIBRARY_PATH="$ROOT/var/pw-libs/usr/lib/x86_64-linux-gnu"
 **解决方案**：**必须先注册 waitForEvent，再触发下载**。把触发封装成回调，helper 内先 `const p = page.waitForEvent("download"); await trigger(); const d = await p;`。[e2e/fixtures/helpers.ts](e2e/fixtures/helpers.ts) 的 `expectDownloadNotEmpty(page, trigger)` 即此模式。
 
 **学习收获**：凡是"事件发生在动作瞬间"的断言（download、filechooser、response、request），都要先挂监听再触发动作，且用回调延迟触发时机。这个坑对 `waitForEvent("popup")`、`page.on("filechooser")` 同样适用。
+
+---
+
+## 2026-08-16 — RetrievalTrace 三阶段 trace 被幂等去重成一条：ArtifactStore input_hash 碰撞
+
+**症状**：`test_full_creation_persists_retrieval_traces` 断言三阶段 trace 应各一条,实际 `stages == ['story_bible']`——只有 story_bible 阶段的 RetrievalTrace Artifact 落库。调试发现 retrieve 节点三阶段都正常返回块(5/5/4),说明检索没问题,是持久化丢记录。
+
+**产生原因**：`ArtifactStore.create` 的幂等去重逻辑按 `input_hash = compute_input_hash(source_artifact_ids, episode_number, artifact_type, dedup_extra)` 判重——三阶段 RetrievalTrace 的 source 都是同一个需求 Artifact、artifact_type 都是 `retrieval_trace`、episode_number 都是 None,于是三者的 input_hash 完全相同。create 命中 `find_by_input_hash` 后直接返回既有记录,**后面的两条 trace 被静默当成"重复提交"丢弃**,只有第一条真正落库。
+
+**解决方案**：在 [retrieve.py](../backend/app/workflows/nodes/retrieve.py) 的 `_persist_trace` 里给 `create_validated_artifact` 传 `dedup_extra=stage`,让幂等键带上阶段维度(story_bible/outline/writer 各不相同)。同 source 派生的多实例 Artifact 用 dedup_extra 显式区分。
+
+**学习收获**："Artifact 不可变版本 + 幂等去重"双约束下,凡是一个 source 派生**多个"同类型但语义不同"的 Artifact**,都必须用 `dedup_extra` 把幂等键区分开;否则输入哈希相同会被静默合并成一条,且不报错(表面看起来"成功"),只在断言数量时才暴露。写多实例派生 Artifact 的持久化时,先问一句"它们的幂等键会不会撞"。

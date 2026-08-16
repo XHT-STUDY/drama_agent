@@ -76,6 +76,10 @@ class ContextManifest(BaseModel):
     warnings: list[str] = Field(
         default_factory=list, description="组装过程中的告警信息"
     )
+    rag_chunk_ids: list[str] = Field(
+        default_factory=list,
+        description="本次上下文引用的 RAG chunk ID 列表（D-05 记录，G-02 完整接入组装）",
+    )
 
     def has_current_target_cut(self) -> bool:
         """检查当前目标场景是否被截断（验收项：不能静默截断）。"""

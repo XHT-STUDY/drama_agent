@@ -53,7 +53,8 @@ async def story_bible_node(state: CreationState) -> dict[str, Any]:
 
         sb_input = StoryBibleInput(
             normalized_requirement=requirement.model_dump(),
-            rag_context=ctx.get("rag_context", ""),
+            # D-05: 优先消费本阶段检索结果，缺失时回退合并上下文（向后兼容）
+            rag_context=ctx.get("story_bible_rag") or ctx.get("rag_context", ""),
         )
 
         skill = StoryBibleSkill()
