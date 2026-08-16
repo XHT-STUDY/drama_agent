@@ -34,7 +34,7 @@ from app.storage.protocol import FileStore
 _FIXED_NOW = datetime(2026, 8, 16, 10, 0, 0, tzinfo=UTC)
 
 
-def _valid_script(episode_number: int, title: str) -> dict:
+def _valid_script(episode_number: int, title: str) -> dict[str, Any]:
     """构造通过 ScriptDraft 校验的剧本 content。"""
     return {
         "episode_number": episode_number,
@@ -66,7 +66,7 @@ def _valid_script(episode_number: int, title: str) -> dict:
     }
 
 
-def _story_bible() -> dict:
+def _story_bible() -> dict[str, Any]:
     """构造通过 StoryBible 校验的 content（复用单元测试样例）。"""
     from tests.unit.export.test_markdown import _story_bible as _make
 
@@ -216,6 +216,7 @@ class TestExportService:
         ep1_latest = await store_a.get_latest(
             db_session, seeded_project, "script_draft", 1
         )
+        assert ep1_latest is not None, "第 1 集应存在剧本版本"
         ep1_sources = [s for s in sources if s["artifact_id"] == str(ep1_latest.id)]
         assert len(ep1_sources) == 1
         assert ep1_sources[0]["version"] == 2, "应导出第 1 集最新版本（v2）"

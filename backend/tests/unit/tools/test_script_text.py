@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from app.domain.script import ScriptDraft
 from app.tools.script_text import full_script_to_script_draft
@@ -27,7 +28,7 @@ _SCRIPT_TEXT = (
 )
 
 
-def _extract() -> dict:
+def _extract() -> dict[str, Any]:
     result = full_script_to_script_draft(_SCRIPT_TEXT, title="被抛弃")
     assert result is not None, "合法完整剧本应转换成功"
     return result

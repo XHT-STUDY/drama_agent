@@ -107,6 +107,7 @@ class TestUploadToExport:
         )
         items = arts.json()["items"]
         assert items, "导出后应存在 export_file Artifact"
+        assert isinstance(items[0], dict)
         return items[0]
 
     # ---- Path 1: Outline → 创作 → 导出 ----

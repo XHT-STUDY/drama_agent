@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from typing import Any
 
 from app.tools.exporters.markdown import (
     EVAL_DIM_ORDER,
@@ -31,7 +32,7 @@ from app.tools.exporters.markdown import (
 _DOC_TITLE = "足球少年逆袭记"
 
 
-def _story_bible() -> dict:
+def _story_bible() -> dict[str, Any]:
     return {
         "title": "足球少年逆袭记",
         "logline": "被青训队抛弃的少年重返绿茵场",
@@ -77,7 +78,7 @@ def _story_bible() -> dict:
     }
 
 
-def _outline() -> dict:
+def _outline() -> dict[str, Any]:
     return {
         "arc_summary": "从低谷到逆袭的三幕结构",
         "episodes": [
@@ -98,7 +99,7 @@ def _outline() -> dict:
     }
 
 
-def _script(episode_number: int, title: str) -> dict:
+def _script(episode_number: int, title: str) -> dict[str, Any]:
     return {
         "episode_number": episode_number,
         "title": title,
@@ -120,7 +121,7 @@ def _script(episode_number: int, title: str) -> dict:
     }
 
 
-def _evaluation() -> dict:
+def _evaluation() -> dict[str, Any]:
     return {
         "episode_number": 1,
         "overall_score": 82.5,
@@ -153,7 +154,7 @@ def _evaluation() -> dict:
     }
 
 
-def _revision() -> dict:
+def _revision() -> dict[str, Any]:
     return {
         "episode_number": 1,
         "operations": [
@@ -171,7 +172,7 @@ def _revision() -> dict:
     }
 
 
-def _data(**overrides) -> dict:
+def _data(**overrides: Any) -> dict[str, Any]:
     data = {
         "story_bible": _story_bible(),
         "outline": _outline(),
@@ -183,7 +184,7 @@ def _data(**overrides) -> dict:
     return data
 
 
-def _export(kinds, data=None) -> str:
+def _export(kinds: list[str], data: dict[str, Any] | None = None) -> str:
     return build_export_markdown(
         project_title=_DOC_TITLE,
         exported_at="2026-08-16T10:00:00+00:00",

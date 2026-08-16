@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from typing import Any
 
 from docx import Document
 
@@ -48,8 +49,11 @@ def _sample_markdown() -> str:
     )
 
 
-def _reopen_document(data: bytes) -> Document:
-    """用 python-docx 重新打开生成的字节流（模拟用户打开 .docx）。"""
+def _reopen_document(data: bytes) -> Any:
+    """用 python-docx 重新打开生成的字节流（模拟用户打开 .docx）。
+
+    返回 Any：python-docx 的 Document 是工厂函数，无法用作 mypy 类型。
+    """
     return Document(BytesIO(data))
 
 
@@ -67,7 +71,7 @@ class TestDocxContent:
     def test_heading_styles(self) -> None:
         """一级 / 二级标题使用 Word 标题样式。"""
         doc = markdown_to_docx(_sample_markdown())
-        styles = [p.style.name for p in doc.paragraphs if p.text.strip()]
+        styles = [p.style.name if p.style else "" for p in doc.paragraphs if p.text.strip()]
         assert "Heading 1" in styles
         assert "Heading 2" in styles
         assert styles[0] == "Heading 1", "文档抬头应为 Heading 1"
@@ -95,7 +99,11 @@ class TestDocxPagination:
     def test_h1_page_break_except_first(self) -> None:
         """首个标题不强制分页；其后的一级标题均 page_break_before。"""
         doc = markdown_to_docx(_sample_markdown())
-        h1s = [p for p in doc.paragraphs if p.style.name == "Heading 1" and p.text.strip()]
+        h1s = [
+            p
+            for p in doc.paragraphs
+            if (p.style.name if p.style else "") == "Heading 1" and p.text.strip()
+        ]
         assert len(h1s) >= 2
         # 第一个（文档抬头）不分页
         assert h1s[0].paragraph_format.page_break_before is not True

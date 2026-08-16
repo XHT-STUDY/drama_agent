@@ -107,6 +107,7 @@ class TestExportAPI:
         )
         items = arts.json()["items"]
         assert items, "导出完成后应存在 export_file Artifact"
+        assert isinstance(items[0], dict)
         return items[0]
 
     # ---- 正常导出 + 下载 ----
