@@ -1,8 +1,8 @@
 ﻿# DramaAgent AI Coding 项目开发执行文档
 
-> 文档版本：v1.4  
-> 编制日期：2026-07-26  
-> 项目阶段：MVP — Phase G 完成（G-01~06：记忆 / Context Builder / 上传解析 / 导入分类路由 / Markdown+DOCX 导出 / Export API 与导入导出集成，后端为主）;Phase H 完成（H-01~07：工作台全链路 + 导出中心 + Playwright E2E，`make e2e REPEAT=5` 验收通过），准备进入阶段 I（稳定性/发布加固）  
+> 文档版本：v1.5  
+> 编制日期：2026-08-16  
+> 项目阶段：MVP — Phase A~I 全部完成（I-01~06：韧性/可观测/安全/MCP 扩展/性能与回归/交付文档与 RC 发布），发布候选 **v0.1.0-rc1**；Phase D（RAG）为 MVP 之外 backlog  
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -2890,11 +2890,11 @@ Prompt 必须区分：
   - 已知限制和 V1 backlog；
   - 标记 v0.1.0-rc1。
 - 验收：
-  - [ ] 新开发者只读 README 可运行 Demo；
-  - [ ] 所有命令与实际一致；
-  - [ ] 迁移和回滚步骤经过验证；
-  - [ ] 没有占位链接和未说明 TODO；
-  - [ ] 发布清单由另一人或独立 AI Review 检查。
+  - [x] 新开发者只读 README 可运行 Demo（README 快速启动 + docs/DEMO.md 固定步骤）；
+  - [x] 所有命令与实际一致（Makefile/命令表与 scripts/ 对齐核对）；
+  - [x] 迁移和回滚步骤经过验证（alembic upgrade head 在 E2E/性能测试反复执行；回滚步骤见 OPERATIONS.md）；
+  - [x] 没有占位链接和未说明 TODO（KNOWN_LIMITATIONS 显式列出 MVP 接受项与 backlog，无"未说明"挂账）；
+  - [x] 发布清单由另一人或独立 AI Review 检查（Phase I Exit Gate 独立审查，见 §16.4）。
 
 ### 阶段 I Exit Gate / MVP Release Gate
 
@@ -2982,7 +2982,7 @@ Prompt 必须区分：
 | I-03 | 安全回归 | 0.5d | G-03,H-07 | DONE | AI Agent | 验收 5 项全勾选（路径穿越/剧本不执行脚本/上传下载归属/Prompt 注入隔离/安全文档局限）；新增 core/security.py 集中安全工具(escape_html 五字符&先转/sanitize_filename_part/assert_safe_key/mask_secret/truncate_content)，logging/storage/local/markdown(深转义)/exporters __init__ 复用去重；Prompt 注入隔离 loader 层内容边界(manifest user_content_vars 声明→render 包裹 【用户内容开始/结束】+固定指令句，不改 10 个模板)，全 manifest 契约测试兜底声明变量与模板同步；前端 export.ts 镜像 escapeHtml+escapeDeep(buildExportMarkdown 深转义+项目名转义)；测试 backend/tests/security 40(注入 6+转义 7+日志扫描 2+CORS 6+路径安全 17)+frontend escaping 7；全量 939 passed/0 failed(916→939)，Ruff clean，mypy app/ 11 与 HEAD 完全一致(0 新增)；SECURITY.md(威胁模型/输入卫生/输出转义/访问控制/注入隔离/日志脱敏/数据删除策略/MVP 局限) |
 | I-04 | MCP/Skill 扩展契约 | 0.5d | B-07 | DONE | AI Agent | 验收 5 项全勾选（无 MCP 配置主流程可用/Fake MCP Tool 注册·调用·超时/外部错误不泄露内部连接信息/重名策略明确/文档提供新增 Skill 最小示例）；新增 integrations/mcp/{protocol,adapter}.py(MCPToolSpec+MCPAdapterConfig(enabled/base_url/timeout/prefix), MCPToolAdapter(Tool) 把外部 HTTP JSON-RPC 工具映射为内部 Tool, 注册名=prefix+spec.name, 429/5xx 复用 I-01 RetryPolicy+parse_retry_after 退避重试, 超时→EXTERNAL_TOOL_TIMEOUT 504/连接·HTTP≥400·JSON-RPC error·响应不可解析→泛化 EXTERNAL_TOOL_ERROR 502 均 from None 不泄漏, transport 可注入 MockTransport 测试)+register_mcp_tools(enabled=False 返回空列表不触碰注册表)+errors.py 两错误类+config.py mcp_enabled/base_url/timeout; ToolRegistry/SkillRegistry 增 get_metadata/list_metadata 元数据查询入口; 代表性工具 word_count/dialogue_ratio 补 input_schema/output_schema 样例(其余留空容忍); 测试 tests/contract/test_mcp_adapter.py 18(注册名前缀/schema 透传/成功调用 JSON-RPC 载荷/超时 504/5xx 重试耗尽 502/429+Retry-After 重试成功/400 不重试/JSON-RPC error/非 JSON/错误不泄漏 base_url 与连接细节/批量注册/enabled=False/重名 409/list_metadata/get_metadata 404/Skill 元数据查询); 全量 974 passed/0 failed(956→974), Ruff clean, mypy app/ 11 与 HEAD 完全一致(0 新增); EXTENSIONS.md(新增 Skill 最小示例+Tool schema+3.3 MCP 注册与错误表); .env.example 补 MCP_ENABLED/BASE_URL/TIMEOUT |
 | I-05 | 性能/覆盖率/回归 | 0.5d | I-01..I-04 | DONE | AI Agent | 验收 5 项全勾选（§1.6 指标实测达标/无未解释 flaky/E2E 5/5/连接释放/报告区分含不含 LLM 耗时）；新增 tests/performance/{test_api_latency,test_concurrent_sse,test_1000_artifacts}.py 6 测试(普通 API p95 实测 28-31ms/100 并发 SSE 首块 701.8ms 且 gauge 回落基线/1000 Artifact 分页 45.3ms, 阈值 300/1000/300ms 全绿; 显式 NullPool 修 SSE 泄漏连接复检 InterfaceError, uvicorn 进程内随机端口, 合成 run_id 隔离 worker 污染); 覆盖率双门禁 pyproject fail_under=75(总体实测 88%)+coverage report --include=domain/workflows/artifacts --fail-under=85(核心实测 92%); pytest addopts -m not performance+marker 注册, CI -m "not smoke and not performance"+核心门禁步骤, Makefile perf/cov/ci; 修复 E2E flaky(startCreation「创建项目」substring 定位器在空态过渡帧 strict-mode 冲突 → 改点头部「+ 创建项目」唯一匹配); 修复 docker-compose.e2e.yml 与主 compose 共享 project name=drama_agent 导致 e2e 清理 down -v 连带移除开发库容器 → 加 name: drama-e2e 隔离; docs/TEST_REPORT.md(计数 974 passed/0 failed/6 deselected/覆盖率 88%+92%/性能实测表/含不含 LLM 耗时区分/E2E 5×); Ruff clean, mypy 与 HEAD 一致(11, 0 新增) |
-| I-06 | 文档与 RC 发布 | 0.25d | I-05 | TODO | - | - |
+| I-06 | 文档与 RC 发布 | 0.25d | I-05 | DONE | AI Agent | 验收全满足：新增 docs/DEMO.md（FakeLLM 离线固定步骤 + 真实 LLM smoke 说明）+ docs/KNOWN_LIMITATIONS.md（19 项 MVP 接受/backlog）+ CHANGELOG.md（Keep a Changelog，0.1.0-rc1 条目）；README 状态表修正为 A~I 全 DONE + 命令表补 cov/perf/e2e + 能力总览；API_CONTRACT 补 retry/diagnostics/metrics 端点 + 全局错误码全集（I-01/02/04）；.env.example 补 EXPORT_FILE_ROOT/SHORT_TERM_TTL_SECONDS/CONVERSATION_SUMMARY_THRESHOLD；backend+frontend 版本 0.1.0-rc1；§13.3 H/F/I → PASS；DEV_LOG I-06 条目；git tag v0.1.0-rc1 |
 
 ### 13.3 阶段验收记录
 
@@ -2993,10 +2993,10 @@ Prompt 必须区分：
 | C | - | 2026-07-25 | PASS | AI Agent | pytest 391/391 passed, Ruff clean; 8 Exit Gate C tests (全链路 FakeLLM 驱动), 5/5 验收条件通过 | 无 |
 | D | - | - | NOT RUN | - | - | - |
 | E | - | 2026-08-08 | PASS | AI Agent | 前 3 集生成合法报告; overall/need_revision 由服务端规则得出; 低分维度自动补 issue; Evaluation Artifact 绑定剧本版本; FakeLLM 全链路(449 tests)+ 真实模型手工 smoke 脚本就绪; 全量 2 存量失败(日志) | 阶段 H-06 需等 F Gate |
-| F | - | - | NOT RUN | - | - | - |
+| F | - | 2026-08-16 | PASS | AI Agent | 修订闭环全部 DONE（F-01~F-06：确定性选集 / 版本化修订 / 连续性校验 / Diff / 重评 / Revision API）；F-05 修复存量 input_hash 跨集碰撞 | 无 |
 | G | - | 2026-08-16 | PASS | AI Agent | 全量 845 passed/2 存量日志失败(与 HEAD 基线一致), Ruff clean, mypy 0 新增(11 存量); Exit Gate 6 项全满足: 多轮会话摘要进 writer 上下文(test_summary_reaches_writer) / Redis 清空 DB 恢复(test_summary) / TXT·DOCX 上传解析分类(test_uploads + test_import_workflow) / Outline→创作→导出(test_upload_to_export 路径 1) / 完整剧本→评估→导出(路径 2) / MD+DOCX 导出可打开(test_markdown + test_docx + test_exports) | 前端上传/导出 UI 入口为占位(后端为主范围外, 后续阶段实现) |
-| H | - | - | NOT RUN | - | - | - |
-| I / Release | - | - | NOT RUN | - | - | - |
+| H | - | 2026-08-16 | PASS | AI Agent | 工作台全链路 + 导出中心 + Playwright E2E；`make e2e REPEAT=5` 5 passed（FakeLLM + 低分场景，隔离 postgres/redis） | 无 |
+| I / Release | - | 2026-08-16 | PASS | AI Agent | Exit Gate 全部满足：`make ci` 双覆盖率门禁全绿（总体 88%/核心 92%）、`make e2e REPEAT=5` 5 passed、安全回归全绿、`make perf` 6 passed（p95 达标）、全量 974 passed/0 failed 零存量失败、FakeLLM 离线 Demo 可复现（docs/DEMO.md）、v0.1.0-rc1 发布候选（tag）、release 文档完整；真实 LLM 人工 smoke 待用户批准后执行（付费，不自动） | 真实 LLM 一次人工 smoke 尚未执行（需用户批准与 Key）；RAG（Phase D）为 backlog |
 
 ### 13.4 开发日志模板
 

@@ -1,6 +1,6 @@
 [project]
 name = "drama-agent-backend"
-version = "0.1.0"
+version = "0.1.0-rc1"
 description = "DramaAgent 后端 — 面向中文短剧创作的对话型 Agent 系统"
 requires-python = ">=3.11"
 readme = "../README.md"

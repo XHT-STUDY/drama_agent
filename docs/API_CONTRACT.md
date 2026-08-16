@@ -1,7 +1,7 @@
 # DramaAgent API 契约文档
 
-> 版本：v0.1.0  
-> 最后更新：2026-07-25（C-08 Creation API 纵切完成）
+> 版本：v0.1.0-rc1  
+> 最后更新：2026-08-16（Phase I 发布候选：retry / diagnostics / metrics + 错误码全集）
 
 ## 概述
 
@@ -28,6 +28,25 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 ```
 
 全部错误响应均包含 `request_id` 字段，可用于日志追踪。
+
+### 全局错误码全集（I-01 / I-02 / I-04 补充）
+
+| 状态码 | code | 含义 | 触发 |
+|--------|------|------|------|
+| 400 | `VALIDATION_ERROR` | 请求体 / 查询参数校验失败 | Pydantic 校验 |
+| 404 | `NOT_FOUND` | 资源不存在 | 项目 / Run / Artifact 等 |
+| 409 | `RUN_NOT_RETRYABLE` | Run 处于 `completed` / `cancelled` 终态，不可重试 | `POST /runs/{id}/retry` |
+| 409 | `RUN_ALREADY_ACTIVE` | Run 正在执行（`queued` / `running`），不可重复重试 | `POST /runs/{id}/retry` |
+| 409 | `RUN_BUDGET_EXCEEDED` | 触发 per-run 硬预算（调用数 / Token） | LLM 调用 |
+| 409 | `TOOL_ALREADY_REGISTERED` | 工具 / Skill 重名注册冲突 | 扩展注册 |
+| 413 | `FILE_TOO_LARGE` | 上传超过 10 MB | 上传 |
+| 415 | `INVALID_FILE_TYPE` | 仅 TXT / DOCX | 上传 |
+| 422 | `FILE_PARSE_FAILED` | 文件解析失败（含宏 / 加密文档） | 上传 |
+| 502 | `EXTERNAL_TOOL_ERROR` | 外部 MCP 工具调用失败（不泄漏内部连接信息） | MCP |
+| 504 | `EXTERNAL_TOOL_TIMEOUT` | 外部 MCP 工具调用超时 | MCP |
+| 500 | `INTERNAL_ERROR` | 未分类错误 | 兜底 |
+
+**Run 失败时的 `error_code`**（落库到 WorkflowRun，`GET /runs/{id}` 返回）：`RUN_BUDGET_EXCEEDED` / `RUN_CANCELLED` / `LLM_TIMEOUT` / `LLM_RATE_LIMITED` / `LLM_PROVIDER_ERROR` / `LLM_INVALID_OUTPUT` / `EXTERNAL_TOOL_ERROR` 等，见 [backend/app/llm/retry.py](backend/app/llm/retry.py) 与 [backend/app/workflows/checkpoint.py](backend/app/workflows/checkpoint.py)。
 
 ## 端点
 
@@ -126,8 +145,16 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 | POST | `/projects/{id}/runs` | 创建 Run |
 | GET | `/projects/{id}/runs` | 列出项目的 Run |
 | GET | `/runs/{id}` | 查询 Run 状态 |
-| POST | `/runs/{id}/cancel` | 取消 Run |
+| POST | `/runs/{id}/cancel` | 取消 Run（协作式，I-01） |
+| POST | `/runs/{id}/retry` | 重试失败的 Run（从 checkpoint 恢复，I-01） |
+| GET | `/runs/{id}/diagnostics` | Run 运行诊断（节点时间线 / LLM 统计，I-02） |
 | GET | `/runs/{id}/events` | SSE 事件流 |
+
+### 运维（I-02）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/metrics` | Prometheus 指标（`metrics_enabled=false` 时 404；不含真实密钥） |
 
 ### 修订（F-06）
 
@@ -247,6 +274,65 @@ data: {"event_id":"...","run_id":"...","sequence":1,"type":"run.created","payloa
 ### 断线重连
 
 传入 `Last-Event-ID` header 后，服务端从 PostgreSQL 补发之后的所有事件。
+
+## POST /runs/{id}/retry — 重试失败的 Run（I-01）
+
+### 请求
+
+```
+POST /api/v1/runs/{run_id}/retry
+```
+
+无请求体。
+
+### 响应
+
+**200 OK** — Run 回到 `queued` 并重新调度后台 Worker：
+
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "action": "create_script",
+  "status": "queued",
+  "error_code": null,
+  "error_detail": null
+}
+```
+
+### 工作机制
+
+1. 仅 `failed` / `needs_review` 状态可重试；`completed` / `cancelled` → `409 RUN_NOT_RETRYABLE`，`queued` / `running` → `409 RUN_ALREADY_ACTIVE`。
+2. 以 `state_summary`（completed_nodes / input_hashes / status 快照）为初始状态重放：已完成节点早退 → **不重调 LLM、不重复创建 Artifact、不重复推进 revision_round**（I-01 验收"恢复不重复成功节点"）。
+3. 重试前清空上一轮 `error_code` / `error_detail`。
+
+## GET /runs/{id}/diagnostics — Run 运行诊断（I-02）
+
+### 请求
+
+```
+GET /api/v1/runs/{run_id}/diagnostics
+```
+
+### 响应（200）
+
+聚合事件表输出节点时间线 / LLM 调用统计 / 失败信息（无新增存储）：
+
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "total_duration_ms": 42315,
+  "nodes": [
+    {"node_name": "normalize", "status": "completed", "duration_ms": 820},
+    {"node_name": "story_bible", "status": "completed", "duration_ms": 14100}
+  ],
+  "llm_calls": 14,
+  "llm_tokens": {"prompt": 18420, "completion": 5201},
+  "errors": [{"error_code": "LLM_TIMEOUT", "node_name": "write_episode"}]
+}
+```
+
+`errors` 仅在失败时非空；配合 `GET /metrics`（Prometheus 文本）满足可观测需求（详见 [OPERATIONS.md](OPERATIONS.md)）。
 
 ## POST /projects/{id}/revisions — 发起修订
 

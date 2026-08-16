@@ -3012,3 +3012,47 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - **I-06 交付文档、Demo 数据与发布候选**：OPERATIONS/SECURITY/EXTENSIONS（I-02/03/04 已写）之外补 DEMO/KNOWN_LIMITATIONS/CHANGELOG + README/API_CONTRACT/.env.example 更新 + pyproject 版本 `0.1.0-rc1` + git tag + §13.3 H→PASS、I→PASS + CLAUDE.md 进度修正。
+
+## I-06 交付文档、Demo 数据与发布候选（2026-08-16）
+
+### 做了什么
+
+新增文档：
+- `docs/DEMO.md`：FakeLLM 离线固定演示步骤（自动化 `make e2e REPEAT=1` / 手动工作台全链路 / 导入演示 / 真实 LLM smoke 说明 / 结束核对清单）。
+- `docs/KNOWN_LIMITATIONS.md`：19 项明确标注「MVP 接受」或「backlog」的限制（RAG 未实现 / 单用户无认证 / 单轮修订 / 进程内预算与幂等 / 内存级 SSE gauge 等）+ V1 backlog 8 条 + 数据删除策略。
+- `CHANGELOG.md`：Keep a Changelog 风格，`[0.1.0-rc1]` 完整条目（Phase I Added/Changed/Fixed/Docs/Security）+ `[0.0.x]` 开发期 A~H 概要。
+
+更新：
+- `README.md`：状态表 A~I 全 DONE（Phase D 标记 backlog）；命令表补 `make cov`/`make perf`/`make e2e` 并修正 `make ci` 说明；新增「已交付能力总览」覆盖 I-01~I-04 能力。
+- `docs/API_CONTRACT.md`：Run 表补 retry/diagnostics 端点 + 新增运维端点 `GET /metrics`；全局错误码全集（含 RUN_NOT_RETRYABLE / RUN_ALREADY_ACTIVE / RUN_BUDGET_EXCEEDED / EXTERNAL_TOOL_* 等）；retry / diagnostics 端点详情 + Run 失败 `error_code` 说明。
+- `.env.example`：补 `EXPORT_FILE_ROOT` / `SHORT_TERM_TTL_SECONDS` / `CONVERSATION_SUMMARY_THRESHOLD`（此前仅代码默认值，配置未暴露）。
+- `backend/pyproject.toml` + `frontend/package.json`：版本 `0.1.0` → `0.1.0-rc1`。
+- `docs/DEV_PLAN.md`：header v1.5（A~I 全完成，v0.1.0-rc1）；I-06 任务卡验收 5 项全勾选；§13.2 I-06 DONE；§13.3 H/F/I → PASS（附证据）。
+- `CLAUDE.md`：当前进度修正为 Phase A~I 全 DONE + v0.1.0-rc1 + 待办真实 LLM smoke。
+
+### 为什么这么做
+
+- **DEMO 与 KNOWN_LIMITATIONS 分离**：Demo 是"怎么跑通"，KNOWN_LIMITATIONS 是"接受什么"，避免把限制写进教程造成误导；每项限制标注类型（MVP 接受 / backlog），发布说明可直接引用。
+- **README 面向新开发者**：状态表不再逐阶段列测试数（会过时），改为能力总览 + 指向 TEST_REPORT/DEV_PLAN；快速启动保持 6 步不动。
+- **API_CONTRACT 错误码集中化**：此前错误码散落在各端点卡内，Phase I 新增了 ~8 个全局错误码；集中成「全局错误码全集」表，单点维护。
+- **.env.example 补齐**：三个配置字段此前只有 `config.py` 代码默认值，`.env` 无法覆盖；补齐后"示例即文档"成立。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `make e2e REPEAT=5` | 5 passed（DEMO.md 自动化路径） |
+| 全量 `pytest` | 974 passed / 0 failed |
+| `make perf` | 6 passed |
+| `make cov` | 总体 88% / 核心 92% 双门禁通过 |
+| git tag `v0.1.0-rc1` | 打于 Phase I 收尾提交 |
+
+### 学到了什么
+
+1. **发布候选文档的分层**：教程（DEMO）/ 限制（KNOWN_LIMITATIONS）/ 变更（CHANGELOG）/ 验证（TEST_REPORT）职责分离，各解决一个读者问题；限制文档"接受什么"比"有什么 bug"更重要。
+2. **配置暴露与示例同步**：config.py 新增字段后若不同步 .env.example，使用者无法发现可配置项——"代码默认值"不等于"可配置"，示例文件是配置的 UI。
+3. **阶段 Gate 记录要补历史**：§13.3 的 F/H 行长期 NOT RUN 但实际已 PASS（F-01~06、H-01~07 均 DONE）；收尾时把事实与 tracker 对齐，比等"正式跑 Gate"更准确。
+
+### 下一步
+
+- **Phase I Exit Gate**：`make ci` 双覆盖率门禁 + `make e2e REPEAT=5` + 安全回归 + `make perf` 已全绿（I-05/I-06 期间实测）；剩「真实 LLM 一次人工 smoke」待用户批准（付费，不自动执行）与独立审查（DEV_PLAN §16.4）。

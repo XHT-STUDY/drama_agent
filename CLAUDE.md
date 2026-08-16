@@ -82,10 +82,11 @@ make doctor       # 环境健康检查(DB、Redis、配置)
 
 ## 当前进度
 
-- **已验收**:Phase A(工程基线)、B(后端基础设施)、C(创作能力)、E(评估)、F(修订)全部 DONE
-- **G 阶段全部 DONE(G-01~06)**:短期/中期/项目记忆 + Context Builder + 安全上传(TXT/DOCX Parser) + 导入分类路由 + Markdown/DOCX Exporter + Export API 与导入导出集成(后端为主;上传 Outline→创作、上传完整剧本→评估 两条路径端到端;导出下载三层校验)
-- **H 阶段全部 DONE(H-01~07)**:前端工作台 + 导出中心 + Playwright E2E 全链路闭环。`make e2e REPEAT=5` 验收通过(FakeLLM + 低分场景,隔离 postgres/redis)
-- **未开始**:Phase D(RAG)、I(发布加固)
+- **Phase A~I 全部 DONE**,发布候选 **v0.1.0-rc1**(git tag `v0.1.0-rc1`)
+- **I-01~I-06 DONE**:LLM 统一重试 + per-run 预算 + 协作式取消 + checkpoint 恢复(不重调已完成节点);Prometheus 指标 + Run 诊断接口 + 日志脱敏;Prompt 注入内容边界隔离 + 集中安全工具;MCP/Skill 扩展契约;性能/覆盖率/回归(`make perf`/`make cov` 双门禁,E2E 5×);交付文档(DEMO/KNOWN_LIMITATIONS/CHANGELOG/TEST_REPORT + README/API_CONTRACT/.env.example 同步,版本 0.1.0-rc1)
+- **全量验证**(docs/TEST_REPORT.md):后端 974 passed/0 failed,总体覆盖率 88%(≥75%)、核心 92%(≥85%),性能 p95 达标,`make e2e REPEAT=5` 5 passed
+- **未开始**:Phase D(RAG)— MVP 之外 backlog
+- **待办(非自动)**:真实 LLM 一次人工 smoke(需用户批准 + 付费 Key)
 
 最新进度以 [docs/DEV_PLAN.md](docs/DEV_PLAN.md) §13 进度总表为准。
 

@@ -1,6 +1,6 @@
 {
   "name": "drama-agent-frontend",
-  "version": "0.1.0",
+  "version": "0.1.0-rc1",
   "private": true,
   "description": "DramaAgent 前端工作台",
   "scripts": {
