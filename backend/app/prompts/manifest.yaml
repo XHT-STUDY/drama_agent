@@ -90,3 +90,12 @@ prompts:
     owner: summarizer
     template: episode_summary.md
     changelog: "初始版本：生成单集摘要，更新人物状态与伏笔追踪"
+
+  # ---- 会话摘要（中期记忆） ----
+  - name: conversation_summary
+    version: "1.0.0"
+    input_schema: ConversationSummaryInput
+    output_schema: ConversationSummaryBody
+    owner: summarizer
+    template: conversation_summary.md
+    changelog: "初始版本：把超出短期窗口的旧会话消息滚动摘要为可读创作背景 (G-01)"

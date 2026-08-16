@@ -59,3 +59,60 @@ class SummaryOutput(BaseModel):
         default_factory=list,
         description="本集时间线事件，每项含 event_id/description/order_in_episode",
     )
+
+
+# ========================================================================
+# 会话摘要模型（G-01 中期记忆）
+# ========================================================================
+
+
+class ConversationSummaryBody(BaseModel):
+    """会话摘要 LLM 输出体（G-01）。
+
+    只含 LLM 生成的字段；covered_from/to 等确定性字段由
+    ConversationSummaryManager 服务端回填（与 EvaluationReport 的
+    overall/need_revision 服务端回填模式一致）。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    summary: str = Field(..., description="会话摘要文本（150 字以内）", min_length=1)
+    topics: list[str] = Field(
+        default_factory=list, description="本次摘要覆盖内容的主题标签列表"
+    )
+
+
+class ConversationSummary(BaseModel):
+    """会话摘要 Artifact 内容（G-01）。
+
+    记录摘要覆盖的消息序号范围（covered_from/to），供后续创作读取
+    —— 项目记忆以"摘要 Artifact 指针"形式存在，不复制全文。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    conversation_id: str = Field(..., description="所属会话 ID")
+    summary: str = Field(..., description="会话摘要文本", min_length=1)
+    topics: list[str] = Field(
+        default_factory=list, description="本次摘要覆盖内容的主题标签列表"
+    )
+    covered_from_sequence: int = Field(
+        ..., description="本段摘要覆盖的起始消息序号", ge=1
+    )
+    covered_to_sequence: int = Field(
+        ..., description="本段摘要覆盖的结束消息序号", ge=1
+    )
+    message_count: int = Field(..., description="本段摘要覆盖的消息条数", ge=0)
+
+
+class ConversationSummaryInput(BaseModel):
+    """会话摘要 Prompt 输入模型（G-01）—— 供 manifest Schema 校验。"""
+
+    model_config = {"extra": "forbid"}
+
+    conversation_transcript: str = Field(
+        ..., description="会话消息逐条转录文本（含序号与角色）"
+    )
+    message_count: str = Field(
+        default="", description="转录消息条数（字符串，供模板渲染）"
+    )

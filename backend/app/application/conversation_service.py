@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +25,8 @@ from app.domain.conversation import (
     MessageListResponse,
     MessageResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---- 转换函数 ----
 
@@ -119,7 +123,19 @@ class MessageService:
 
     提供消息的追加和按会话分页查询。
     追加消息时自动分配递增 sequence，并校验跨项目写入保护。
+
+    G-01 挂载点：通过构造注入可选的短期记忆存储与摘要管理器
+    （默认 None 即 no-op，保持既有调用与单测不变）。
     """
+
+    def __init__(
+        self,
+        *,
+        short_term_store: Any = None,
+        summary_manager: Any = None,
+    ) -> None:
+        self._short_term = short_term_store
+        self._summary = summary_manager
 
     async def append(
         self,
@@ -160,6 +176,34 @@ class MessageService:
         )
         msg_repo = BaseRepository(db, Message)
         saved = await msg_repo.add(message)
+
+        # G-01 记忆挂载：DB 落库后 → 短期记忆写入 → 必要时触发会话摘要。
+        # 均为 best effort——记忆失败绝不阻断消息保存（验收）。
+        if self._short_term is not None:
+            try:
+                await self._short_term.push(
+                    db,
+                    conversation_id,
+                    role=data.role,
+                    content=data.content,
+                    sequence=next_sequence,
+                )
+            except Exception:
+                logger.exception(
+                    "短期记忆写入失败（conversation=%s），消息已落库",
+                    conversation_id,
+                )
+        if self._summary is not None:
+            try:
+                await self._summary.maybe_summarize(
+                    db, conversation_id, message_count=next_sequence
+                )
+            except Exception:
+                logger.exception(
+                    "会话摘要生成失败（conversation=%s），不影响消息保存",
+                    conversation_id,
+                )
+
         return _msg_to_response(saved)
 
     async def list_by_conversation(

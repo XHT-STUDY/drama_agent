@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     upload_max_bytes: int = 10_485_760  # 10 MB
 
+    # ---- 记忆（G-01） ----
+    short_term_ttl_seconds: int = 7 * 24 * 3600  # 短期记忆 Redis 缓存 TTL（秒，滑动窗口）
+    conversation_summary_threshold: int = 24  # 会话消息数达到该值整数倍时生成摘要
+
     # ---- CORS ----
     # 逗号分隔的允许来源列表；在 .env 中写作 "CORS_ORIGINS=*" 或 "CORS_ORIGINS=host1,host2"
     cors_origins: str = "*"

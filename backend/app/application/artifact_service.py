@@ -25,6 +25,7 @@ from app.domain.outline import EpisodeOutlineSet
 from app.domain.revision import ContinuityCheckResult, RevisionPlan
 from app.domain.script import ScriptDraft
 from app.domain.story_bible import StoryBible
+from app.domain.summary import ConversationSummary
 
 # ArtifactType → Pydantic Schema 映射
 _SCHEMA_MAP: dict[str, Any] = {
@@ -35,6 +36,7 @@ _SCHEMA_MAP: dict[str, Any] = {
     ArtifactType.REVISION_PLAN: RevisionPlan,
     ArtifactType.CONTINUITY_CHECK: ContinuityCheckResult,
     ArtifactType.CONTINUITY_STATE: ContinuityState,
+    ArtifactType.CONVERSATION_SUMMARY: ConversationSummary,
 }
 
 
