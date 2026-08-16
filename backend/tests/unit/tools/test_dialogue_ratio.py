@@ -1,6 +1,8 @@
 """DialogueRatioTool 单元测试 (C-05)."""
 
 
+from typing import Any
+
 from app.tools.dialogue_ratio import (
     DialogueRatioTool,
     compute_dialogue_ratio,
@@ -33,7 +35,7 @@ class TestComputeFunctions:
 
     def test_count_dialogue_chars_empty(self) -> None:
         """无对白."""
-        scenes: list[dict] = []
+        scenes: list[dict[str, Any]] = []
         assert count_dialogue_chars(scenes) == 0
 
     def test_compute_dialogue_ratio(self) -> None:

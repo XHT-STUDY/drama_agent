@@ -13,6 +13,7 @@ MockTransport 由 httpx 提供，进程内完成请求/响应，不发起真实�
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -32,7 +33,7 @@ _BASE_URL = "http://mcp.test.local"
 
 def _spec(name: str = "web_search", **kwargs: Any) -> MCPToolSpec:
     """构造一个最小外部工具描述。"""
-    defaults = {
+    defaults: dict[str, Any] = {
         "name": name,
         "description": f"外部工具 {name}",
         "input_schema": {
@@ -48,7 +49,7 @@ def _spec(name: str = "web_search", **kwargs: Any) -> MCPToolSpec:
 
 def _config(**kwargs: Any) -> MCPAdapterConfig:
     """构造 MCP 连接配置（默认开启）。"""
-    defaults = {
+    defaults: dict[str, Any] = {
         "enabled": True,
         "base_url": _BASE_URL,
         "timeout_seconds": 5.0,
@@ -63,9 +64,9 @@ def _fast_retry() -> RetryPolicy:
     return RetryPolicy(base_delay=0.001, factor=1.0, max_retries=1, max_delay=0.01)
 
 
-def _handler(response: httpx.Response) -> httpx.Response:
+def _handler(response: httpx.Response) -> Callable[[httpx.Request], httpx.Response]:
     """返回固定响应的同步 handler（配合 MockTransport）。"""
-    return response
+    return lambda _request: response
 
 
 # ========================================================================

@@ -93,9 +93,12 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 # 后续阶段随模块增加逐步收紧 ignore
+# strict=true 会同时打开 disallow_incomplete_defs（部分注解的 def 也报 no-untyped-def），
+# 测试文件允许注解不完整，需一并关闭，否则 overrides 形同虚设。
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
+disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
 module = ["asyncpg", "pgvector.*", "yaml"]

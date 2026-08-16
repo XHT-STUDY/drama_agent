@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from app.core.security import assert_safe_key, sanitize_filename_part
@@ -44,12 +46,12 @@ class TestAssertSafeKey:
 
 
 class TestLocalFileStoreTraversal:
-    async def test_open_rejects_path_traversal(self, tmp_path) -> None:
+    async def test_open_rejects_path_traversal(self, tmp_path: pathlib.Path) -> None:
         store = LocalFileStore(root=str(tmp_path))
         with pytest.raises(ValueError):
             await store.open("../../etc/passwd")
 
-    async def test_save_uses_safe_server_key(self, tmp_path) -> None:
+    async def test_save_uses_safe_server_key(self, tmp_path: pathlib.Path) -> None:
         """服务端存储键为纯文件名（UUID），客户端原始文件名不入盘。"""
         store = LocalFileStore(root=str(tmp_path))
         key = await store.save(b"hello", suffix=".txt")

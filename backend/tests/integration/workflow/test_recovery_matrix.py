@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 
 from app.agents.base import BaseAgent
 from app.application.artifact_service import ArtifactService
@@ -50,8 +51,8 @@ def _load_golden(name: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if isinstance(data, dict) and "expected_output" in data:
-        return data["expected_output"]
-    return data
+        return cast(dict[str, Any], data["expected_output"])
+    return cast(dict[str, Any], data)
 
 
 def _register_golden(llm: FakeLLM, *, high_score: bool = True) -> None:
@@ -90,7 +91,7 @@ def _make_config(
     run_service: RunService,
     publisher: EventPublisher,
     user_input: str = "一个被青训队抛弃的足球少年逆袭故事",
-) -> dict[str, Any]:
+) -> RunnableConfig:
     """构建与 conftest.workflow_config 等价的运行时上下文。"""
     progress_log: list[dict[str, Any]] = []
 
@@ -306,7 +307,7 @@ class TestHardBudget:
     async def test_hard_budget_exceeded(
         self,
         db_session: Any,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
     ) -> None:
         project_id = await _make_project(db_session)
         run_id = await _make_run(db_session, project_id)

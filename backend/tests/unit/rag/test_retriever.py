@@ -16,10 +16,11 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from app.db.repositories.knowledge import KnowledgeSearchHit
+from app.db.repositories.knowledge import KnowledgeRepository, KnowledgeSearchHit
 from app.domain.retrieval import NullRetriever, RetrievalResult
 from app.rag.embedder import FakeEmbedder
 from app.rag.retriever import Retriever
@@ -72,7 +73,7 @@ class _FakeRepo:
 
 def _make_retriever(hits: list[KnowledgeSearchHit]) -> Retriever:
     return Retriever(
-        _FakeRepo(hits),
+        cast(KnowledgeRepository, _FakeRepo(hits)),
         FakeEmbedder(),
         corpus_version="mvp_v1",
     )

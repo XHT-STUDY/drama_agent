@@ -16,6 +16,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from app.core.security import sanitize_filename_part
 from app.tools.exporters.markdown import (
     EVAL_DIM_ORDER,
     build_export_filename,
@@ -25,7 +26,6 @@ from app.tools.exporters.markdown import (
     markdown_from_revision,
     markdown_from_script,
     markdown_from_story_bible,
-    sanitize_filename_part,
 )
 
 # 文档抬头固定值

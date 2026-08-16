@@ -113,7 +113,7 @@ def _should_route_after_eval(state: CreationState) -> Literal["select_revision",
     return "finalize"
 
 
-def build_creation_workflow() -> CompiledStateGraph:
+def build_creation_workflow() -> CompiledStateGraph[Any, Any, Any, Any]:
     """构建 Creation Workflow 的 LangGraph 状态图。
 
     图结构:
@@ -192,10 +192,10 @@ def build_creation_workflow() -> CompiledStateGraph:
 
 
 # 模块级单例（惰性构建）
-_workflow: CompiledStateGraph | None = None
+_workflow: CompiledStateGraph[Any, Any, Any, Any] | None = None
 
 
-def get_creation_workflow() -> CompiledStateGraph:
+def get_creation_workflow() -> CompiledStateGraph[Any, Any, Any, Any]:
     """获取已编译的 Creation Workflow 模块级单例。"""
     global _workflow
     if _workflow is None:

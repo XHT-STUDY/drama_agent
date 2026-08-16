@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -211,7 +212,7 @@ class TestPromptLoaderWithFixture:
         owner: str = "planner",
         input_schema: str = "FakeIn",
         output_schema: str = "FakeOut",
-    ) -> dict:
+    ) -> dict[str, Any]:
         """创建简短的 manifest 条目 dict（避免重复长行）。"""
         return {
             "name": name,
@@ -226,7 +227,7 @@ class TestPromptLoaderWithFixture:
     @staticmethod
     def _write_manifest(
         manifest_dir: Path,
-        prompts: list[dict],
+        prompts: list[dict[str, Any]],
     ) -> Path:
         """在指定目录写入 manifest.yaml 并返回路径。"""
         import yaml

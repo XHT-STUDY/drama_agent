@@ -18,14 +18,15 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 
 from app.application.artifact_service import ArtifactService
 from app.artifacts.store import ArtifactStore
+from app.domain.enums import DEFAULT_EVALUATION_WEIGHTS
 from app.domain.evaluation import (
-    DEFAULT_EVALUATION_WEIGHTS,
     EvaluationReport,
     compute_overall_score,
 )
@@ -48,7 +49,7 @@ _PLACEHOLDER_SCRIPT_ID = "00000000-0000-0000-0000-000000000099"
 
 
 def _load_golden(name: str) -> dict[str, Any]:
-    return json.loads((GOLDEN_DIR / f"{name}.json").read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads((GOLDEN_DIR / f"{name}.json").read_text(encoding="utf-8")))
 
 
 def _report_content(
@@ -208,7 +209,7 @@ class TestRevisionWorkflow:
     async def test_happy_path_revises_selected_episode_only(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         artifact_service: ArtifactService,
         fake_llm: FakeLLM,
     ) -> None:
@@ -247,6 +248,7 @@ class TestRevisionWorkflow:
         # 修订稿已提升为 valid（成为 ep1 最新 valid）
         new_draft_id = final_state["script_artifact_ids"]["1"]
         latest = await store.get_latest(db, test_project, "script_draft", 1)
+        assert latest is not None
         assert str(latest.id) == new_draft_id
         assert latest.status == "valid"
 
@@ -265,7 +267,7 @@ class TestRevisionWorkflow:
     async def test_round_budget_max_1_effective(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         artifact_service: ArtifactService,
         fake_llm: FakeLLM,
     ) -> None:
@@ -294,7 +296,7 @@ class TestRevisionWorkflow:
     async def test_retry_does_not_double_increment(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         artifact_service: ArtifactService,
         fake_llm: FakeLLM,
     ) -> None:
@@ -325,7 +327,7 @@ class TestRevisionWorkflow:
     async def test_continuity_failure_never_completes(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         artifact_service: ArtifactService,
         fake_llm: FakeLLM,
     ) -> None:
@@ -359,13 +361,14 @@ class TestRevisionWorkflow:
         )
         assert candidate.status == "draft"
         latest = await store.get_latest(db, test_project, "script_draft", 1)
+        assert latest is not None
         assert str(latest.id) == seed["script_artifact_ids"]["1"]
         assert latest.status == "valid"
 
     async def test_score_drop_over_5_marks_manual_review(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         artifact_service: ArtifactService,
         fake_llm: FakeLLM,
     ) -> None:
@@ -393,7 +396,7 @@ class TestRevisionWorkflow:
     async def test_no_revision_when_all_pass(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         artifact_service: ArtifactService,
         fake_llm: FakeLLM,
     ) -> None:
@@ -418,7 +421,7 @@ class TestRevisionWorkflow:
     async def test_standalone_revision_workflow(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         artifact_service: ArtifactService,
         fake_llm: FakeLLM,
     ) -> None:

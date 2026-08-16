@@ -14,9 +14,10 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 
 from app.application.artifact_service import ArtifactService
 from app.domain.evaluation import EvaluationReport
@@ -28,7 +29,7 @@ GOLDEN_DIR = Path(__file__).resolve().parents[2] / "golden"
 
 
 def _load_golden(name: str) -> dict[str, Any]:
-    return json.loads((GOLDEN_DIR / f"{name}.json").read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads((GOLDEN_DIR / f"{name}.json").read_text(encoding="utf-8")))
 
 
 def _low_score_report() -> EvaluationReport:
@@ -70,7 +71,7 @@ class TestCreationEvaluationBranch:
     async def test_high_score_finalizes(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         artifact_service: ArtifactService,
     ) -> None:
         """评估高分 → 自动走 finalize，工作流 completed。"""
@@ -96,7 +97,7 @@ class TestCreationEvaluationBranch:
     async def test_low_score_enters_auto_revision(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         artifact_service: ArtifactService,
         fake_llm: FakeLLM,
     ) -> None:

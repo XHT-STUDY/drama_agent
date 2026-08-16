@@ -12,7 +12,8 @@ from __future__ import annotations
 import json
 import logging
 
-from app.core.logging import JsonFormatter, RedactFilter, mask_secret
+from app.core.logging import JsonFormatter, RedactFilter
+from app.core.security import mask_secret
 
 
 class TestMaskSecret:

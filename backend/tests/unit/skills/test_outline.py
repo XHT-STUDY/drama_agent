@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -72,12 +73,12 @@ def creation_agent(agent: BaseAgent, skill_registry: SkillRegistry) -> CreationA
 # ========================================================================
 
 
-def _football_story_bible() -> dict:
+def _football_story_bible() -> dict[str, Any]:
     """加载足球 StoryBible golden fixture."""
     data = json.loads(
         (GOLDEN_DIR / "story_bible_valid.json").read_text(encoding="utf-8")
     )
-    return data
+    return cast(dict[str, Any], data)
 
 
 def _football_story_bible_obj() -> StoryBible:

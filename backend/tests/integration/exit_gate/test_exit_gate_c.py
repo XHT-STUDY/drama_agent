@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from httpx import AsyncClient
@@ -376,7 +376,7 @@ async def _get_latest_artifact_id(
         f"?type={artifact_type}&episode={episode}"
     )
     if resp.status_code == 200:
-        return resp.json()["id"]
+        return str(resp.json()["id"])
     return None
 
 
@@ -388,5 +388,5 @@ async def _get_links(async_client: AsyncClient, artifact_id: str) -> list[dict[s
         # API 返回 list，或者 dict 含 links 字段
         if isinstance(data, list):
             return data
-        return data.get("links", [])
+        return cast(list[dict[str, Any]], data.get("links", []))
     return []

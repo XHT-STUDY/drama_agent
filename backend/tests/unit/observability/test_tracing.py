@@ -60,7 +60,7 @@ class TestSpanContext:
 
         async def main() -> tuple[str | None, str | None]:
             results = await asyncio.gather(worker("normalize"), worker("outline"))
-            return results  # type: ignore[return-value]
+            return results
 
         a, b = asyncio.run(main())
         assert a == "normalize"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import pytest_asyncio
@@ -34,8 +34,8 @@ def _load_golden(name: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if isinstance(data, dict) and "expected_output" in data:
-        return data["expected_output"]
-    return data
+        return cast(dict[str, Any], data["expected_output"])
+    return cast(dict[str, Any], data)
 
 
 @pytest.fixture

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def _ctx() -> dict[str, Any]:
-    return get_config()["configurable"]  # type: ignore[no-any-return]
+    return get_config()["configurable"]
 
 
 async def outline_node(state: CreationState) -> dict[str, Any]:

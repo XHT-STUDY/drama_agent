@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 
 from app.application.artifact_service import ArtifactService
 from app.application.run_service import RunService
@@ -31,8 +32,8 @@ def _load_golden(name: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if isinstance(data, dict) and "expected_output" in data:
-        return data["expected_output"]
-    return data
+        return cast(dict[str, Any], data["expected_output"])
+    return cast(dict[str, Any], data)
 
 
 def _make_initial_state(
@@ -76,7 +77,7 @@ class TestFullCreationWorkflow:
     async def test_complete_run_generates_all_artifacts(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
     ) -> None:
         """完整流程：normalize→retrieve→story_bible→outline→write→finalize。"""
         run_id = str(uuid.uuid4())
@@ -139,7 +140,7 @@ class TestFullCreationWorkflow:
     async def test_state_contains_no_full_text(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
     ) -> None:
         """State 不含 Script/StoryBible 全文，仅存储 Artifact ID。"""
         project_id = str(test_project)
@@ -167,7 +168,7 @@ class TestFullCreationWorkflow:
     async def test_artifact_dependency_chain(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
     ) -> None:
         """每个 Artifact 的 source_artifact_ids 正确记录依赖链。"""
         run_svc: RunService = workflow_config["configurable"]["run_service"]
@@ -201,7 +202,7 @@ class TestFullCreationWorkflow:
     async def test_progress_events_emitted(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
     ) -> None:
         """每节点有 node.started / node.completed 事件。"""
         run_svc: RunService = workflow_config["configurable"]["run_service"]
@@ -229,7 +230,7 @@ class TestFullCreationWorkflow:
     async def test_completed_nodes_persist_in_state(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
     ) -> None:
         """完成后 completed_nodes 包含所有核心节点。"""
         run_svc: RunService = workflow_config["configurable"]["run_service"]
@@ -259,7 +260,7 @@ class TestRetryAndCheckpoint:
     async def test_retry_skips_completed_nodes(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         agent: Any,
         prompt_loader: Any,
         artifact_service: Any,
@@ -320,7 +321,7 @@ class TestRetryAndCheckpoint:
     async def test_failed_node_stops_workflow(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
     ) -> None:
         """节点失败不会导致静默成功，status=failed 且有 error_node。"""
         run_svc: RunService = workflow_config["configurable"]["run_service"]

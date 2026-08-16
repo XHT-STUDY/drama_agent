@@ -193,7 +193,7 @@ class TestIngest:
         id_by_head = {}
         for c in chunks_before:
             head = (c.chunk_metadata or {}).get("heading_path")
-            id_by_head[tuple(head)] = c.id
+            id_by_head[tuple(head or [])] = c.id
         id_a = id_by_head[("甲",)]
         id_b = id_by_head[("乙",)]
 
@@ -212,7 +212,7 @@ class TestIngest:
         id_by_head_after = {}
         for c in chunks_after:
             head = (c.chunk_metadata or {}).get("heading_path")
-            id_by_head_after[tuple(head)] = (c.id, c.content)
+            id_by_head_after[tuple(head or [])] = (c.id, c.content)
         # 甲节 chunk 复用原行
         assert id_by_head_after[("甲",)][0] == id_a
         # 乙节 chunk 已重建

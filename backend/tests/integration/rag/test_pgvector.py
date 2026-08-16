@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -59,7 +60,7 @@ async def _ingest_with_embeddings(
     body: str,
     genre: str = "都市",
     stage: str = "writer",
-) -> tuple[KnowledgeRepository, str]:
+) -> tuple[KnowledgeRepository, uuid.UUID]:
     """摄取一篇文档并回填向量，返回 (repo, document_id)。"""
     repo = KnowledgeRepository(test_session)
     loaded = load_knowledge_file(
@@ -80,7 +81,7 @@ async def _ingest_with_embeddings(
     emb = FakeEmbedder()
     vectors = [await emb.embed_one(c.content) for c in chunks]
     await repo.backfill_document_embeddings(doc.id, vectors)
-    return repo, str(doc.id)
+    return repo, doc.id
 
 
 @pytest.mark.integration

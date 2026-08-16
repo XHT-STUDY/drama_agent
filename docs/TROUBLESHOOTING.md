@@ -459,3 +459,26 @@ if state.get("status") == "failed":
 **解决方案**：`docker-compose.e2e.yml` 顶部显式 `name: drama-e2e`，把 e2e 项目与开发项目隔离。修改后 e2e 清理只移除 drama-e2e-* 容器，`make e2e REPEAT=5` 与开发库互不干扰（已验证：e2e 跑完后主容器存活）。
 
 **学习收获**：**同目录多 compose 文件默认共享 project name（目录名），`down -v` 以 project label 移除容器、跨文件也会误伤**——隔离测试基建必须在文件里显式 `name:`。另外：`make e2e` 这类长命令经 `| tail` 管道后台跑时，tail 缓冲到 EOF 才输出，中途看不到进度；排查卡住的长任务要先看进程树（`ps --ppid`），别只盯输出文件。
+
+## 2026-08-16 — `make ci` typecheck 从未通过：mypy 109 错误与 strict 双开关陷阱
+
+**症状**：正式执行 Phase I Exit Gate 的 `make ci` 时，typecheck 步骤（`mypy app/ tests/`）报 109 个错误；但 I-01~I-06 任务卡与 §13.3 I 行都记录"mypy 0 新增 / `make ci` 全绿"。`mypy app/` 单独跑只有 11 个存量错误（0 新增），`mypy app/ tests/` 却 109 个。
+
+**产生原因**：三层根因叠加。
+1. **门禁命令与验证子集不一致**：Makefile typecheck 跑 `mypy app/ tests/`，而各任务卡只验 `mypy app/`（11 错误与 HEAD 一致 = 0 新增）。tests/ 自 G 阶段基线 4ba03b8 起就有 **85 个存量错误**（大量 no-untyped-def / no-any-return / call-overload），Phase I 又新增 24 个（unused `# type: ignore`、`CompiledStateGraph` 4 类型参数、`ainvoke` config 类型等），合计 109——typecheck 从未通过，记录失真。
+2. **`strict=true` 双开关**：`disallow_untyped_defs=true` 与 `disallow_incomplete_defs=true` 默认**同时**打开。tests.* override 只设 `disallow_untyped_defs=false` 时，部分注解的测试函数（如 `def f(x) -> int:`）仍报 no-untyped-def——override 形同虚设。
+3. **mypy 不解析 pytest fixture 类型**：conftest 里 `workflow_config` fixture 返回 `dict[str, Any]`，测试函数的 `ainvoke(initial_state, workflow_config)` 因此报 `call-overload`（期望 `RunnableConfig | None`）；改 conftest 的类型注解无效，因为 mypy 看的是测试函数形参。
+
+**解决方案**：
+- 以基线提交区分存量/新增，先修 `app/` 的 24 个新增（删 unused ignore、补类型参数、`assert _async_session_factory is not None` 收窄、`llm_client: LLMClient` 注解），再清 `tests/` 的 85 个存量。
+- pyproject tests.* override 补 `disallow_incomplete_defs = false`（连同已有的 `disallow_untyped_defs = false`），消除 19 个 no-untyped-def。
+- 5 个 workflow 测试文件把形参注解 `workflow_config: dict[str, Any]` → `RunnableConfig`（21 处），各文件 `_load_golden` 的 `return json.loads(...)` / `return data` 加 `cast(dict[str, Any], ...)`。
+- 散点：`DEFAULT_EVALUATION_WEIGHTS` 从定义模块 `app.domain.enums` 导入（evaluation.py 未显式 `__all__` 导出）；`get_latest` 的 `Artifact | None` 加 `assert latest is not None`；`_ingest_with_embeddings` 返回类型 `str`→`uuid.UUID` 对齐 `list_chunks_by_document` 契约；`tuple(head)` → `tuple(head or [])`；`Retriever(_FakeRepo)` 加 `cast(KnowledgeRepository, ...)`。
+- 结果：`mypy app/ tests/` = **0 errors / 281 files**；`ruff check` 全绿；`make ci` 全绿（974 passed，总体 87.55%、核心 92%）。
+
+**学习收获**：
+1. **验证必须跑门禁命令本身**：`mypy app/` 的"0 新增"不能代表 `make ci` 的 typecheck 通过——任务卡证据应记录门禁命令输出，而不是子集输出；阶段 Exit Gate 首跑往往能暴露"过报"记录。
+2. **`strict=true` 是双开关**：`disallow_untyped_defs` 与 `disallow_incomplete_defs` 要一起在 override 关闭，否则对部分注解函数仍生效。
+3. **mypy 的 fixture 类型不权威**：pytest fixture 的返回注解不被 mypy 采纳为形参类型，`ainvoke` config 类型错误要改测试函数签名，conftest 无从下手。
+4. **`# type: ignore` 会过期**：mypy 升级后存量 ignore 若不再需要会被判 unused 报错——类型修复后要全局重扫，而不是只看新增。
+5. **别在 pytest 运行中改文件**：pytest 收集后中途删除被识别为包（存在 `__init__.py`）的目录会抛 `ImportError: ...__init__.py`，造成一整组测试收集 ERROR（本次 87 个，纯自伤），这类"运行期自伤"要先自查，别当成代码回归。

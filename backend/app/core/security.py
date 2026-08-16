@@ -77,8 +77,10 @@ def truncate_content(text: str, max_len: int) -> str:
     return text[:max_len] + "…（已截断）"
 
 
-def sanitize_filename_part(name: str, *, max_len: int = 40) -> str:
+def sanitize_filename_part(name: str | None, *, max_len: int = 40) -> str:
     """净化文件名片段：路径分隔符 / 控制字符 → `_`，截断到 max_len。
+
+    接受 None：非字符串（含 None）一律返回空串（防类型注入）。
 
     用于导出文件名与上传文件名等「进文件系统」的字符串，
     杜绝 `/`、`\\`、空字节等路径注入。

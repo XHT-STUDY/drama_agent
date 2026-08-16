@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 def _get_node_context() -> dict[str, Any]:
     """从 LangGraph 运行时获取 configurable 上下文。"""
-    return get_config()["configurable"]  # type: ignore[no-any-return]
+    return get_config()["configurable"]
 
 
 async def normalize_node(state: CreationState) -> dict[str, Any]:

@@ -16,10 +16,11 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
+from langchain_core.runnables import RunnableConfig
 
 from app.application.artifact_service import ArtifactService
 from app.application.run_service import RunService
@@ -39,8 +40,8 @@ def _load_golden(name: str) -> dict[str, Any]:
     with open(_GOLDEN_DIR / f"{name}.json", encoding="utf-8") as f:
         data = json.load(f)
     if isinstance(data, dict) and "expected_output" in data:
-        return data["expected_output"]
-    return data
+        return cast(dict[str, Any], data["expected_output"])
+    return cast(dict[str, Any], data)
 
 
 def _make_initial_state(
@@ -238,7 +239,7 @@ class TestCreationWorkflowWithRag:
     async def test_full_creation_persists_retrieval_traces(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
         db_session: Any,
         tmp_path: Path,
     ) -> None:
@@ -284,7 +285,7 @@ class TestCreationWorkflowWithRag:
     async def test_null_retriever_degrade_keeps_flow_running(
         self,
         test_project: uuid.UUID,
-        workflow_config: dict[str, Any],
+        workflow_config: RunnableConfig,
     ) -> None:
         """删除 RAG（注入 NullRetriever）后主流程仍可完整运行。
 

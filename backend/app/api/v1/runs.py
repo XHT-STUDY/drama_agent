@@ -12,7 +12,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, model_validator
@@ -365,7 +365,10 @@ async def _execute_workflow(
     await _asyncio.sleep(0.1)
 
 
+    from app.llm.protocol import LLMClient
+
     settings = Settings()
+    llm_client: LLMClient
     if settings.app_env == "test":
         from app.llm.fake import FakeLLM
         llm_client = FakeLLM(seed=42)
@@ -828,7 +831,7 @@ async def _execute_workflow(
             exit_run(str(run_id))
             clear_cancel(str(run_id))
             if hasattr(llm_client, "close"):
-                await llm_client.close()  # type: ignore[union-attr]
+                await llm_client.close()
 
 
 async def _persist_run_error(
@@ -870,8 +873,8 @@ def _register_fake_fixtures(llm: Any) -> None:
         with open(path, encoding="utf-8") as f:
             data = _json.load(f)
         if isinstance(data, dict) and "expected_output" in data:
-            return data["expected_output"]
-        return data
+            return cast(dict[str, Any], data["expected_output"])
+        return cast(dict[str, Any], data)
 
     from app.domain.evaluation import EvaluationReport
     from app.domain.import_file import ImportClassification

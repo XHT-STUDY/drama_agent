@@ -3056,3 +3056,53 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - **Phase I Exit Gate**：`make ci` 双覆盖率门禁 + `make e2e REPEAT=5` + 安全回归 + `make perf` 已全绿（I-05/I-06 期间实测）；剩「真实 LLM 一次人工 smoke」待用户批准（付费，不自动执行）与独立审查（DEV_PLAN §16.4）。
+
+## Phase I Exit Gate — mypy 全量清零（make ci typecheck 修复）（2026-08-16）
+
+### 做了什么
+
+- **发现问题**：正式跑 `make ci` 时 typecheck 步骤（`mypy app/ tests/`）报 **109 个错误**——此前 I-01~I-06 任务卡只验 `mypy app/`（11 存量、0 新增），从未跑过 `tests/`，导致 §13.3 I 行"`make ci` 全绿"系**过报**（实际 typecheck 从未通过）。
+- **基线拆分**：以 G 阶段收尾提交 4ba03b8 为基线测得 tests/ 存量 85 个错误；Phase I 新增 24 个（109 − 85）。
+- **修复 Phase I 新增 24 个**（`app/` 为主）：
+  - mypy 2.3.0 判定 6 处 `# type: ignore` 为 unused（workflow 节点 `no-any-return`、runs.py `union-attr`、tracing `return-value`）→ 删除。
+  - `CompiledStateGraph` 在 langgraph 1.2.9 需 4 个类型参数 → `[Any, Any, Any, Any]`。
+  - `LLMClient` ABC 不声明 `close()` → `hasattr` 收窄后 `.close()` 合法，删 ignore 并显式注解 `llm_client: LLMClient`。
+  - `_async_session_factory` 收窄需 `assert _async_session_factory is not None`。
+  - `sanitize_filename_part` 签名放宽 `str | None`（函数体已处理非字符串）；`test_markdown.py` 从 `core/security.py` 导入。
+  - runs.py `_load` 两处 return 加 `cast(dict[str, Any], ...)`。
+- **清理存量 85 个**（`tests/` 为主）：
+  - **关键配置修复**：`pyproject.toml` tests.* override 补 `disallow_incomplete_defs = false`——`strict=true` 同时打开 `disallow_untyped_defs` 与 `disallow_incomplete_defs`，只关前者 override 形同虚设，一次性消除 19 个 no-untyped-def。
+  - **ainvoke 级联**：5 个 workflow 测试文件把 fixture 参数注解 `workflow_config: dict[str, Any]` → `RunnableConfig`（21 处；mypy 不解析 pytest fixture 类型，改 conftest 无效，必须改测试函数签名）+ `_load_golden` return Any 加 `cast(dict[str, Any], ...)`。
+  - **散点**：`DEFAULT_EVALUATION_WEIGHTS` 改从 `app.domain.enums` 导入（evaluation 模块未显式导出）；`get_latest` 返回 `Artifact | None` 加 `assert is not None`（4 处）；`_ingest_with_embeddings` 返回类型 `str` → `uuid.UUID`（`list_chunks_by_document` 契约）；tuple 参数 `head or []`；`Retriever(_FakeRepo)` 加 `cast(KnowledgeRepository, ...)`；各处裸 `dict`/`list` 补类型参数；`resp.json()["id"]` 包 `str(...)`。
+- **顺手清理**：移除早期 mypy 探针遗留的 `tests/{unit,integration}/rag/__init__.py`（空文件、证明无效，且会让 pytest 把 rag 目录当包导入）。
+- 结果：**`mypy app/ tests/` = 0 errors / 281 files**（比基线 85 存量还少 85）；`ruff check app/ tests/` All checks passed。
+
+### 为什么这么做
+
+- Exit Gate 的 `make ci` 是硬门禁，typecheck 是其中一环；109 个错误 = typecheck 从未通过，"全绿"记录失真，必须修复后重验并纠正文档记录。
+- 按 baseline（4ba03b8）区分存量与新增：只修新增不算达标，存量也要清零，门禁才真正可跑、记录才可信。
+- 优先修 `app/`（业务代码）再清 `tests/`（测试代码）：业务代码的错误影响类型契约，测试代码的错误多为注解缺失，先难后易、先业务后测试。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `mypy app/ tests/` | **Success: no issues found in 281 source files**（此前 109 错误） |
+| `ruff check app/ tests/` | All checks passed |
+| `make lint`（ruff + eslint） | 全绿 |
+| `make typecheck`（mypy + tsc） | 全绿 |
+| `make cov`（全量 pytest + 双门禁） | 974 passed / 0 failed / 6 deselected；总体 87.55% ≥75%；核心 domain/workflows/artifacts 92% ≥85% |
+| `make ci`（lint + typecheck + cov 串联） | **全绿（Exit Gate #1 满足）** |
+
+### 学到了什么
+
+1. **`mypy app/` ≠ typecheck 门禁**：Makefile typecheck 跑 `mypy app/ tests/`；只盯 app/ 的"0 新增"会产生实际不绿的过报——阶段收尾必须跑**门禁命令本身**而非子集，§13.3 I 行就是反面教材。
+2. **strict=true 的双开关**：`disallow_untyped_defs` 与 `disallow_incomplete_defs` 默认同开，tests.* override 只关前者时，部分注解函数（`def f(x) -> int:`）仍报 no-untyped-def。
+3. **mypy 不解析 pytest fixture 类型**：conftest 的 fixture 返回类型不权威，ainvoke 的 config 参数类型错误必须在测试函数签名注解处修。
+4. **`# type: ignore` 可能变成新错误源**：mypy 2.3.0 对 unused ignore 报错；升级后必须全局重扫存量 ignore。
+5. **pytest 收集后勿删被当包的 `__init__.py`**：中途删除会在导入阶段抛 `ImportError: ...__init__.py`（本次 87 个收集 ERROR，纯属自伤，非代码问题）；改文件要在 pytest 运行前完成。
+6. **确定性测试基建优于手工**：本次 46→0 的清零是"先拿完整错误清单（过滤 note 行）再逐文件修"的机械流程；先列清单、再批量改、最后统一 ruff --fix 归整 import，效率最高。
+
+### 下一步
+
+- 剩余 Exit Gate 项：`make e2e REPEAT=5` 复验、`make perf`、安全回归、真实 LLM 一次人工 smoke（待用户批准 + Key）、独立审查（DEV_PLAN §16.4）、清理 `/tmp/da-baseline` worktree。

@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+from typing import cast
 
 import httpx
 import pytest
@@ -46,7 +47,7 @@ class TestLogScan:
         raw = buf.getvalue()
         assert raw, "应捕获到日志输出"
         line = raw.strip().splitlines()[-1]
-        return json.loads(line)
+        return cast(dict[str, object], json.loads(line))
 
     def test_llm_error_log_has_no_plaintext_key(self, captured: io.StringIO) -> None:
         """真实 LLM 错误日志：响应体中的 sk- 密钥被掩蔽。"""

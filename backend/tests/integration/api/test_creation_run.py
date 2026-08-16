@@ -28,7 +28,7 @@ class TestCreateScriptAPI:
     async def _create_project(self, async_client: AsyncClient) -> str:
         resp = await async_client.post("/api/v1/projects", json={"title": "API 契约测试"})
         assert resp.status_code == 201
-        return resp.json()["id"]
+        return str(resp.json()["id"])
 
     async def test_create_script_run_returns_202_and_run_id(
         self, async_client: AsyncClient,
@@ -236,7 +236,7 @@ class TestSSEProgress:
     async def _create_project(self, async_client: AsyncClient) -> str:
         resp = await async_client.post("/api/v1/projects", json={"title": "SSE 测试"})
         assert resp.status_code == 201
-        return resp.json()["id"]
+        return str(resp.json()["id"])
 
     async def test_sse_endpoint_registered_in_openapi(
         self, async_client: AsyncClient,

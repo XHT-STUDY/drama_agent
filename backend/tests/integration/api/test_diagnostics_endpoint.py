@@ -40,6 +40,7 @@ async def _seed_run_and_events(
     from app.db.models.workflow_run import WorkflowRun
     from app.db.session import _async_session_factory
 
+    assert _async_session_factory is not None  # conftest 初始化后才可使用
     now = dt.now(UTC)
     project_id = uuid.uuid4()
     run_id = uuid.uuid4()

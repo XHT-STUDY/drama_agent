@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -73,23 +74,23 @@ def creation_agent(agent: BaseAgent, skill_registry: SkillRegistry) -> CreationA
 # ========================================================================
 
 
-def _football_story_bible() -> dict:
+def _football_story_bible() -> dict[str, Any]:
     data = json.loads(
         (GOLDEN_DIR / "story_bible_valid.json").read_text(encoding="utf-8")
     )
-    return data
+    return cast(dict[str, Any], data)
 
 
 def _football_story_bible_obj() -> StoryBible:
     return StoryBible.model_validate(_football_story_bible())
 
 
-def _ep1_outline() -> dict:
+def _ep1_outline() -> dict[str, Any]:
     """第 1 集大纲."""
     data = json.loads(
         (GOLDEN_DIR / "outline_set_valid.json").read_text(encoding="utf-8")
     )
-    return data["episodes"][0]
+    return cast(dict[str, Any], data["episodes"][0])
 
 
 def _valid_script_draft() -> ScriptDraft:

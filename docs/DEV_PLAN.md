@@ -2996,7 +2996,7 @@ Prompt 必须区分：
 | F | - | 2026-08-16 | PASS | AI Agent | 修订闭环全部 DONE（F-01~F-06：确定性选集 / 版本化修订 / 连续性校验 / Diff / 重评 / Revision API）；F-05 修复存量 input_hash 跨集碰撞 | 无 |
 | G | - | 2026-08-16 | PASS | AI Agent | 全量 845 passed/2 存量日志失败(与 HEAD 基线一致), Ruff clean, mypy 0 新增(11 存量); Exit Gate 6 项全满足: 多轮会话摘要进 writer 上下文(test_summary_reaches_writer) / Redis 清空 DB 恢复(test_summary) / TXT·DOCX 上传解析分类(test_uploads + test_import_workflow) / Outline→创作→导出(test_upload_to_export 路径 1) / 完整剧本→评估→导出(路径 2) / MD+DOCX 导出可打开(test_markdown + test_docx + test_exports) | 前端上传/导出 UI 入口为占位(后端为主范围外, 后续阶段实现) |
 | H | - | 2026-08-16 | PASS | AI Agent | 工作台全链路 + 导出中心 + Playwright E2E；`make e2e REPEAT=5` 5 passed（FakeLLM + 低分场景，隔离 postgres/redis） | 无 |
-| I / Release | - | 2026-08-16 | PASS | AI Agent | Exit Gate 全部满足：`make ci` 双覆盖率门禁全绿（总体 88%/核心 92%）、`make e2e REPEAT=5` 5 passed、安全回归全绿、`make perf` 6 passed（p95 达标）、全量 974 passed/0 failed 零存量失败、FakeLLM 离线 Demo 可复现（docs/DEMO.md）、v0.1.0-rc1 发布候选（tag）、release 文档完整；真实 LLM 人工 smoke 待用户批准后执行（付费，不自动） | 真实 LLM 一次人工 smoke 尚未执行（需用户批准与 Key）；RAG（Phase D）为 backlog |
+| I / Release | - | 2026-08-16 | PASS | AI Agent | Exit Gate 修正后全绿：`make ci` lint+typecheck+cov 全过——typecheck 首跑暴露 mypy 109 错误（此前只验 `mypy app/` 0 新增、未跑 `tests/`，属过报），本轮按基线 4ba03b8 拆分存量 85 + 新增 24 全部清零为 **0 errors / 281 files**（含 `disallow_incomplete_defs` 双开关修复、21 处 `RunnableConfig` 注解、`cast` 收敛等，详见 DEV_LOG 2026-08-16）；覆盖率总体 87.55%≥75%、核心 domain/workflows/artifacts 92%≥85%；`make e2e REPEAT=5` 5 passed、安全回归全绿、`make perf` 6 passed（p95 达标）、全量 974 passed/0 failed 零存量失败、FakeLLM 离线 Demo 可复现（docs/DEMO.md）、v0.1.0-rc1 发布候选（tag）、release 文档完整 | 真实 LLM 一次人工 smoke 尚未执行（需用户批准与 Key）；RAG（Phase D）为 backlog |
 
 ### 13.4 开发日志模板
 
