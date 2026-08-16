@@ -102,6 +102,33 @@ class ServiceUnavailableError(AppError):
     code = "SERVICE_UNAVAILABLE"
 
 
+class InvalidFileTypeError(AppError):
+    """文件类型不被接受（415，G-03）。
+
+    上传的扩展名 / MIME / 内容签名不匹配 TXT|DOCX 时抛出。
+    """
+
+    status_code = 415
+    code = "INVALID_FILE_TYPE"
+
+
+class FileTooLargeError(AppError):
+    """文件超过大小上限（413，G-03）。"""
+
+    status_code = 413
+    code = "FILE_TOO_LARGE"
+
+
+class FileParseFailedError(AppError):
+    """文件解析失败（422，G-03）。
+
+    内容损坏（DOCX 非 zip）、编码无法识别、宏文档等场景抛出。
+    """
+
+    status_code = 422
+    code = "FILE_PARSE_FAILED"
+
+
 # ---- 辅助函数 ----
 
 

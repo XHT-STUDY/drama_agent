@@ -19,6 +19,7 @@ from app.api.v1.evaluations import router as evaluations_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.revisions import router as revisions_router
 from app.api.v1.runs import router as runs_router
+from app.api.v1.uploads import router as uploads_router
 from app.core.errors import ServiceUnavailableError
 from app.core.logging import get_logger
 
@@ -140,3 +141,4 @@ router.include_router(artifacts_router)
 router.include_router(evaluations_router)
 router.include_router(runs_router)
 router.include_router(revisions_router)
+router.include_router(uploads_router)

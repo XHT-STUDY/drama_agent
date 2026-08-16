@@ -12,11 +12,10 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.core.config import Settings
-from app.db.base import Base
-
 # 导入所有模型确保 Alembic 能发现它们
 import app.db.models  # noqa: F401
+from app.core.config import Settings
+from app.db.base import Base
 
 # Alembic Config 对象
 config = context.config
