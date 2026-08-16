@@ -17,14 +17,13 @@ import re
 import uuid
 from pathlib import Path
 
+from app.core.security import assert_safe_key
 from app.storage.protocol import FileStore
 
 logger = logging.getLogger(__name__)
 
 # 允许的扩展名片段（防注入；其余字符一律剥离）
 _SAFE_SUFFIX_RE = re.compile(r"^[A-Za-z0-9]{0,10}$")
-# key 必须是"纯文件名"：不含路径分隔符、不含 `..`、不含空字节
-_SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
 
 
 class LocalFileStore(FileStore):
@@ -42,8 +41,7 @@ class LocalFileStore(FileStore):
         Raises:
             ValueError: key 含路径穿越 / 非法字符时
         """
-        if not _SAFE_KEY_RE.match(key):
-            raise ValueError(f"非法的存储键: {key!r}")
+        assert_safe_key(key)
         path = (self._root / key).resolve()
         root = self._root.resolve()
         if not path.is_relative_to(root):

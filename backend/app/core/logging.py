@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from app.core.security import mask_secret
 
 # 北京时区 (UTC+8)
 _CST = timezone(timedelta(hours=8))
@@ -33,36 +34,6 @@ _CST = timezone(timedelta(hours=8))
 _MAX_LOG_CONTENT = 2000
 # 异常堆栈文本最大长度
 _MAX_EXC_TEXT = 4000
-
-# 需脱敏的密钥/令牌模式（I-02）。每项为 (正则, 替换串)，
-# 正则首组捕获字段前缀（如 api_key= / bearer ），替换保留前缀、掩蔽值本身。
-_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    # OpenAI 风格 API Key：保留 sk- 前缀，掩蔽后续值
-    (re.compile(r"(sk-)[A-Za-z0-9_\-]{6,}"), r"\1***"),
-    # api_key / apikey 字段赋值
-    (re.compile(r"(?i)(api[_-]?key\s*[=:]\s*)[^\s,;&\"']+"), r"\1***"),
-    # Authorization: Bearer 授权头
-    (re.compile(r"(?i)(authorization\s*[=:]\s*)bearer\s+[A-Za-z0-9._~+/=\-]+"), r"\1***"),
-    # 裸 Bearer 令牌
-    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=\-]{6,}"), r"\1***"),
-    # access_token / token 字段赋值
-    (re.compile(r"(?i)(access[_-]?token\s*[=:]\s*)[^\s,;&\"']+"), r"\1***"),
-]
-
-
-def mask_secret(text: str, *, max_len: int | None = None) -> str:
-    """掩蔽文本中的密钥/令牌，可选截断超长内容（I-02）。
-
-    覆盖 sk-* API Key、api_key 字段、Bearer 令牌与 Authorization 头；
-    保留字段名前缀（如 api_key=），只掩蔽值本身。非字符串输入原样返回。
-    """
-    if not isinstance(text, str) or not text:
-        return text
-    for pattern, repl in _SECRET_PATTERNS:
-        text = pattern.sub(repl, text)
-    if max_len is not None and len(text) > max_len:
-        text = text[:max_len] + "…（已截断）"
-    return text
 
 
 def _exc_text(record: logging.LogRecord) -> str:

@@ -10,11 +10,11 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from app.core.security import escape_html, sanitize_filename_part
 from app.tools.protocol import Tool, ToolMetadata
 
 # 评估维度 → 中文标签（与前端 EVAL_DIMENSION_LABELS 一致）
@@ -290,6 +290,21 @@ def markdown_from_revision(plan: dict[str, Any]) -> str:
 # ========================================================================
 
 
+def _escape_deep(value: Any) -> Any:
+    """递归 HTML 转义 dict/list 中的全部字符串叶节点（I-03）。
+
+    仅转义字符串值；数字 / 布尔 / None 保持原样，
+    避免把 `episode_number` 等数值型字段意外变成字符串。
+    """
+    if isinstance(value, dict):
+        return {k: _escape_deep(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_escape_deep(v) for v in value]
+    if isinstance(value, str):
+        return escape_html(value)
+    return value
+
+
 def build_export_markdown(
     *,
     project_title: str,
@@ -308,8 +323,12 @@ def build_export_markdown(
         "revisions": [dict, ...],    # 按集号升序
     }
     """
+    # I-03：内容转义——data 全部字符串叶节点过 escape_html，
+    # 使剧本/设定中的 <script> 等以纯文本展示（防 Markdown→HTML 注入）。
+    # 序列化器的结构性 Markdown 语法是在转义之后才拼接的，不受影响。
+    data = _escape_deep(data)
     sections: list[str] = [
-        f"# {project_title} — 内容导出",
+        f"# {escape_html(project_title)} — 内容导出",
         "",
         f"> 导出时间：{exported_at}",
         "",
@@ -349,12 +368,7 @@ def build_export_markdown(
 # ========================================================================
 # 文件名与时间戳（镜像前端 buildExportFilename / formatTimestamp）
 # ========================================================================
-
-
-def sanitize_filename_part(s: str) -> str:
-    """过滤文件名中不安全字符（路径分隔符 / 控制字符等 → _，截断 40 字符）。"""
-    return re.sub(r'[\\/:*?"<>|\s]+', "_", s)[:40]
-
+# sanitize_filename_part 由 app.core.security 提供（I-03 集中）
 
 def build_export_filename(
     project_title: str,

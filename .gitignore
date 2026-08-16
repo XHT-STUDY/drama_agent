@@ -245,3 +245,8 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# frontend/src/lib 是 TypeScript 源码（非 Python lib/ 产物），
+# 覆盖上方 Python 模板中的 `lib/` 忽略规则，确保被版本跟踪
+!frontend/src/lib/
+!frontend/src/lib/**
