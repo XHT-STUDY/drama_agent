@@ -1,7 +1,7 @@
 # DramaAgent Makefile
 # 统一开发命令入口 — 详见 docs/DEV_PLAN.md
 
-.PHONY: install lint typecheck test cov ci perf up down doctor clean e2e-setup e2e e2e-down
+.PHONY: install lint typecheck test cov ci perf up down migrate migrate-check doctor clean e2e-setup e2e e2e-down
 
 ## 安装全部依赖
 install:
@@ -63,10 +63,22 @@ down:
 	docker compose down
 	@echo "=== PostgreSQL + Redis 已停止 ==="
 
+## 应用数据库迁移（alembic upgrade head，幂等）
+migrate:
+	@echo "=== 应用数据库迁移 ==="
+	cd backend && uv run alembic upgrade head
+	@echo "=== 迁移完成 ==="
+
+## 检查数据库迁移是否落后（head 是否已应用）
+migrate-check:
+	@cd backend && uv run alembic current 2>&1 | grep -q "(head)" \
+		&& echo "=== 数据库迁移已是最新 ===" \
+		|| echo "WARN: 数据库迁移落后，请运行 make migrate"
+
 ## 检查环境健康状态
 doctor:
 	@echo "=== 检查 Python ==="
-	@python --version || (echo "ERROR: Python 未安装" && exit 1)
+	@(python3 --version 2>/dev/null || python --version 2>/dev/null || (echo "ERROR: Python 未安装" && exit 1))
 	@echo "=== 检查 Node ==="
 	@node --version || (echo "ERROR: Node.js 未安装" && exit 1)
 	@echo "=== 检查 uv ==="
@@ -81,6 +93,10 @@ doctor:
 	@docker compose exec -T postgres pg_isready -U drama -d drama 2>/dev/null || echo "WARN: PostgreSQL 未运行或未就绪，请运行 make up"
 	@echo "=== 检查 Redis ==="
 	@docker compose exec -T redis redis-cli ping 2>/dev/null || echo "WARN: Redis 未运行或未就绪，请运行 make up"
+	@echo "=== 检查数据库迁移 ==="
+	@cd backend && uv run alembic current 2>&1 | grep -q "(head)" \
+		&& echo "OK: 迁移已是最新" \
+		|| echo "WARN: 迁移落后，请运行 make migrate"
 	@echo "=== 检查本地运行时目录 ==="
 	@(test -d var/uploads && test -d var/artifacts) || echo "WARN: var/uploads 或 var/artifacts 目录不存在，请运行 make up"
 	@echo "=== 环境检查完成 ==="
