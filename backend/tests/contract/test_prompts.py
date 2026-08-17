@@ -765,8 +765,8 @@ class TestRealManifest:
                 "normalize_requirement", "1.0.0").template_content),
             "story_bible:1.0.0": _sha256(loader.get(
                 "story_bible", "1.0.0").template_content),
-            "outline:1.0.0": _sha256(loader.get(
-                "outline", "1.0.0").template_content),
+            "outline:1.1.0": _sha256(loader.get(
+                "outline", "1.1.0").template_content),
             "write_episode:1.0.0": _sha256(loader.get(
                 "write_episode", "1.0.0").template_content),
             "evaluate_episode:1.1.0": _sha256(loader.get(

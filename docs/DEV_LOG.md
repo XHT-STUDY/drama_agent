@@ -3106,3 +3106,41 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 剩余 Exit Gate 项：`make e2e REPEAT=5` 复验、`make perf`、安全回归、真实 LLM 一次人工 smoke（待用户批准 + Key）、独立审查（DEV_PLAN §16.4）、清理 `/tmp/da-baseline` worktree。
+
+## 修复 EpisodeOutlineSet 硬编码 10 集 + 结构校验接入重试（2026-08-17）
+
+### 做了什么
+
+真实 LLM 冒烟（`outline_count=2`）失败，暴露两个独立根因，一并修复：
+
+- **校验层硬编码 10 集（bug）**：`app/domain/outline.py` 的 `_check_episode_count` 写死 `len != 10`、`_check_episode_numbers` 写死 `range(1,11)`、`validate_sequence` 写死 `episodes[9]`。但配置链路全部支持可配置集数（API 1~100、`OutlineInput.outline_count`、Prompt `{{ outline_count }}`），唯独 schema 没跟上——加"可配置集数"时的残留。修复：集数守卫改为 `len < 1`（防空集落库），集号校验改自洽 `range(1, len(episodes)+1)`，sequence 校验取 `episodes[-1]`。
+- **结构校验失败即终止，不重试（设计缺口）**：`app/skills/outline.py` 的 `_validate_outline` 在重试循环**之后**执行，角色引用不存在 / 四要素为空直接 `raise OutlineValidationError` → 工作流终止。代码注释声称"结构错误可重试"但没投喂回循环。修复：重构 `execute()` 重试循环，Pydantic 解析成功后在**循环内**做结构校验，出错追加 system feedback 消息继续尝试，用尽再 raise（带"已重试 2 次"明细）；`_validate_outline` 拆成 `_collect_struct_errors`（返回 list 不 raise）+ `_apply_soft_notes`（循环结束后写软弱项）。`metadata.version` 1.0 → 1.1。
+- **附带修复字段名漂移**：`prompts/templates/outline.md` 用 `opening`/`conflict`，schema 是 `opening_hook`/`core_conflict`（`extra=forbid` 必拒）。修正为 schema 字段名，模板 version 1.0.0 → 1.1.0 + changelog；`manifest.yaml` outline 条目同步 1.1.0；`tests/contract/test_prompts.py` hash 快照 key 同步。
+- **测试**：`test_9/11_episodes_rejected` → `*_self_consistent_valid`（自洽即接受）+ 新增 `test_2_episodes_self_consistent_valid` / `test_empty_episodes_rejected`；`test_outline.py` 新增 `SequenceFakeLLM`（队列式重试夹具）+ 5 个新测试（2 集成功 / 集数不符重试耗尽 raise / 集数不符重试恢复 / 结构错误重试恢复 / 结构错误重试耗尽 raise），存量 `test_rejects_nonexistent_character` 断言调用次数==3。
+- `scripts/test_real_llm.py` 加 `--outline-count`（默认 10）便于复验 `--outline-count 2` 冒烟。
+
+### 为什么这么做
+
+- **集数校验下沉到任务层**：精确集数是任务级不变量（outline_count 由调用方决定），不是 schema 级不变量；schema 只保证"非空 + 集号自洽"，避免每个集数都要改 schema。
+- **结构错误可重试的成本低**：与 schema/Pydantic 解析重试同一条循环，出错信息作为 system feedback 喂回模型即可，比"失败即终止"多一次挽回机会；真实 LLM 冒烟里 char_zhao_gang 这类虚构角色引用正是可重试的结构错误。
+- **软校验与硬校验分离**：sequence 连续性 note（第 N 集需高潮收尾）是软弱项——LLM 忽略不致命，只追加不重试；角色引用、集数、四要素是硬项——决定 artifact 是否 valid，必须重试到通过或用尽。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run ruff check app/ tests/` | All checks passed（零新增） |
+| `uv run mypy app/ tests/` | Success: no issues found in 281 source files（门禁命令本身） |
+| `uv run pytest tests/unit/skills/test_outline.py tests/contract/test_domain_schemas.py tests/contract/test_prompts.py` | 全绿（含新增 7 个用例） |
+| 全量 `pytest -m "unit or contract"` | **981 passed / 6 deselected**（此前 974，+7） |
+| `make perf` | 6 passed（981 = 性能 6 与主集分离） |
+
+### 学到了什么
+
+1. **"可配置"要全链路一致**：加了 API 参数、Input 字段、Prompt 变量，唯独漏了校验器——错误类型不是"逻辑写错"，而是"契约不同步"。改这类跨层配置时先 grep 写死的旧默认值（`== 10`、`range(1, 11)`）。
+2. **结构校验也要进重试循环**：Pydantic 解析重试只解决"形状错"；"语义错"（引用不存在的角色）在 `extra=forbid` 之外，必须单独接入重试，否则设计注释与实现永远说两套话。
+3. **坏夹具用队列 FakeLLM 最直观**：`SequenceFakeLLM._single_attempt` 从 `self._sequence.pop(0)` 依次出队，精确覆盖"第一次坏、第二次好"的重试路径，比修改 `inject_fault` 状态机简单得多。
+
+### 下一步
+
+- 用户可用 `uv run python scripts/test_real_llm.py --skill outline --outline-count 2` 复验真实 LLM 冒烟（需 .env 真实 Key，不自动执行）。

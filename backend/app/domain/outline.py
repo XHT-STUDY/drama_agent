@@ -1,6 +1,6 @@
 """分集大纲模型 — OutlineInput、EpisodeOutline 与 EpisodeOutlineSet (§5.6, C-04).
 
-MVP 固定输出 10 集大纲，集号 1..10 连续不重复。
+支持可配置集数 N，集号 1..N 连续不重复（精确集数由 OutlineSkill 校验）。
 """
 
 from typing import Any
@@ -70,8 +70,8 @@ class EpisodeOutline(BaseModel):
 class EpisodeOutlineSet(BaseModel):
     """分集大纲集合。
 
-    包含全部 10 集大纲和整体弧线说明。
-    校验器确保集数、编号和连续性符合 MVP 要求。
+    包含全部 N 集大纲和整体弧线说明。
+    校验器确保至少 1 集、编号 1..N 连续不重复。
     """
 
     model_config = {"extra": "forbid"}
@@ -84,18 +84,18 @@ class EpisodeOutlineSet(BaseModel):
 
     @model_validator(mode="after")
     def _check_episode_count(self) -> "EpisodeOutlineSet":
-        """MVP 要求正好 10 集。"""
-        if len(self.episodes) != 10:
+        """至少需要 1 集（精确集数由 OutlineSkill 按 outline_count 校验）。"""
+        if len(self.episodes) < 1:
             raise ValueError(
-                f"大纲集数必须为 10，当前为 {len(self.episodes)}"
+                f"大纲集数至少为 1，当前为 {len(self.episodes)}"
             )
         return self
 
     @model_validator(mode="after")
     def _check_episode_numbers(self) -> "EpisodeOutlineSet":
-        """集号必须为 1..10，连续且不重复。"""
+        """集号必须为 1..N（N=实际集数），连续且不重复。"""
         numbers = [ep.episode_number for ep in self.episodes]
-        expected = list(range(1, 11))
+        expected = list(range(1, len(self.episodes) + 1))
         if sorted(numbers) != expected:
             missing = set(expected) - set(numbers)
             extra = set(numbers) - set(expected)
@@ -125,15 +125,16 @@ class EpisodeOutlineSet(BaseModel):
                     f"第 {current.episode_number} 集缺少 next_bridge，"
                     f"与第 {next_ep.episode_number} 集的衔接不明确"
                 )
-            # 第 10 集不需要 next_bridge (这是最后一集)
-        # 检查第 10 集是否为小阶段高潮而非强制大结局
-        if len(self.episodes) == 10:
-            ep10 = self.episodes[9]
+            # 最后一集不需要 next_bridge (这是最后一集)
+        # 检查最后一集是否为小阶段高潮而非强制大结局
+        if self.episodes:
+            last = self.episodes[-1]
             finale_keywords = ["大结局", "全剧终", "剧终", "完结"]
             for kw in finale_keywords:
-                if kw in ep10.title or kw in ep10.ending_hook:
+                if kw in last.title or kw in last.ending_hook:
                     notes.append(
-                        f"第 10 集包含 '{kw}'，暗示强制大结局而非小阶段高潮"
+                        f"第 {last.episode_number} 集包含 '{kw}'，"
+                        f"暗示强制大结局而非小阶段高潮"
                     )
         return notes
 

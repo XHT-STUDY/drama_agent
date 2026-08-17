@@ -482,3 +482,23 @@ if state.get("status") == "failed":
 3. **mypy 的 fixture 类型不权威**：pytest fixture 的返回注解不被 mypy 采纳为形参类型，`ainvoke` config 类型错误要改测试函数签名，conftest 无从下手。
 4. **`# type: ignore` 会过期**：mypy 升级后存量 ignore 若不再需要会被判 unused 报错——类型修复后要全局重扫，而不是只看新增。
 5. **别在 pytest 运行中改文件**：pytest 收集后中途删除被识别为包（存在 `__init__.py`）的目录会抛 `ImportError: ...__init__.py`，造成一整组测试收集 ERROR（本次 87 个，纯自伤），这类"运行期自伤"要先自查，别当成代码回归。
+
+## 2026-08-17 — 大纲集数硬编码 10 集 + 结构校验失败即终止：真实 LLM 冒烟 `outline_count=2` 双失败
+
+**症状**：真实 LLM 冒烟（`--outline-count 2`）连续两轮失败：(1) LLM 正确输出 2 集大纲后，Pydantic `EpisodeOutlineSet` 校验抛 `Value error, 大纲集数必须为 10，当前为 2`；(2) 即便绕过集数校验（如 10 集正常输出），`Outline 结构校验失败: 第 1 集引用了不存在的角色 'char_zhao_gang'` 直接抛 `OutlineValidationError`，工作流终止，不重试。
+
+**产生原因**：两个根因叠加。
+1. **校验层硬编码 10 集**：`domain/outline.py` 的 `_check_episode_count` 写死 `len != 10`、`_check_episode_numbers` 写死 `range(1,11)`。但配置链路（API 1~100、`OutlineInput.outline_count`、Prompt `{{ outline_count }}`）全部支持可配置集数——加"可配置集数"时漏改了 schema，契约测试还把旧行为固化为预期（`test_9/11_episodes_rejected`）。
+2. **结构校验在重试循环之后**：`skills/outline.py` 的 `_validate_outline` 在 LLM 重试循环结束后执行，角色引用不存在 / 四要素为空直接 raise；代码注释/docstring 声称"结构错误可重试"，但实现没把结构错误投喂回循环——设计注释与实现说两套话。
+3. 附带：模板 `outline.md` 输出字段名 `opening`/`conflict` 与 schema 的 `opening_hook`/`core_conflict` 不一致（`extra=forbid`），真实 LLM 照模板输出必被拒。
+
+**解决方案**：
+- 集数守卫改为 `len < 1`（"大纲集数至少为 1，当前为 N"），集号校验改自洽 `range(1, len(episodes)+1)`，`validate_sequence` 取 `episodes[-1]`——精确集数是任务级不变量，下沉到 skill 层按 `outline_count` 校验。
+- 重写 `execute()` 重试循环：Pydantic 解析成功后**在循环内**做结构校验，出错追加 system feedback（含错误明细）继续尝试，用尽再 raise（带"已重试 2 次"）；`_validate_outline` 拆成 `_collect_struct_errors`（集数/角色引用/四要素，返回 list 不 raise）+ `_apply_soft_notes`（sequence 软弱项，循环结束后追加）。
+- 修正模板字段名 `opening_hook`/`core_conflict`，version 1.1.0 + manifest/hash 快照同步。
+- 测试：9/11 集自洽改接受、新增 2 集/空集用例、`SequenceFakeLLM` 队列夹具覆盖"坏→好"重试恢复与重试耗尽路径；全量 981 passed。
+
+**学习收获**：
+1. **"可配置"是跨层契约，改默认值要全链 grep**：API 参数 → Input 字段 → Prompt 变量 → schema 校验器，任何一层写死旧默认值（`== 10`、`range(1,11)`）都会在真实调用时才暴露，且契约测试可能把旧行为固化。改这类配置先 `grep -nE "== 10|range\(1, 11\)|10 集"`。
+2. **Pydantic 重试只解决"形状错"，语义错要单独接循环**：`extra=forbid` 挡不住"角色引用不存在"这类跨对象语义错误；凡是决定 artifact 是否 valid 的校验都要进重试循环，否则"失败即终止"会浪费一整次 LLM 调用并杀死工作流。
+3. **硬校验（可重试）与软校验（只追加）要分层**：集数/角色/四要素是硬项——不通过就不该存 valid；sequence 高潮 note 是软弱项——LLM 忽略不致命，追加即可，混在一起会过度重试、烧预算。

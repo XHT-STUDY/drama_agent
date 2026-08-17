@@ -32,12 +32,12 @@ prompts:
 
   # ---- 分集大纲 ----
   - name: outline
-    version: "1.0.0"
+    version: "1.1.0"
     input_schema: OutlineInput
     output_schema: EpisodeOutlineSet
     owner: planner
     template: outline.md
-    changelog: "初始版本：一次生成 10 集分集大纲，每集含开头/冲突/爽点/结尾钩子"
+    changelog: "v1.1：支持可配置集数 outline_count；修正输出字段名 (opening_hook/core_conflict)"
     user_content_vars: [story_bible, rag_context]
 
   # ---- 单集剧本写作 ----

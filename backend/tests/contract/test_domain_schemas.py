@@ -162,21 +162,41 @@ class TestEpisodeOutlineSet:
         numbers = [ep.episode_number for ep in outline_set.episodes]
         assert numbers == list(range(1, 11))
 
-    def test_9_episodes_rejected(self) -> None:
-        """只有 9 集时校验失败。"""
+    def test_9_episodes_self_consistent_valid(self) -> None:
+        """9 集且集号 1..9 自洽时通过（精确集数由 Skill 按 outline_count 校验）。"""
         data = load_fixture("outline_set_valid.json")
         data["episodes"] = data["episodes"][:9]
-        with pytest.raises(ValidationError, match="10"):
-            EpisodeOutlineSet.model_validate(data)
+        outline_set = EpisodeOutlineSet.model_validate(data)
+        assert len(outline_set.episodes) == 9
+        numbers = [ep.episode_number for ep in outline_set.episodes]
+        assert numbers == list(range(1, 10))
 
-    def test_11_episodes_rejected(self) -> None:
-        """11 集时校验失败。"""
+    def test_11_episodes_self_consistent_valid(self) -> None:
+        """11 集且集号 1..11 自洽时通过。"""
         data = load_fixture("outline_set_valid.json")
-        # 复制第 10 集并改变编号
+        # 复制第 10 集并追加为第 11 集
         extra = dict(data["episodes"][9])
         extra["episode_number"] = 11
         data["episodes"] = data["episodes"] + [extra]
-        with pytest.raises(ValidationError, match="10"):
+        outline_set = EpisodeOutlineSet.model_validate(data)
+        assert len(outline_set.episodes) == 11
+        numbers = [ep.episode_number for ep in outline_set.episodes]
+        assert numbers == list(range(1, 12))
+
+    def test_2_episodes_self_consistent_valid(self) -> None:
+        """2 集且集号 1..2 自洽时通过（对应 outline_count=2 冒烟场景）。"""
+        data = load_fixture("outline_set_valid.json")
+        data["episodes"] = data["episodes"][:2]
+        outline_set = EpisodeOutlineSet.model_validate(data)
+        assert len(outline_set.episodes) == 2
+        numbers = [ep.episode_number for ep in outline_set.episodes]
+        assert numbers == [1, 2]
+
+    def test_empty_episodes_rejected(self) -> None:
+        """空 episodes 应被拒绝（至少 1 集）。"""
+        data = load_fixture("outline_set_valid.json")
+        data["episodes"] = []
+        with pytest.raises(ValidationError, match="至少为 1"):
             EpisodeOutlineSet.model_validate(data)
 
     def test_duplicate_episode_numbers_rejected(self) -> None:

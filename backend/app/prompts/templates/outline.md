@@ -1,10 +1,10 @@
 ---
 name: outline
-version: "1.0.0"
+version: "1.1.0"
 input_schema: OutlineInput
 output_schema: EpisodeOutlineSet
 owner: planner
-changelog: "初始版本：一次生成 10 集分集大纲，每集含开头/冲突/爽点/结尾钩子"
+changelog: "v1.1：支持可配置集数 outline_count；修正输出字段名 (opening_hook/core_conflict)；v1.0：一次生成 10 集分集大纲"
 ---
 
 # 分集大纲生成
@@ -15,7 +15,7 @@ changelog: "初始版本：一次生成 10 集分集大纲，每集含开头/冲
 
 1. 必须正好生成 {{ outline_count }} 集，集号从 1 到 {{ outline_count }} 连续编号。
 2. 每集必须包含：开头钩子、核心冲突、一个爽点、结尾钩子。
-3. 第 N 集的 next_bridge 必须与第 N+1 集的 opening 在叙事上承接。
+3. 第 N 集的 next_bridge 必须与第 N+1 集的 opening_hook 在叙事上承接。
 4. 所有引用的角色必须在 StoryBible 中存在。
 5. 第 {{ outline_count }} 集应形成小阶段高潮，不要强制大结局。
 6. 所有内容使用中文。
@@ -36,8 +36,8 @@ changelog: "初始版本：一次生成 10 集分集大纲，每集含开头/冲
 - episodes: 列表，每项包含：
   - episode_number: 集号（1-{{ outline_count }}）
   - title: 单集标题
-  - opening: 开头钩子
-  - conflict: 核心冲突
+  - opening_hook: 开头钩子
+  - core_conflict: 核心冲突
   - payoff: 爽点
   - ending_hook: 结尾钩子
   - required_characters: 本集出场的角色 ID 列表

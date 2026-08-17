@@ -8,6 +8,7 @@
     uv run python scripts/test_real_llm.py --skill requirement --idea "足球少年逆袭"
     uv run python scripts/test_real_llm.py --skill story_bible --golden requirement_football
     uv run python scripts/test_real_llm.py --skill outline --golden story_bible_football
+    uv run python scripts/test_real_llm.py --skill outline --golden story_bible_football --outline-count 2
     uv run python scripts/test_real_llm.py --skill summarize_episode
 
 环境要求：
@@ -76,6 +77,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="目标集号（仅 write_episode skill 使用，默认: 1）",
+    )
+    parser.add_argument(
+        "--outline-count",
+        type=int,
+        default=10,
+        help="大纲集数（仅 outline skill 使用，默认: 10）",
     )
     parser.add_argument(
         "--model",
@@ -218,7 +225,7 @@ async def test_outline(agent: Any, prompt_loader: Any, args: argparse.Namespace)
     ol_input = OutlineInput(
         story_bible=story_bible.model_dump(),
         rag_context="",
-        outline_count=10,
+        outline_count=args.outline_count,
     )
 
     skill = OutlineSkill()

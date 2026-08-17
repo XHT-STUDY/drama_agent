@@ -1,13 +1,14 @@
 """OutlineSkill 单元测试 (C-04).
 
 测试范围:
-- StoryBible → 10 集大纲完整生成
-- 正好 10 集且连续编号
+- StoryBible → N 集大纲完整生成（N 可配置，默认 10）
+- 集号连续编号（1..N 自洽）
 - 每集四要素齐全 (opening_hook / core_conflict / payoff / ending_hook)
 - required_characters 均在 StoryBible 中存在
-- 引用不存在角色 → OutlineValidationError
+- 引用不存在角色 → 带反馈重试，耗尽后 OutlineValidationError
+- 集数不匹配 → 带反馈重试，耗尽后 OutlineValidationError
 - next_bridge 衔接检查 (业务弱项 → validation_notes)
-- 第 10 集小阶段高潮 (非强制大结局)
+- 最后一集小阶段高潮 (非强制大结局)
 - LLM 故障重试
 - CreationAgent.generate_outline 集成
 """
@@ -19,12 +20,14 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from pydantic import BaseModel
 
 from app.agents.base import BaseAgent
 from app.agents.creation import CreationAgent
 from app.domain.outline import EpisodeOutlineSet, OutlineInput
 from app.domain.story_bible import StoryBible
 from app.llm.fake import FakeLLM
+from app.llm.models import LLMCallResult
 from app.prompts.loader import PromptLoader
 from app.skills.outline import OutlineSkill, OutlineValidationError
 from app.skills.registry import SkillRegistry
@@ -91,6 +94,42 @@ def _valid_outline_set() -> EpisodeOutlineSet:
         (GOLDEN_DIR / "outline_set_valid.json").read_text(encoding="utf-8")
     )
     return EpisodeOutlineSet.model_validate(data)
+
+
+def _two_episode_outline_set() -> EpisodeOutlineSet:
+    """2 集大纲（从 10 集 golden 切片前 2 集，集号 1..2 自洽）。"""
+    full = _valid_outline_set()
+    return EpisodeOutlineSet(
+        episodes=full.episodes[:2],
+        arc_summary=full.arc_summary,
+    )
+
+
+class SequenceFakeLLM(FakeLLM):
+    """按调用顺序依次返回夹具的 FakeLLM（用于测试重试恢复路径）。
+
+    每次 _single_attempt 把队列头部夹具注册到当前 prompt_name 后委托父类，
+    从而复用父类的预算检查、调用计数与记账逻辑。
+    """
+
+    def __init__(self, sequence: list[EpisodeOutlineSet]) -> None:
+        super().__init__(seed=42)
+        self._sequence = list(sequence)
+
+    async def _single_attempt(
+        self,
+        schema: type[BaseModel],
+        messages: list[dict[str, str]],
+        *,
+        model: str = "",
+        **kwargs: Any,
+    ) -> LLMCallResult:
+        if self._sequence:
+            prompt_name = kwargs.get("prompt_name", "") or "outline"
+            self._registry[prompt_name] = self._sequence.pop(0)
+        return await super()._single_attempt(
+            schema, messages, model=model, **kwargs
+        )
 
 
 # ========================================================================
@@ -235,7 +274,7 @@ class TestOutlineSkillValidation:
         prompt_loader: PromptLoader,
         fake_llm: FakeLLM,
     ) -> None:
-        """引用不存在角色 → OutlineValidationError."""
+        """引用不存在角色 → 重试耗尽后 OutlineValidationError."""
         sb = _football_story_bible()
         bad = _valid_outline_set()
         # 添加一个不存在的角色引用
@@ -253,6 +292,9 @@ class TestOutlineSkillValidation:
                 "agent": agent,
                 "prompt_loader": prompt_loader,
             })
+
+        # 结构校验会带反馈重试，固定坏夹具最终耗尽（1 次 + 2 次重试）
+        assert len(fake_llm.get_call_history()) == 3
 
     async def test_missing_opening_hook_rejected(
         self,
@@ -315,6 +357,145 @@ class TestOutlineSkillValidation:
         # 应有衔接警告
         bridge_notes = [n for n in result.validation_notes if "next_bridge" in n]
         assert len(bridge_notes) >= 1, "缺少 next_bridge 警告"
+
+
+class TestOutlineSkillConfigurableCountAndRetry:
+    """可配置集数 + 结构校验重试路径（outline_count != 10 场景）。"""
+
+    async def test_generates_2_episodes(
+        self,
+        skill: OutlineSkill,
+        agent: BaseAgent,
+        prompt_loader: PromptLoader,
+        fake_llm: FakeLLM,
+    ) -> None:
+        """outline_count=2 且 LLM 返回 2 集时成功."""
+        sb = _football_story_bible()
+        fake_llm.register("outline", _two_episode_outline_set())
+
+        ol_input = OutlineInput(
+            story_bible=sb,
+            outline_count=2,
+        )
+
+        result = await skill.execute({
+            "input": ol_input,
+            "agent": agent,
+            "prompt_loader": prompt_loader,
+        })
+
+        assert isinstance(result, EpisodeOutlineSet)
+        assert len(result.episodes) == 2
+        numbers = [ep.episode_number for ep in result.episodes]
+        assert numbers == [1, 2]
+
+    async def test_count_mismatch_exhausted_raises(
+        self,
+        skill: OutlineSkill,
+        agent: BaseAgent,
+        prompt_loader: PromptLoader,
+        fake_llm: FakeLLM,
+    ) -> None:
+        """LLM 固定返回 10 集但要求 2 集 → 重试耗尽后 OutlineValidationError."""
+        sb = _football_story_bible()
+        fake_llm.register("outline", _valid_outline_set())  # 10 集
+
+        ol_input = OutlineInput(
+            story_bible=sb,
+            outline_count=2,
+        )
+
+        with pytest.raises(OutlineValidationError, match="2 集"):
+            await skill.execute({
+                "input": ol_input,
+                "agent": agent,
+                "prompt_loader": prompt_loader,
+            })
+
+        # 1 次 + 2 次重试
+        assert len(fake_llm.get_call_history()) == 3
+
+    async def test_count_mismatch_retries_and_recovers(
+        self,
+        skill: OutlineSkill,
+        prompt_loader: PromptLoader,
+    ) -> None:
+        """第一次返回 10 集（不符 2 集）→ 第二次返回 2 集 → 重试成功."""
+        seq_llm = SequenceFakeLLM([
+            _valid_outline_set(),
+            _two_episode_outline_set(),
+        ])
+        seq_agent = BaseAgent(name="planner", llm=seq_llm)
+        sb = _football_story_bible()
+
+        ol_input = OutlineInput(
+            story_bible=sb,
+            outline_count=2,
+        )
+
+        result = await skill.execute({
+            "input": ol_input,
+            "agent": seq_agent,
+            "prompt_loader": prompt_loader,
+        })
+
+        assert isinstance(result, EpisodeOutlineSet)
+        assert len(result.episodes) == 2
+        assert len(seq_llm.get_call_history()) == 2
+
+    async def test_struct_error_retries_and_recovers(
+        self,
+        skill: OutlineSkill,
+        prompt_loader: PromptLoader,
+    ) -> None:
+        """第一次角色引用不存在 → 第二次 10 集 → 重试成功."""
+        bad = _valid_outline_set()
+        bad.episodes[0].required_characters.append("char_nonexistent_999")
+        seq_llm = SequenceFakeLLM([bad, _valid_outline_set()])
+        seq_agent = BaseAgent(name="planner", llm=seq_llm)
+        sb = _football_story_bible()
+
+        ol_input = OutlineInput(
+            story_bible=sb,
+            outline_count=10,
+        )
+
+        result = await skill.execute({
+            "input": ol_input,
+            "agent": seq_agent,
+            "prompt_loader": prompt_loader,
+        })
+
+        assert isinstance(result, EpisodeOutlineSet)
+        assert len(result.episodes) == 10
+        assert len(seq_llm.get_call_history()) == 2
+
+    async def test_struct_error_exhausted_raises(
+        self,
+        skill: OutlineSkill,
+        agent: BaseAgent,
+        prompt_loader: PromptLoader,
+        fake_llm: FakeLLM,
+    ) -> None:
+        """固定坏角色引用 → 重试耗尽后 OutlineValidationError."""
+        sb = _football_story_bible()
+        bad = _valid_outline_set()
+        bad.episodes[0].required_characters.append("char_nonexistent_999")
+        fake_llm.register("outline", bad)
+
+        ol_input = OutlineInput(
+            story_bible=sb,
+            outline_count=10,
+        )
+
+        with pytest.raises(OutlineValidationError, match="不存在"):
+            await skill.execute({
+                "input": ol_input,
+                "agent": agent,
+                "prompt_loader": prompt_loader,
+            })
+
+        assert len(fake_llm.get_call_history()) == 3
 
 
 class TestOutlineSkillLLM:
