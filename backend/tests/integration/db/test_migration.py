@@ -26,6 +26,11 @@ def _import_migration_0002() -> Any:
     return importlib.import_module("migrations.versions.0002_knowledge")
 
 
+def _import_migration_0005() -> Any:
+    """动态导入 0005 Agent 持久化迁移（J-01）。"""
+    return importlib.import_module("migrations.versions.0005_agent_turn_actions")
+
+
 def _run_alembic_command(*args: str) -> subprocess.CompletedProcess[str]:
     """在 backend/ 目录下运行 alembic 命令。"""
     backend_dir = Path(__file__).resolve().parent.parent.parent.parent
@@ -206,3 +211,45 @@ class TestAlembicMigration0002:
             assert f'"{column}"' in source, f"0002 downgrade 未移除列: {column}"
         assert "ix_knowledge_chunks_embedding_hnsw" in source
         assert "ix_knowledge_documents_category" in source
+
+
+@pytest.mark.integration
+class TestAlembicMigration0005:
+    """J-01 AgentTurn、AgentAction 与消息契约迁移。"""
+
+    def test_revision_chain_valid(self) -> None:
+        """0005 必须接在当前迁移头 0004 之后。"""
+        module = _import_migration_0005()
+        assert module.revision == "0005"
+        assert module.down_revision == "0004"
+
+    def test_upgrade_creates_agent_tables_and_message_columns(self) -> None:
+        """upgrade 创建两张 Agent 表并扩展 messages。"""
+        import inspect
+
+        module = _import_migration_0005()
+        source = inspect.getsource(module.upgrade)
+        for required in [
+            "agent_turns",
+            "agent_actions",
+            "kind",
+            "metadata",
+            "uq_messages_conversation_sequence",
+            "planning_lease_owner",
+            "replan_depth",
+        ]:
+            assert required in source
+
+    def test_constraints_cover_idempotency_run_and_replan(self) -> None:
+        """迁移必须包含幂等、Run 关联与再规划深度约束。"""
+        import inspect
+
+        source = inspect.getsource(_import_migration_0005().upgrade)
+        assert "uq_agent_turns_project_idempotency" in source
+        assert "uq_agent_actions_run_id" in source
+        assert "ck_agent_actions_replan_depth" in source
+        assert "ck_agent_actions_parent_depth" in source
+        assert "uq_agent_actions_parent_replan_depth" in source
+
+    def test_downgrade_is_explicitly_destructive_and_symmetric(self) -> None:
+        """downgrade 对称删结构，并明确 Agent 审计数据会丢失。"""

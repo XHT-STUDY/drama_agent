@@ -75,6 +75,26 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 | POST | `/conversations/{id}/messages` | 追加消息 |
 | GET | `/conversations/{id}/messages` | 列出消息 |
 
+### 消息契约（J-01）
+
+追加消息请求在原有 `role`、`content` 基础上增加可选展示字段：
+
+```jsonc
+{
+  "role": "user",
+  "content": "请评估当前剧本",
+  "kind": "text",       // 默认 text
+  "metadata": {}        // 默认 {}
+}
+```
+
+消息响应始终返回 `kind`、`metadata` 和服务端分配的 `sequence`。其中 `kind` 可取
+`text | clarification | action_plan | action_result | error`；`metadata` 用于保存
+AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载权威业务状态。
+
+同一会话内的 `sequence` 由服务端在锁定 Conversation 行的短事务中分配，
+并由数据库唯一约束 `(conversation_id, sequence)` 兜底；并发冲突最多重试一次。
+
 ### Artifact
 
 | 方法 | 路径 | 说明 |

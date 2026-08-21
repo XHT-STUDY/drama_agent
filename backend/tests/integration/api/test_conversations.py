@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from httpx import AsyncClient
 
@@ -65,9 +67,7 @@ class TestListConversations:
                 json={"title": f"会话 {i}"},
             )
 
-        response = await async_client.get(
-            f"/api/v1/projects/{project_id}/conversations"
-        )
+        response = await async_client.get(f"/api/v1/projects/{project_id}/conversations")
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 2
@@ -101,6 +101,8 @@ class TestAppendMessage:
         assert data["content"] == "你好，帮我写一个短剧"
         assert data["sequence"] >= 1
         assert data["conversation_id"] == conversation_id
+        assert data["kind"] == "text"
+        assert data["metadata"] == {}
 
     async def test_append_message_sequence_increments(self, async_client: AsyncClient) -> None:
         """连续追加消息时 sequence 递增。"""
@@ -131,6 +133,37 @@ class TestAppendMessage:
         assert msg1.json()["sequence"] == 1
         assert msg2.json()["sequence"] == 2
         assert msg3.json()["sequence"] == 3
+
+    async def test_concurrent_append_allocates_unique_sequences(
+        self,
+        async_client: AsyncClient,
+    ) -> None:
+        """同一会话并发追加消息时，行锁和唯一约束保证 sequence 不冲突。"""
+        proj_resp = await async_client.post(
+            "/api/v1/projects",
+            json={"title": "并发序号测试"},
+        )
+        project_id = proj_resp.json()["id"]
+        conv_resp = await async_client.post(
+            f"/api/v1/projects/{project_id}/conversations",
+            json={},
+        )
+        conversation_id = conv_resp.json()["id"]
+
+        first, second = await asyncio.gather(
+            async_client.post(
+                f"/api/v1/conversations/{conversation_id}/messages",
+                json={"role": "user", "content": "并发消息 A"},
+            ),
+            async_client.post(
+                f"/api/v1/conversations/{conversation_id}/messages",
+                json={"role": "user", "content": "并发消息 B"},
+            ),
+        )
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert sorted([first.json()["sequence"], second.json()["sequence"]]) == [1, 2]
 
     async def test_append_message_conversation_404(self, async_client: AsyncClient) -> None:
         """在不存在的会话中追加消息返回 404。"""
@@ -186,9 +219,7 @@ class TestListMessages:
                 json={"role": "user", "content": f"消息 {i}"},
             )
 
-        response = await async_client.get(
-            f"/api/v1/conversations/{conversation_id}/messages"
-        )
+        response = await async_client.get(f"/api/v1/conversations/{conversation_id}/messages")
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 3
@@ -214,9 +245,7 @@ class TestListMessages:
                 json={"role": "user", "content": f"消息 {i}"},
             )
 
-        response = await async_client.get(
-            f"/api/v1/conversations/{conversation_id}/messages?limit=2"
-        )
+        response = await async_client.get(f"/api/v1/conversations/{conversation_id}/messages?limit=2")
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 2

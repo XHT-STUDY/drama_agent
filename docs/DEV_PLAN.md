@@ -1,8 +1,8 @@
 ﻿# DramaAgent AI Coding 项目开发执行文档
 
-> 文档版本：v1.5  
+> 文档版本：v1.6
 > 编制日期：2026-08-16  
-> 项目阶段：MVP — Phase A~I 全部完成（I-01~06：韧性/可观测/安全/MCP 扩展/性能与回归/交付文档与 RC 发布），发布候选 **v0.1.0-rc1**；Phase D（RAG）为 MVP 之外 backlog  
+> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强进行中（J-01 已完成）；Phase D（RAG）为 MVP 之外 backlog
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -2984,6 +2984,18 @@ Prompt 必须区分：
 | I-05 | 性能/覆盖率/回归 | 0.5d | I-01..I-04 | DONE | AI Agent | 验收 5 项全勾选（§1.6 指标实测达标/无未解释 flaky/E2E 5/5/连接释放/报告区分含不含 LLM 耗时）；新增 tests/performance/{test_api_latency,test_concurrent_sse,test_1000_artifacts}.py 6 测试(普通 API p95 实测 28-31ms/100 并发 SSE 首块 701.8ms 且 gauge 回落基线/1000 Artifact 分页 45.3ms, 阈值 300/1000/300ms 全绿; 显式 NullPool 修 SSE 泄漏连接复检 InterfaceError, uvicorn 进程内随机端口, 合成 run_id 隔离 worker 污染); 覆盖率双门禁 pyproject fail_under=75(总体实测 88%)+coverage report --include=domain/workflows/artifacts --fail-under=85(核心实测 92%); pytest addopts -m not performance+marker 注册, CI -m "not smoke and not performance"+核心门禁步骤, Makefile perf/cov/ci; 修复 E2E flaky(startCreation「创建项目」substring 定位器在空态过渡帧 strict-mode 冲突 → 改点头部「+ 创建项目」唯一匹配); 修复 docker-compose.e2e.yml 与主 compose 共享 project name=drama_agent 导致 e2e 清理 down -v 连带移除开发库容器 → 加 name: drama-e2e 隔离; docs/TEST_REPORT.md(计数 974 passed/0 failed/6 deselected/覆盖率 88%+92%/性能实测表/含不含 LLM 耗时区分/E2E 5×); Ruff clean, mypy 与 HEAD 一致(11, 0 新增) |
 | I-06 | 文档与 RC 发布 | 0.25d | I-05 | DONE | AI Agent | 验收全满足：新增 docs/DEMO.md（FakeLLM 离线固定步骤 + 真实 LLM smoke 说明）+ docs/KNOWN_LIMITATIONS.md（19 项 MVP 接受/backlog）+ CHANGELOG.md（Keep a Changelog，0.1.0-rc1 条目）；README 状态表修正为 A~I 全 DONE + 命令表补 cov/perf/e2e + 能力总览；API_CONTRACT 补 retry/diagnostics/metrics 端点 + 全局错误码全集（I-01/02/04）；.env.example 补 EXPORT_FILE_ROOT/SHORT_TERM_TTL_SECONDS/CONVERSATION_SUMMARY_THRESHOLD；backend+frontend 版本 0.1.0-rc1；§13.3 H/F/I → PASS；DEV_LOG I-06 条目；git tag v0.1.0-rc1 |
 | — | 🔧 大纲集数硬编码 10 + 结构校验接入重试 | 0.25d | I-06 | DONE | AI Agent | 真实 LLM 冒烟 `outline_count=2` 修复：domain/outline.py 集数校验改自洽 1..N（`len<1` 守卫 + `range(1,len+1)` + `episodes[-1]`），精确集数下沉 skill 层；skills/outline.py 结构校验接入重试循环（`_collect_struct_errors` 返回 list + system feedback 重试，用尽 raise 带"已重试 2 次"，`_apply_soft_notes` 软弱项循环后追加），version 1.1；prompts/outline.md 字段名修正 opening_hook/core_conflict + 模板/manifest/hash 快照 version 1.1.0；test_real_llm.py 加 --outline-count；全量 **981 passed/0 failed**（974→981 +7），Ruff clean，mypy app/ tests/ 0 errors，make perf 6 passed |
+| J-01 | AgentTurn、AgentAction 与消息持久化 | 2d | I-06 | DONE | AI Agent | AgentCommand/Plan/Outcome 严格 Schema；AgentTurn 幂等收据 + planning lease/有效持有者终态守卫 + 状态机；AgentAction 唯一 Run/深度约束 + 状态机；Message kind/metadata + 并发 sequence；0005 升降级通过；后端 1001 passed、mypy 287 files、Ruff clean，前端 169 passed + lint/typecheck clean |
+| J-02 | 项目上下文与预算 | 1d | J-01 | TODO | - | - |
+| J-03 | Planner Skill | 1d | J-02 | TODO | - | - |
+| J-04 | Turn/Action Service/API | 2d | J-01,J-02,J-03,J-05 | TODO | - | - |
+| J-05 | 持久化 Dispatcher 与 checkpoint | 3.5d | J-01 | TODO | - | - |
+| J-06 | 对话式剧本修订 | 1.5d | J-04,J-05 | TODO | - | - |
+| J-07 | 大纲修订与影响 Tool | 1.5d | J-03 | TODO | - | - |
+| J-08 | 大纲修订工作流 | 1d | J-05,J-07 | TODO | - | - |
+| J-09 | Action 生命周期、Outcome 与再规划 | 2d | J-04,J-05,J-06,J-08 | TODO | - | - |
+| J-10 | 前端 API 与 Hooks | 1d | J-04,J-09 | TODO | - | - |
+| J-11 | Agent Workspace UI | 2d | J-09,J-10 | TODO | - | - |
+| J-12 | E2E、评测与文档 | 2.5d | J-01..J-11 | TODO | - | - |
 
 ### 13.3 阶段验收记录
 

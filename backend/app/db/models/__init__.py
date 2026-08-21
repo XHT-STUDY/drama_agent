@@ -3,6 +3,8 @@
 重导出所有 SQLAlchemy 模型，确保 Alembic 能发现它们。
 """
 
+from app.db.models.agent_action import AgentAction
+from app.db.models.agent_turn import AgentTurn
 from app.db.models.artifact import Artifact
 from app.db.models.artifact_link import ArtifactLink
 from app.db.models.conversation import Conversation
@@ -16,6 +18,8 @@ from app.db.models.workflow_event import WorkflowEvent
 from app.db.models.workflow_run import WorkflowRun
 
 __all__ = [
+    "AgentTurn",
+    "AgentAction",
     "Project",
     "Conversation",
     "Message",

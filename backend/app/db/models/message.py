@@ -8,7 +8,8 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, UUIDMixin
@@ -25,6 +26,9 @@ class Message(Base, UUIDMixin):
     """
 
     __tablename__ = "messages"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "sequence", name="uq_messages_conversation_sequence"),
+    )
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"),
@@ -39,6 +43,17 @@ class Message(Base, UUIDMixin):
         Text,
         default="",
         comment="消息正文（Markdown）",
+    )
+    kind: Mapped[str] = mapped_column(
+        String(30),
+        default="text",
+        comment="消息类型：text / clarification / action_plan / action_result / error",
+    )
+    message_metadata: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        default=dict,
+        comment="AgentTurn、Action、Run 与 Artifact 展示引用",
     )
     sequence: Mapped[int] = mapped_column(
         Integer,

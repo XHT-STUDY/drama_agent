@@ -10,6 +10,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
@@ -49,6 +50,8 @@ def _msg_to_response(m: Message) -> MessageResponse:
         conversation_id=m.conversation_id,
         role=m.role,
         content=m.content,
+        kind=m.kind,
+        metadata=m.message_metadata,
         sequence=m.sequence,
         created_at=m.created_at,
     )
@@ -152,30 +155,50 @@ class MessageService:
         跨项目保护由数据库外键约束自然保证
         （conversation → project 是 FK，消息无法跨项目关联）。
         """
-        conv_repo = BaseRepository(db, Conversation)
-        conversation = await conv_repo.get(conversation_id)
+        # 短暂锁定 Conversation，使并发请求串行分配 sequence。
+        conversation_result = await db.execute(
+            select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+        )
+        conversation = conversation_result.scalar_one_or_none()
         if conversation is None or conversation.deleted_at is not None:
             raise NotFoundError(
                 detail=f"会话不存在: {conversation_id}",
                 code="CONVERSATION_NOT_FOUND",
             )
 
-        # 自动分配 sequence：查询当前会话最大 sequence + 1
-        max_seq_result = await db.execute(
-            select(func.coalesce(func.max(Message.sequence), 0)).where(
-                Message.conversation_id == conversation_id
+        saved: Message | None = None
+        next_sequence = 0
+        for attempt in range(2):
+            max_seq_result = await db.execute(
+                select(func.coalesce(func.max(Message.sequence), 0)).where(
+                    Message.conversation_id == conversation_id
+                )
             )
-        )
-        next_sequence: int = max_seq_result.scalar_one() + 1
-
-        message = Message(
-            conversation_id=conversation_id,
-            role=data.role,
-            content=data.content,
-            sequence=next_sequence,
-        )
-        msg_repo = BaseRepository(db, Message)
-        saved = await msg_repo.add(message)
+            next_sequence = max_seq_result.scalar_one() + 1
+            message = Message(
+                conversation_id=conversation_id,
+                role=data.role,
+                content=data.content,
+                kind=data.kind,
+                message_metadata=data.metadata,
+                sequence=next_sequence,
+            )
+            try:
+                # 唯一约束冲突只回滚当前 savepoint，不破坏调用方事务。
+                async with db.begin_nested():
+                    db.add(message)
+                    await db.flush()
+                saved = message
+                break
+            except IntegrityError:
+                if attempt == 1:
+                    raise
+                logger.warning(
+                    "消息 sequence 冲突，重新分配一次（conversation=%s）",
+                    conversation_id,
+                )
+        if saved is None:
+            raise RuntimeError("消息 sequence 分配失败")
 
         # G-01 记忆挂载：DB 落库后 → 短期记忆写入 → 必要时触发会话摘要。
         # 均为 best effort——记忆失败绝不阻断消息保存（验收）。
@@ -195,9 +218,7 @@ class MessageService:
                 )
         if self._summary is not None:
             try:
-                await self._summary.maybe_summarize(
-                    db, conversation_id, message_count=next_sequence
-                )
+                await self._summary.maybe_summarize(db, conversation_id, message_count=next_sequence)
             except Exception:
                 logger.exception(
                     "会话摘要生成失败（conversation=%s），不影响消息保存",
@@ -214,7 +235,7 @@ class MessageService:
         offset: int = 0,
         limit: int = 50,
     ) -> MessageListResponse:
-        """按会话分页查询消息列表（按 created_at + id 稳定排序）。"""
+        """按会话分页查询消息列表（按 sequence + id 稳定排序）。"""
         conv_repo = BaseRepository(db, Conversation)
         conversation = await conv_repo.get(conversation_id)
         if conversation is None or conversation.deleted_at is not None:
@@ -223,11 +244,11 @@ class MessageService:
                 code="CONVERSATION_NOT_FOUND",
             )
 
-        # 按创建时间 + ID 排序（稳定排序 — DEV_PLAN §B-03 验收要求）
+        # sequence 是会话内权威顺序，ID 作为确定性兜底。
         stmt = (
             select(Message)
             .where(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at.asc(), Message.id.asc())
+            .order_by(Message.sequence.asc(), Message.id.asc())
             .offset(offset)
             .limit(limit)
         )
@@ -236,9 +257,7 @@ class MessageService:
 
         # 总数
         count_stmt = (
-            select(func.count())
-            .select_from(Message)
-            .where(Message.conversation_id == conversation_id)
+            select(func.count()).select_from(Message).where(Message.conversation_id == conversation_id)
         )
         count_result = await db.execute(count_stmt)
         total: int = count_result.scalar_one()

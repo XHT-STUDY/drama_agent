@@ -446,7 +446,7 @@ CI 用 FakeLLM 验证契约、路由、Turn 幂等、并发确认、lease 接管
 
 | # | Task | Depends On | Estimate | Status |
 |---:|---|---|---:|---|
-| 1 | AgentTurn、AgentAction 与消息持久化 | none | 2d | Pending |
+| 1 | AgentTurn、AgentAction 与消息持久化 | none | 2d | Done |
 | 2 | 项目上下文与预算 | 1 | 1d | Pending |
 | 3 | Planner Skill | 2 | 1d | Pending |
 | 4 | Turn/Action Service/API | 1,2,3,5 | 2d | Pending |

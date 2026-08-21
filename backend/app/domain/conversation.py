@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -67,6 +68,14 @@ class MessageCreate(BaseModel):
         min_length=1,
         description="消息正文（Markdown）",
     )
+    kind: Literal["text", "clarification", "action_plan", "action_result", "error"] = Field(
+        default="text",
+        description="消息类型",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="AgentTurn、Action、Run 与 Artifact 展示引用",
+    )
 
 
 class MessageResponse(BaseModel):
@@ -78,6 +87,8 @@ class MessageResponse(BaseModel):
     conversation_id: uuid.UUID = Field(..., description="所属会话 UUID")
     role: str = Field(..., description="消息角色")
     content: str = Field(..., description="消息正文")
+    kind: str = Field(..., description="消息类型")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="展示引用")
     sequence: int = Field(..., description="消息在会话内的序号")
     created_at: datetime = Field(..., description="创建时间（UTC）")
 

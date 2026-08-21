@@ -84,6 +84,24 @@ class AppError(Exception):
         super().__init__(detail)
 
 
+class IdempotencyKeyReusedError(AppError):
+    """同一幂等键被不同请求载荷复用（409）。"""
+
+    status_code = 409
+    code = "IDEMPOTENCY_KEY_REUSED"
+
+
+class AgentStateTransitionError(AppError):
+    """AgentTurn 或 AgentAction 状态迁移不合法（409）。"""
+
+    status_code = 409
+    code = "AGENT_INVALID_TRANSITION"
+
+    def __init__(self, detail: str = "", *, entity: str = "AGENT") -> None:
+        code = f"{entity.upper()}_INVALID_TRANSITION"
+        super().__init__(detail, code=code)
+
+
 class NotFoundError(AppError):
     """资源未找到（404）。"""
 
@@ -239,9 +257,7 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     )
 
 
-async def validation_error_handler(
-    request: Request, exc: RequestValidationError
-) -> JSONResponse:
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """处理 FastAPI 请求校验失败（422）。
 
     将 Pydantic 校验错误转换为 FieldError 列表，
@@ -266,9 +282,7 @@ async def validation_error_handler(
     )
 
 
-async def http_exception_handler(
-    request: Request, exc: StarletteHTTPException
-) -> JSONResponse:
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """处理 Starlette HTTPException。
 
     包括 404（路由未匹配）、405（方法不允许）等标准 HTTP 错误。

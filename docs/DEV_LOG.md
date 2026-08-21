@@ -3144,3 +3144,43 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 用户可用 `uv run python scripts/test_real_llm.py --skill outline --outline-count 2` 复验真实 LLM 冒烟（需 .env 真实 Key，不自动执行）。
+
+## J-01 AgentTurn、AgentAction 与消息持久化（2026-08-21）
+
+### 做了什么
+
+- 新增严格的 Agent 契约：五类按 `intent` 判别的 Command、Action Plan、Outcome、Turn/Action 响应，全部 `extra="forbid"`，并提供规范化请求哈希。
+- 新增 `agent_turns`：项目级幂等键、请求哈希、Planner lease/attempt、最终消息与错误快照；Repository 使用 PostgreSQL `ON CONFLICT DO NOTHING RETURNING`、原子租约领取、有效 lease 持有者终态守卫和行锁状态迁移。
+- 新增 `agent_actions`：计划、来源 Artifact 版本/checksum 快照、结果与 Run 关联；数据库约束保证一个 Turn 一个 Action、一个 Run 一个 Action、再规划深度仅 0/1 且父子关系自洽。
+- Message 增加 `kind` 和 `metadata`；追加消息在短事务内锁定 Conversation，按 `sequence` 分配权威顺序，唯一冲突最多重试一次。
+- 新增 Alembic `0005`，明确 downgrade 会删除 Agent 审计数据与消息元数据，属于 destructive 结构回滚。
+- 先写契约与数据库集成测试得到缺模块红灯，再实现到全绿；同步更新 PLAN、API 契约和阶段 tracker。
+
+### 为什么这么做
+
+- Turn 是请求级持久化收据，必须先于 Planner/LLM 执行落库，重复请求才能复用原结果而不是再次调用模型。
+- lease 与状态迁移放在数据库原子操作/行锁内，避免多进程下仅靠进程内锁产生双规划、双确认或 Run 被替换。
+- Action 保存服务端生成的完整计划和来源版本快照，为后续确认、stale 检查、执行恢复与审计提供稳定输入。
+- 消息顺序使用数据库唯一约束兜底，使并发追加的正确性不依赖单进程事件循环。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run pytest` | **1001 passed，6 deselected** |
+| `uv run mypy app tests` | **Success：287 source files** |
+| `uv run ruff check app tests migrations/versions/0005_agent_turn_actions.py` | All checks passed |
+| `alembic upgrade head → downgrade 0004 → upgrade head`（隔离数据库） | 通过，最终 `0005 (head)` |
+| `alembic check`（仅过滤 J-01 对象） | AgentTurn/AgentAction 无新增差异；全库仍有 0005 之前的既有注释/索引漂移 |
+| `corepack pnpm lint && corepack pnpm typecheck && vitest run` | lint/typecheck 通过，**169 passed** |
+
+### 学到了什么
+
+1. 幂等不只是唯一键：还要保存规范化请求哈希，相同 key 不同 payload 必须以稳定错误拒绝。
+2. 状态机只写在应用层不够；唯一约束、深度 CheckConstraint、行锁和原子 lease 才能覆盖多 worker 竞争。
+3. SQLAlchemy 的声明类保留 `metadata`，映射消息 JSONB 时需使用 Python 属性 `message_metadata` 指向数据库列名 `metadata`。
+4. Alembic 自动差异检查会同时暴露历史漂移；应区分本次对象与既有基线，不能把全库旧问题误判为新迁移失败。
+
+### 下一步
+
+- 按 PLAN 的依赖顺序执行 **Task 5 / J-05：持久化 Dispatcher 与 checkpoint**。
