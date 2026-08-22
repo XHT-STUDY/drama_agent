@@ -3414,3 +3414,48 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 按 PLAN 的依赖顺序执行 Task 8 / J-08：大纲修订工作流与版本落库（合法输出成为 latest valid；不变量失败保存 invalid 诊断版本、Run failed、latest valid 不变；报告仍引用旧大纲的剧本）。
+
+
+## J-08 大纲修订工作流与版本落库（2026-08-22）
+
+### 做了什么
+
+- 新增 `workflows/outline_revision.py`（单节点图 revise_outline → END）与 `workflows/nodes/revise_outline.py`：
+  - 加载 source outline（服务端解析 ID，防御性校验归属/type/valid）+ 最新 valid Story Bible；
+  - 调用 OutlineReviserSkill（用户约束写入 Prompt，不变量失败带反馈重试）；
+  - 合法输出 create_validated_artifact 落库 → latest valid（sources：旧大纲 `revises` + SB `references`；旧 Artifact 内容/checksum 不变）；
+  - OutlineImpactTool 影响分析：dependent_scripts 取 derived_from 旧大纲的剧本，结果（changed_episodes / dependent_script_ids / follow_ups）写入 `state.outline_impact`，并在 run.completed payload 中透出；
+  - 不变量失败：异常携带的 last_candidate 落库为 status="invalid" 诊断版本 + Run failed，latest valid 不变。
+- Skill 扩展：`OutlineRevisionValidationError` 增加 `last_candidate` / `errors` 属性（抛出前填充），诊断版本可追溯被拒原因。
+- State 新增 `source_outline_artifact_id` / `outline_impact`；Dispatcher 支持 action=revise_outline（白名单、initial_state、completed payload 携带新旧大纲 ID 与影响摘要）。
+- Agent 侧开放 revise_outline intent：DEFAULT_AVAILABLE_INTENTS + 计划模板（目标 = 项目最新 valid 大纲，Planner 不提供 UUID；无大纲 → OUTLINE_NOT_FOUND）+ ReviseOutlineCommand run config。
+- 新增 API `GET /artifacts/{id}/references?relation=&type=`（反向引用查询，复用 find_referencing_artifacts）——直接回答"哪些 script 仍引用旧 outline"。
+- 工作流不调用剧本生成或修订：受影响剧本只进 follow-up 建议（断言 completed_nodes == ["revise_outline"]）。
+
+### 为什么这么做
+
+- 版本语义复用 Artifact 不可变模型：合法输出走 create_validated_artifact（Schema 校验 + input_hash 幂等），invalid 走显式 status="invalid" 创建——draft/valid/invalid 状态机不需要新状态。
+- 诊断版本落库放在工作流而非 Skill：Skill 保持"纯 LLM 编排 + 校验"，持久化边界留在调用方（与 OutlineSkill 不写库的约定一致）。
+- 影响分析在落库之后执行：dependent_scripts 从旧大纲的反向引用实时解析，保证"仍引用旧大纲"的判断与落库时点一致。
+- references 端点补齐 F-06 只在 revisions API 暴露的缺口：大纲修订后前端/Planner 可直接查询受影响剧本。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/integration/workflow/test_outline_revision_workflow.py | 4 passed（TDD anchor: outline_revision_creates_new_version_without_rewriting_scripts；含 invalid 诊断路径、无 SB 失败、非法目标失败） |
+| uv run pytest tests/integration/artifacts/test_artifact_api.py | 7 passed（新增 references 正例 + 404） |
+| uv run pytest tests/integration/api/test_agent_actions.py | 11 passed（新增 revise_outline 确认 → Run options） |
+| uv run pytest --disable-warnings -ra | **1070 passed，6 deselected**（1063→1070） |
+| uv run ruff check app/ tests/ | All checks passed |
+| uv run mypy app/ tests/ | Success: no issues found in 311 source files |
+
+### 学到了什么
+
+1. 借助 ArtifactLink 的反向引用做"谁依赖旧大纲"比在 workflow state 里维护映射更可靠——引用关系是事实源，state 只做快照。
+2. store.create 只 flush 不 commit：跨会话（HTTP 端点 vs 测试直写）读数据时必须在 seed 里显式 commit，否则 404。
+3. 异常对象携带结构化上下文（last_candidate/errors）是"诊断版本落库"这类需求的最小代价实现——不需要改 Skill 返回类型签名。
+
+### 下一步
+
+- 按 PLAN 的依赖顺序执行 Task 9 / J-09：AgentAction 生命周期、Outcome 与一次后续计划（终态回写、goal_status 判定、(parent_action_id, replan_depth) 唯一的后续 action_plan 提案）。

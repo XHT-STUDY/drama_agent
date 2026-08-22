@@ -196,3 +196,86 @@ class TestArtifactCreation:
             links = await store.get_source_links(db, derived.id)
             assert len(links) >= 1
             assert any(str(link.target_id) == source_id for link in links)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestArtifactReferences:
+    """反向引用查询（J-08）：大纲修订后判断哪些剧本仍引用旧大纲。"""
+
+    async def _seed_outline_with_scripts(
+        self, client: AsyncClient
+    ) -> tuple[uuid.UUID, list[str]]:
+        """播种 SB + 大纲 + 2 集剧本（derived_from 大纲），返回 (大纲 ID, 剧本 ID 列表)。"""
+        from app.artifacts.store import ArtifactStore
+        from app.db.session import _async_session_factory
+
+        project_id = uuid.UUID(
+            (await client.post("/api/v1/projects", json={"title": "引用查询"})).json()["id"]
+        )
+        assert _async_session_factory is not None, "DB not initialized"
+        async with _async_session_factory() as db:
+            store = ArtifactStore()
+            outline = await store.create(
+                db,
+                project_id=project_id,
+                artifact_type="episode_outline_set",
+                status="valid",
+                content={
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "title": "E1",
+                            "opening_hook": "h",
+                            "objective": "o",
+                            "core_conflict": "c",
+                            "key_events": ["a", "b"],
+                            "payoff": "p",
+                            "ending_hook": "e",
+                        }
+                    ],
+                    "arc_summary": "arc",
+                },
+            )
+            script_ids: list[str] = []
+            for ep in (1, 2):
+                script = await store.create(
+                    db,
+                    project_id=project_id,
+                    artifact_type="script_draft",
+                    episode_number=ep,
+                    status="valid",
+                    content={"title": f"S{ep}", "scenes": []},
+                    source_artifact_ids=[
+                        {
+                            "artifact_id": str(outline.id),
+                            "version": outline.version,
+                            "relation": "derived_from",
+                        }
+                    ],
+                )
+                script_ids.append(str(script.id))
+            await db.commit()
+            return outline.id, script_ids
+
+    async def test_references_returns_scripts_derived_from_outline(
+        self, async_client: AsyncClient
+    ) -> None:
+        """GET /artifacts/{id}/references?type=script_draft → 仍引用该大纲的剧本。"""
+        outline_id, script_ids = await self._seed_outline_with_scripts(async_client)
+
+        resp = await async_client.get(
+            f"/api/v1/artifacts/{outline_id}/references",
+            params={"type": "script_draft", "relation": "derived_from"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        returned_ids = {item["id"] for item in body}
+        assert returned_ids == set(script_ids)
+        assert all(item["type"] == "script_draft" for item in body)
+
+    async def test_references_unknown_artifact_returns_404(
+        self, async_client: AsyncClient
+    ) -> None:
+        resp = await async_client.get(f"/api/v1/artifacts/{uuid.uuid4()}/references")
+        assert resp.status_code == 404

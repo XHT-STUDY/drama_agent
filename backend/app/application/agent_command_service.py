@@ -24,6 +24,7 @@ from app.application.agent_context_service import AgentContextService
 from app.application.conversation_service import ConversationService, MessageService
 from app.application.run_service import RunService
 from app.application.workflow_dispatcher import schedule_worker
+from app.artifacts.store import ArtifactStore
 from app.core.config import Settings
 from app.core.errors import (
     AgentActionStaleError,
@@ -32,6 +33,7 @@ from app.core.errors import (
     IdempotencyKeyReusedError,
     InvalidActiveContextError,
     NotFoundError,
+    OutlineNotFoundForRevisionError,
     ProjectHasActiveRunError,
     ScriptNotFoundForRevisionError,
     UnsupportedAgentIntentError,
@@ -62,6 +64,7 @@ from app.domain.agent_command import (
     ArtifactSnapshot,
     CreateScriptCommand,
     EvaluateCommand,
+    ReviseOutlineCommand,
     ReviseScriptCommand,
     compute_request_hash,
 )
@@ -719,6 +722,54 @@ class AgentCommandService:
                     checksum=source.checksum,
                 )
             ] if source.checksum is not None else []
+        elif output.intent == "revise_outline":
+            # 目标由服务端解析：项目最新 valid 大纲，Planner 不提供 UUID。
+            source_outline = await ArtifactStore().get_latest(
+                db, project.id, "episode_outline_set", 1
+            )
+            if source_outline is None:
+                raise OutlineNotFoundForRevisionError(
+                    detail="项目没有可修订的有效分集大纲"
+                )
+            intent = "revise_outline"
+            command = ReviseOutlineCommand(
+                source_outline_id=source_outline.id,
+                constraints=constraints,
+            )
+            target = ActionTarget(target_type="outline")
+            episode_count = len(source_outline.content.get("episodes", []))
+            goal = f"按用户要求修订分集大纲（{episode_count} 集）并分析影响"[:2000]
+            steps = [
+                ActionStep(
+                    step_id="prepare_target",
+                    title="锁定修订目标",
+                    description="加载当前最新有效大纲与 Story Bible 锁定事实",
+                ),
+                ActionStep(
+                    step_id="revise_outline",
+                    title="生成修订大纲",
+                    description="按用户约束输出完整大纲，保持集数与锁定事实不变",
+                ),
+                ActionStep(
+                    step_id="impact",
+                    title="影响分析",
+                    description="逐字段比较新旧大纲，找出受影响的集与剧本",
+                ),
+                ActionStep(
+                    step_id="persist",
+                    title="版本落库",
+                    description="新大纲成为最新有效版本，旧版本不可变",
+                ),
+            ]
+            snapshots = [
+                ArtifactSnapshot(
+                    artifact_id=source_outline.id,
+                    artifact_type=source_outline.type,
+                    episode_number=source_outline.episode_number,
+                    version=source_outline.version,
+                    checksum=source_outline.checksum,
+                )
+            ] if source_outline.checksum is not None else []
         else:
             # Planner 白名单已限定意图;到达这里说明服务端与 Planner 白名单漂移,直接拒绝。
             raise UnsupportedAgentIntentError(
@@ -796,6 +847,13 @@ class AgentCommandService:
                 "options": {
                     "source_script_artifact_id": str(command.source_script_id),
                     "episode_number": command.episode_number,
+                    "user_constraints": list(command.constraints),
+                }
+            }
+        if isinstance(command, ReviseOutlineCommand):
+            return {
+                "options": {
+                    "source_outline_artifact_id": str(command.source_outline_id),
                     "user_constraints": list(command.constraints),
                 }
             }

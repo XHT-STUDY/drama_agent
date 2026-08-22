@@ -6,7 +6,7 @@ State 只存储 Artifact ID 和轻量字段，大文本不存入 State，
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class CreationState(TypedDict, total=False):
@@ -61,6 +61,12 @@ class CreationState(TypedDict, total=False):
     """服务端解析的修订目标剧本 Artifact UUID（对话式修订入口，不由 Planner 决定）。"""
     user_constraints: list[str]
     """用户约束（来自确认的 ActionPlan），拼接后写入 RevisionPlan 的 user_instruction。"""
+
+    # ---- 对话式大纲修订（J-08）----
+    source_outline_artifact_id: str | None
+    """服务端解析的修订目标大纲 Artifact UUID（对话式大纲修订入口）。"""
+    outline_impact: dict[str, Any]
+    """OutlineImpactTool 的序列化结果（变更集/受影响剧本/follow-up），供结果消息使用。"""
     needs_manual_review: bool
     """连续性失败或重评分显著下降（>5 分）时为 True，转人工审查。"""
     needs_manual_review_reason: str | None

@@ -113,6 +113,7 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 | GET | `/artifacts/{id}` | 按 ID 获取 Artifact |
 | GET | `/artifacts/{id}/versions` | 版本历史 |
 | GET | `/artifacts/{id}/links` | 源依赖查询 |
+| GET | `/artifacts/{id}/references?relation=&type=` | 反向引用查询（J-08：如仍引用旧大纲的剧本） |
 
 ## GET /artifacts/diff — 两版本 Diff
 
@@ -213,11 +214,11 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **响应语义**：响应体为 `AgentTurnResponse`（注意字段名是 `id` 而非 `turn_id`，含 `status` / `turn_type` / `response_message_id` / `action_id` / `error_code`）。终态返回 200：`turn_type=clarification`（`status=needs_input`，无 Action）、`answer`（`status=answered`，只读）、`plan`（`status=action_proposed`，返回 proposed AgentAction）；Planner 失败同样返回 200（`status=failed` + `error_code`，不创建 Action/Run）。重复请求命中有效 lease 下的 planning Turn 返回 202 + 当前快照；命中终态返回与首次完全一致的 200 原响应。同 key 不同载荷返回 409 `IDEMPOTENCY_KEY_REUSED`。
 
-**确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`、`revise_script→revise_script`（`revise_outline` 待 Task 8 开放）；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）。Run 幂等键为 `agent-action:{action_id}`。
+**确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`、`revise_script→revise_script`、`revise_outline→revise_outline`；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）。Run 幂等键为 `agent-action:{action_id}`。
 
 **revise_script 计划（J-06）**：目标由服务端解析——目标集的最新 valid 剧本（Planner 不提供 UUID），来源快照含 checksum；目标集无有效剧本时 Turn→`failed`（404 `SCRIPT_NOT_FOUND` 语义，经 Turn `error_code` 返回）。Run options 携带 `source_script_artifact_id` / `episode_number` / `user_constraints`。
 
-**Wave 2 已知限制**：Planner 白名单开放 `create_script | explain | evaluate | revise_script`（J-06 起）；单集 evaluate 的 `episode_number` 进入计划与来源快照，但当前 Run 仍评估项目全部剧本（Task 8 收敛）。
+**Wave 2 已知限制**：Planner 白名单开放 `create_script | explain | evaluate | revise_script | revise_outline`（J-06/J-08 起，M3 完成）；单集 evaluate 的 `episode_number` 进入计划与来源快照，但当前 Run 仍评估项目全部剧本。
 
 ### 修订（F-06）
 
@@ -266,8 +267,8 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
-| `action` | string | 是 | `create_script` / `evaluate` / `revise` / `revise_script` / `platform_smoke` / `import` / `export` |
-| `options` | object | `create_script` 时必需 | 创作选项；`revise_script` 时含 `source_script_artifact_id` / `episode_number` / `user_constraints` |
+| `action` | string | 是 | `create_script` / `evaluate` / `revise` / `revise_script` / `revise_outline` / `platform_smoke` / `import` / `export` |
+| `options` | object | `create_script` 时必需 | 创作选项；`revise_script` 时含 `source_script_artifact_id` / `episode_number` / `user_constraints`；`revise_outline` 时含 `source_outline_artifact_id` / `user_constraints` |
 | `options.user_input` | string (1-10000) | 是 | 用户创作的 Idea/Outline |
 | `options.source_type` | string | 否 | 默认 `"idea"` |
 | `options.outline_count` | int (1-100) | 否 | 默认 10 |

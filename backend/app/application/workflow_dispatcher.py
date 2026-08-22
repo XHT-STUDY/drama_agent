@@ -324,6 +324,7 @@ async def _execute_workflow(
     from app.workflows.creation import build_creation_workflow
     from app.workflows.evaluation import build_evaluation_workflow
     from app.workflows.import_file import build_import_workflow
+    from app.workflows.outline_revision import build_outline_revision_workflow
     from app.workflows.revision import build_revision_workflow
 
     agent = BaseAgent(name="planner", llm=llm_client)
@@ -400,7 +401,10 @@ async def _execute_workflow(
                     autocommit=True,
                 )
                 return
-            if action not in ("create_script", "evaluate", "revise", "revise_script", "import"):
+            if action not in (
+                "create_script", "evaluate", "revise", "revise_script",
+                "revise_outline", "import",
+            ):
                 raise AppError(
                     detail=f"不支持的 Workflow action: {action}",
                     status_code=400,
@@ -563,6 +567,38 @@ async def _execute_workflow(
                 workflow = build_conversational_revision_workflow(
                     checkpointer=checkpointer
                 )
+            elif action == "revise_outline":
+                # action=revise_outline → 对话式大纲修订（J-08）：单节点工作流，
+                # 目标由服务端解析的 source outline ID 决定；合法输出落库为
+                # latest valid，不变量失败保存 invalid 诊断版本且 Run failed。
+                source_outline_id = options.get("source_outline_artifact_id")
+                if not source_outline_id:
+                    raise AppError(
+                        detail="revise_outline 需要 source_outline_artifact_id",
+                        status_code=400,
+                        code="UNSUPPORTED_ACTION",
+                    )
+                constraints = list(options.get("user_constraints", []))
+                initial_state = {
+                    "run_id": str(run_id),
+                    "project_id": str(run.project_id),
+                    "action": action,
+                    "source_outline_artifact_id": str(source_outline_id),
+                    "user_constraints": constraints,
+                    "user_instruction": "；".join(c for c in constraints if c) or None,
+                    "outline_set_artifact_id": None,
+                    "outline_impact": {},
+                    "script_artifact_ids": {},
+                    "evaluation_artifact_ids": {},
+                    "status": "running",
+                    "needs_user_input": False,
+                    "error_node": None,
+                    "error_detail": None,
+                    "completed_nodes": [],
+                    "input_hashes": {},
+                    "prompt_versions": {},
+                }
+                workflow = build_outline_revision_workflow(checkpointer=checkpointer)
             else:
                 # action=revise → 独立修订工作流（F-06）：中途播种状态。
                 # 每集取最新 valid 剧本与其绑定评估；用户指定剧本时覆盖对应集，
@@ -756,6 +792,29 @@ async def _execute_workflow(
                     payload={
                         "message": "评估完成",
                         "evaluation_count": len(final_state.get("evaluation_artifact_ids", {})),
+                    },
+                    autocommit=True,
+                )
+            elif action == "revise_outline":
+                # 大纲修订完成：payload 携带新旧大纲 ID 与影响分析结果，
+                # 明确哪些剧本仍引用旧大纲（follow-up 由 J-09 消费）。
+                impact = final_state.get("outline_impact", {})
+                await run_svc.transition_status(db, run_id, "completed", lease_owner=lease_owner)
+                await publisher.publish(
+                    db,
+                    run_id=run_id,
+                    event_type="run.completed",
+                    payload={
+                        "message": "大纲修订完成",
+                        "old_outline_artifact_id": final_state.get(
+                            "source_outline_artifact_id"
+                        ),
+                        "new_outline_artifact_id": final_state.get(
+                            "outline_set_artifact_id"
+                        ),
+                        "changed_episodes": impact.get("changed_episodes", []),
+                        "dependent_script_ids": impact.get("dependent_script_ids", []),
+                        "follow_ups": impact.get("follow_ups", []),
                     },
                     autocommit=True,
                 )

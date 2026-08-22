@@ -226,6 +226,16 @@ class ScriptNotFoundForRevisionError(NotFoundError):
     code = "SCRIPT_NOT_FOUND"
 
 
+class OutlineNotFoundForRevisionError(NotFoundError):
+    """项目没有可修订的有效大纲（404 OUTLINE_NOT_FOUND，J-08）。
+
+    服务端解析 revise_outline 计划的 source outline 时，
+    项目不存在最新 valid 分集大纲。
+    """
+
+    code = "OUTLINE_NOT_FOUND"
+
+
 class BudgetExceededError(AppError):
     """Run 的 LLM 预算超限（409 RUN_BUDGET_EXCEEDED，I-01）。
 

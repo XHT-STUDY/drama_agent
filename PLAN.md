@@ -453,7 +453,7 @@ CI 用 FakeLLM 验证契约、路由、Turn 幂等、并发确认、lease 接管
 | 5 | 持久化 Dispatcher 与 checkpoint | 1 | 3.5d | Done |
 | 6 | 对话式剧本修订 | 4,5 | 1.5d | Done |
 | 7 | 大纲修订与影响 Tool | 3 | 1.5d | Done |
-| 8 | 大纲修订工作流 | 5,7 | 1d | Pending |
+| 8 | 大纲修订工作流 | 5,7 | 1d | Done |
 | 9 | Action 生命周期、Outcome 与再规划 | 4,5,6,8 | 2d | Pending |
 | 10 | 前端 API 与 Hooks | 4,9 | 1d | Pending |
 | 11 | Agent Workspace UI | 9,10 | 2d | Pending |

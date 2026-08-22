@@ -7,6 +7,7 @@
 - GET  /artifacts/{artifact_id}                                 获取指定版本
 - GET  /artifacts/{artifact_id}/versions                        版本历史
 - GET  /artifacts/{artifact_id}/links                           源依赖查询
+- GET  /artifacts/{artifact_id}/references                      反向引用查询（J-08）
 """
 
 from __future__ import annotations
@@ -93,3 +94,22 @@ async def get_artifact_links(
 ) -> list[dict[str, Any]]:
     """查询 Artifact 的源依赖关系。"""
     return await _service.get_source_links(db, artifact_id)
+
+
+@router.get("/artifacts/{artifact_id}/references")
+async def get_artifact_references(
+    artifact_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    relation: Annotated[str | None, Query(description="来源关系过滤，如 derived_from")] = None,
+    type: Annotated[str | None, Query(alias="type", description="引用方类型过滤")] = None,
+) -> list[dict[str, Any]]:
+    """查询反向引用指定 Artifact 的产物（J-08）。
+
+    例：GET /artifacts/{outline_id}/references?relation=derived_from&type=script_draft
+    → 仍引用旧大纲的剧本列表（大纲修订后判断哪些剧本需要跟进）。
+    """
+    await _service.get_version(db, artifact_id)  # 404 语义与其它端点一致
+    artifacts = await _service.find_referencing_artifacts(
+        db, artifact_id, relation=relation, artifact_type=type
+    )
+    return [a.to_dict() for a in artifacts]

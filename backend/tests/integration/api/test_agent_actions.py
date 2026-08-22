@@ -32,6 +32,7 @@ from app.domain.agent_command import (
     CreateScriptCommand,
     EvaluateCommand,
     ExplainCommand,
+    ReviseOutlineCommand,
     ReviseScriptCommand,
 )
 
@@ -424,6 +425,66 @@ async def test_confirm_revise_script_creates_run_with_source_snapshot(
     assert options["source_script_artifact_id"] == str(script.id)
     assert options["episode_number"] == 2
     assert options["user_constraints"] == ["增加主角与教练的正面冲突"]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_confirm_revise_outline_creates_run_with_source_outline(
+    agent_client: AsyncClient,
+    db_session: AsyncSession,
+    no_worker: None,
+) -> None:
+    """确认 revise_outline 计划 → Run action=revise_outline，config 携带服务端解析的大纲与约束。"""
+    project = Project(title="大纲修订测试", target_episode_count=10)
+    db_session.add(project)
+    await db_session.flush()
+    outline = Artifact(
+        project_id=project.id,
+        type="episode_outline_set",
+        version=1,
+        episode_number=1,
+        content={"episodes": [], "arc_summary": "arc"},
+        status="valid",
+        checksum=_CHECKSUM_V1,
+    )
+    db_session.add(outline)
+    await db_session.commit()
+    plan = AgentActionPlan(
+        goal="按用户要求修订分集大纲并分析影响",
+        intent="revise_outline",
+        command=ReviseOutlineCommand(
+            source_outline_id=outline.id,
+            constraints=["第 3 集增加正面冲突"],
+        ),
+        target=ActionTarget(target_type="outline"),
+        steps=[
+            ActionStep(step_id="revise_outline", title="修订大纲", description="生成修订大纲并分析影响"),
+        ],
+    )
+    _project_id, action_id = await _seed_action(
+        db_session,
+        plan=plan,
+        project_id=project.id,
+        snapshots=[
+            ArtifactSnapshot(
+                artifact_id=outline.id,
+                artifact_type="episode_outline_set",
+                episode_number=1,
+                version=1,
+                checksum=_CHECKSUM_V1,
+            )
+        ],
+    )
+
+    resp = await agent_client.post(f"/api/v1/agent/actions/{action_id}/confirm")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["run"]["action"] == "revise_outline"
+
+    run_resp = await agent_client.get(f"/api/v1/runs/{body['run']['run_id']}")
+    options = run_resp.json()["config_snapshot"]["options"]
+    assert options["source_outline_artifact_id"] == str(outline.id)
+    assert options["user_constraints"] == ["第 3 集增加正面冲突"]
 
 
 @pytest.mark.integration

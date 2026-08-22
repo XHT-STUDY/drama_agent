@@ -31,7 +31,14 @@ _MAX_RETRIES = 2  # 结构/不变量校验失败的最大重试次数
 
 
 class OutlineRevisionValidationError(Exception):
-    """大纲修订后校验失败——输出不满足服务端不变量。"""
+    """大纲修订后校验失败——输出不满足服务端不变量。
+
+    last_candidate / errors 携带最后一次被拒绝的输出与全部不变量错误，
+    供调用方（J-08 工作流）把诊断版本落库为 status="invalid"。
+    """
+
+    last_candidate: EpisodeOutlineSet | None = None
+    errors: list[str] = []
 
 
 class OutlineReviserSkill(Skill):
@@ -136,10 +143,13 @@ class OutlineReviserSkill(Skill):
                         ),
                     })
                     continue
-                raise OutlineRevisionValidationError(
+                error = OutlineRevisionValidationError(
                     f"大纲修订不变量校验失败（已重试 {_MAX_RETRIES} 次）:\n"
                     + "\n".join(f"  - {e}" for e in invariant_errors)
                 )
+                error.last_candidate = candidate
+                error.errors = list(invariant_errors)
+                raise error
 
             result_set = candidate
             break

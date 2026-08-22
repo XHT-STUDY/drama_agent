@@ -23,7 +23,9 @@ from app.skills.protocol import Skill, SkillMetadata
 KNOWN_AGENT_INTENTS = frozenset(
     {"create_script", "explain", "revise_outline", "revise_script", "evaluate"}
 )
-DEFAULT_AVAILABLE_INTENTS = ("create_script", "explain", "evaluate", "revise_script")
+DEFAULT_AVAILABLE_INTENTS = (
+    "create_script", "explain", "evaluate", "revise_script", "revise_outline",
+)
 
 _REVISION_RE = re.compile(r"(修改|修订|改写|重写|调整|润色|删掉|增加|替换)")
 _CONTEXT_REFERENCE_RE = re.compile(r"(这里|此处|这个版本|当前稿|当前剧本|上面)")
