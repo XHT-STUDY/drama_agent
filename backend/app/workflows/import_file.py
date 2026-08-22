@@ -212,10 +212,12 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
         return node_failure("import_file", e)
 
 
-def build_import_workflow() -> CompiledStateGraph[ImportState, Any, Any, Any]:
+def build_import_workflow(
+    *, checkpointer: Any | None = None
+) -> CompiledStateGraph[ImportState, Any, Any, Any]:
     """构建 ImportFileWorkflow 的 LangGraph 状态图。"""
     builder = StateGraph(ImportState)
     builder.add_node("import_file", import_file_node)
     builder.set_entry_point("import_file")
     builder.add_edge("import_file", END)
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

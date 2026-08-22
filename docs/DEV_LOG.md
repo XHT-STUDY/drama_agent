@@ -3184,3 +3184,45 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 按 PLAN 的依赖顺序执行 **Task 5 / J-05：持久化 Dispatcher 与 checkpoint**。
+
+## J-05 持久化 WorkflowDispatcher 与节点恢复（2026-08-22）
+
+### 做了什么
+
+- 将 Workflow Worker 从 API 路由搬到应用层 WorkflowDispatcher；API 先提交 durable Run，再做 best-effort 唤醒，数据库成为唯一执行事实源。
+- WorkflowRun 增加 idempotency_key、request_hash、lease_owner、lease_expires_at、attempt_count；RunService 删除进程内幂等字典，改为数据库收据与请求哈希校验。
+- 新增项目级单活跃 Run 部分唯一索引，以及 (project_id, action, idempotency_key) 部分唯一索引；相同 key 不同 payload 返回 IDEMPOTENCY_KEY_REUSED。
+- Dispatcher 使用 FOR UPDATE SKIP LOCKED 领取 queued/过期 running Run，续租心跳、恢复次数上限和 lease_owner 终态 fencing 共同防止多实例重复执行与旧 Worker 越权收尾。
+- 新增 Alembic 0006；升级前显式列出存在多个活跃 Run 的 project_id 并中止，不静默篡改历史状态。
+- 四条 LangGraph 长工作流接入 AsyncPostgresSaver，以 run_id 作为 thread_id；state_summary 保留为诊断/兼容摘要，不再是唯一恢复依据。
+- 新增 checkpoint 运维 CLI；make migrate 显式安装 saver 表并做读写探针，migrate-check/doctor 验证 schema。应用启动只读检查 schema，不执行运行期 DDL。
+- 未知 action 也进入 Dispatcher，并以 UNSUPPORTED_ACTION 失败，避免静默 completed 或永久 queued。
+
+### 为什么这么做
+
+- 进程内 Task 只能降低唤醒延迟，不能承担队列、幂等或恢复语义；重启和多实例正确性必须落在 PostgreSQL 行锁、唯一约束和租约上。
+- 请求幂等必须同时保存 key 与规范化请求哈希，否则同一个 key 代表不同 payload 时会错误复用结果。
+- LangGraph checkpoint 与 Run lease 分工：checkpoint 决定从哪个节点继续，lease 决定哪个实例有权继续；只有两者同时存在，恢复才不会变成重复执行。
+- schema setup 与应用启动解耦，避免多个应用实例启动时竞争 DDL，也让部署缺迁移时快速失败而不是运行中才暴露。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| make migrate | 真实本地库 0005 -> 0006 成功；checkpoint setup + 读写探针通过 |
+| make migrate-check | Alembic head + checkpoint read/write 均通过 |
+| uv run ruff check app/ tests/ | All checks passed |
+| uv run mypy app/ tests/ | Success: no issues found in 291 source files |
+| 单元/契约/安全测试分组 | 全绿 |
+| API/Exit Gate/health 集成测试分组 | 全绿 |
+| Workflow/DB/Artifact 集成测试分组 | 全绿 |
+| Event/Export/Memory/RAG 集成测试分组 | 全绿 |
+| Task 5 核心测试 | durable idempotency、重启领取、过期租约恢复、双 Dispatcher 竞争、旧 lease fencing、未知 action 全绿 |
+| 前端门禁 | 本次无前端改动；WSL 缺 pnpm，Windows 侧工作区未安装可执行的 frontend node_modules，未重复执行 |
+
+### 学到了什么
+
+1. 数据库队列仍要做 fencing：开始执行时验证 lease 不够；旧 Worker 在暂停后可能失去租约，所有终态写入必须再次绑定当前 lease_owner。
+2. 先提交再唤醒：在请求事务提交前启动后台领取，Dispatcher 可能看不到新 Run 并提前退出；显式 commit 后 wake 才不会丢通知。
+3. checkpoint DDL 属于部署步骤：AsyncPostgresSaver.setup() 应由 migrate/CLI 调用；应用启动只做只读 schema 检查。
+4. langgraph-checkpoint-postgres 还需要可用的 libpq 实现：无系统 libpq 的镜像要显式安装 psycopg[binary]，否则导入阶段会报 no pq wrapper。

@@ -45,6 +45,7 @@ async def test_engine() -> Any:
     使用 NullPool 避免跨测试连接泄漏。
     """
     db_url = _get_test_db_url()
+    os.environ.setdefault("TEST_DATABASE_URL", db_url)
     engine = create_async_engine(db_url, poolclass=None)  # NullPool
 
     # 手动创建测试数据库（如果不存在）
@@ -69,6 +70,11 @@ async def test_engine() -> Any:
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+
+    from app.workflows.persistence import setup_checkpoint_schema
+
+    checkpoint_settings = Settings(app_env="test", database_url=db_url)
+    await setup_checkpoint_schema(checkpoint_settings)
 
     yield engine
 

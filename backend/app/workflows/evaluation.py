@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -29,7 +29,9 @@ def _should_pause_for_revision(state: CreationState) -> Literal["__end__"]:
     return "__end__"
 
 
-def build_evaluation_workflow() -> CompiledStateGraph[CreationState]:
+def build_evaluation_workflow(
+    *, checkpointer: Any | None = None
+) -> CompiledStateGraph[CreationState]:
     """构建评估工作流的 LangGraph 状态图。
 
     图结构:
@@ -49,7 +51,7 @@ def build_evaluation_workflow() -> CompiledStateGraph[CreationState]:
         {"__end__": END},
     )
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 # 模块级单例（惰性构建）

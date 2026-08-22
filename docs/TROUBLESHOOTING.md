@@ -502,3 +502,15 @@ if state.get("status") == "failed":
 1. **"可配置"是跨层契约，改默认值要全链 grep**：API 参数 → Input 字段 → Prompt 变量 → schema 校验器，任何一层写死旧默认值（`== 10`、`range(1,11)`）都会在真实调用时才暴露，且契约测试可能把旧行为固化。改这类配置先 `grep -nE "== 10|range\(1, 11\)|10 集"`。
 2. **Pydantic 重试只解决"形状错"，语义错要单独接循环**：`extra=forbid` 挡不住"角色引用不存在"这类跨对象语义错误；凡是决定 artifact 是否 valid 的校验都要进重试循环，否则"失败即终止"会浪费一整次 LLM 调用并杀死工作流。
 3. **硬校验（可重试）与软校验（只追加）要分层**：集数/角色/四要素是硬项——不通过就不该存 valid；sequence 高潮 note 是软弱项——LLM 忽略不致命，追加即可，混在一起会过度重试、烧预算。
+
+---
+
+## 2026-08-22 — Dispatcher 测试清库死锁与 PostgreSQL saver 的 pq wrapper 缺失
+
+**症状**：接入数据库 Dispatcher 后，API 集成测试的下一个用例在 DELETE FROM workflow_runs 清库时出现 PostgreSQL deadlock；同时首次导入 AsyncPostgresSaver 报 ImportError: no pq wrapper available。
+
+**产生原因**：API 测试不运行 FastAPI lifespan，前一用例唤醒的 Dispatcher Task 因此没有 shutdown，仍持有 Run/事件事务并与下一用例清库互锁。另一方面，langgraph-checkpoint-postgres 安装 psycopg 不代表运行环境一定有系统 libpq 或 binary wrapper。
+
+**解决方案**：API fixture teardown 显式 await shutdown_dispatcher() 并等待任务退出；请求入口先 commit durable Run 再 wake。依赖同时声明 psycopg[binary]，checkpoint 表只由 make migrate/CLI setup，测试 session 初始化时显式 setup。
+
+**学习收获**：数据库成为事实源不等于进程内 Task 可以不管理生命周期；测试和服务关闭都必须等待后台任务退出。PostgreSQL 驱动也要验证“能导入并连接”，不能只看依赖解析成功。

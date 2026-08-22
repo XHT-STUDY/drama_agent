@@ -93,7 +93,7 @@ class TestAgentActionRepository:
         run_two = WorkflowRun(
             project_id=project.id,
             action="evaluate",
-            status="queued",
+            status="completed",
         )
         test_session.add_all([action, run_one, run_two])
         await test_session.flush()

@@ -9,21 +9,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import AppError, NotFoundError
+from app.core.errors import AppError, IdempotencyKeyReusedError, NotFoundError, RunAlreadyActiveError
 from app.db.models.project import Project
 from app.db.models.workflow_run import WorkflowRun
 from app.events.publisher import EventPublisher
 from app.observability.metrics import workflow_runs_total
 from app.workflows.checkpoint import request_cancel
-
-# 内存级幂等键存储（MVP 简化，后续可迁 Redis/DB）
-_idempotency_store: dict[str, uuid.UUID] = {}
 
 # 合法状态转换（I-01：running → cancelled 允许协作式取消）
 _VALID_TRANSITIONS: dict[str, set[str]] = {
@@ -41,6 +41,13 @@ class RunService:
 
     def __init__(self) -> None:
         self._publisher = EventPublisher()
+
+    @staticmethod
+    def request_hash(action: str, config: dict[str, Any] | None) -> str:
+        """生成稳定的请求指纹，键顺序不影响结果。"""
+        payload = {"action": action, "config": config or {}}
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     # ---- 创建 ----
 
@@ -63,14 +70,20 @@ class RunService:
         Raises:
             NotFoundError: 项目不存在
         """
-        # 幂等检查
-        if idempotency_key and idempotency_key in _idempotency_store:
-            existing_id = _idempotency_store[idempotency_key]
+        request_hash = self.request_hash(action, config)
+
+        if idempotency_key:
             result = await db.execute(
-                select(WorkflowRun).where(WorkflowRun.id == existing_id)
+                select(WorkflowRun).where(
+                    WorkflowRun.project_id == project_id,
+                    WorkflowRun.action == action,
+                    WorkflowRun.idempotency_key == idempotency_key,
+                )
             )
             existing = result.scalar_one_or_none()
             if existing is not None:
+                if existing.request_hash != request_hash:
+                    raise IdempotencyKeyReusedError(detail="幂等键已用于不同请求")
                 return existing
 
         # 校验项目存在
@@ -79,22 +92,47 @@ class RunService:
         if project is None or project.deleted_at is not None:
             raise NotFoundError(detail=f"项目不存在: {project_id}", code="PROJECT_NOT_FOUND")
 
+        active_result = await db.execute(
+            select(WorkflowRun).where(
+                WorkflowRun.project_id == project_id,
+                WorkflowRun.status.in_(("queued", "running")),
+            )
+        )
+        active = active_result.scalar_one_or_none()
+        if active is not None:
+            raise RunAlreadyActiveError(detail=f"项目已有活跃 Run: {active.id}")
+
         # 创建 Run
         run = WorkflowRun(
             project_id=project_id,
             action=action,
             status="queued",
             config_snapshot=config,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
         )
-        db.add(run)
-        await db.flush()
+        try:
+            async with db.begin_nested():
+                db.add(run)
+                await db.flush()
+        except IntegrityError:
+            if idempotency_key is not None:
+                result = await db.execute(
+                    select(WorkflowRun).where(
+                        WorkflowRun.project_id == project_id,
+                        WorkflowRun.action == action,
+                        WorkflowRun.idempotency_key == idempotency_key,
+                    )
+                )
+                existing = result.scalar_one_or_none()
+                if existing is not None:
+                    if existing.request_hash != request_hash:
+                        raise IdempotencyKeyReusedError(detail="幂等键已用于不同请求") from None
+                    return existing
+            raise RunAlreadyActiveError(detail="项目已有活跃 Run") from None
 
         # I-02：Run 创建计数（status=queued）
         workflow_runs_total.inc(action=action, status="queued")
-
-        # 存储幂等键
-        if idempotency_key:
-            _idempotency_store[idempotency_key] = run.id
 
         # 发布 run.created 事件
         await self._publisher.publish(
@@ -113,14 +151,25 @@ class RunService:
         db: AsyncSession,
         run_id: uuid.UUID,
         new_status: str,
+        *,
+        lease_owner: str | None = None,
     ) -> WorkflowRun:
         """执行状态转换。
 
         校验合法性；如转换到终态则发布对应事件。
         """
-        result = await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))
+        stmt = select(WorkflowRun).where(WorkflowRun.id == run_id)
+        if lease_owner is not None:
+            stmt = stmt.where(WorkflowRun.lease_owner == lease_owner)
+        result = await db.execute(stmt)
         run = result.scalar_one_or_none()
         if run is None:
+            if lease_owner is not None:
+                raise AppError(
+                    detail="Workflow 租约已丢失，拒绝旧 Worker 写入终态",
+                    status_code=409,
+                    code="WORKFLOW_LEASE_LOST",
+                )
             raise NotFoundError(detail=f"Run 不存在: {run_id}", code="RUN_NOT_FOUND")
 
         current = run.status
@@ -133,6 +182,9 @@ class RunService:
             )
 
         run.status = new_status
+        if new_status not in ("queued", "running"):
+            run.lease_owner = None
+            run.lease_expires_at = None
         await db.flush()
 
         # I-02：状态变更计数（action 低基数；run_id 不入标签）

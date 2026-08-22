@@ -48,3 +48,6 @@ async def async_client(app: Any) -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+    from app.application.workflow_dispatcher import shutdown_dispatcher
+    await shutdown_dispatcher()

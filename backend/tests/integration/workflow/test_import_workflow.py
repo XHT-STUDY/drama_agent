@@ -289,9 +289,12 @@ class TestImportWorkflow:
         db = workflow_config["configurable"]["db"]
         upload_id = await _seed_upload(db, test_project, filename="参考素材.txt", text=_REFERENCE_TEXT)
         run1 = await _start_import_run(workflow_config, test_project)
-        run2 = await _start_import_run(workflow_config, test_project)
 
         final1 = await _run_import(workflow_config, str(run1.id), test_project, upload_id)
+        await workflow_config["configurable"]["run_service"].transition_status(
+            db, run1.id, "completed"
+        )
+        run2 = await _start_import_run(workflow_config, test_project)
         final2 = await _run_import(workflow_config, str(run2.id), test_project, upload_id)
 
         assert final1["classification_artifact_id"] == final2["classification_artifact_id"]

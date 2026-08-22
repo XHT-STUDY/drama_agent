@@ -61,11 +61,10 @@ def _timed_node(node_name: str, fn: _NodeFn) -> _NodeFn:
             try:
                 return await fn(state)
             finally:
-                workflow_node_duration_seconds.observe(
-                    time.monotonic() - start, node=node_name
-                )
+                workflow_node_duration_seconds.observe(time.monotonic() - start, node=node_name)
 
     return _wrapped  # type: ignore[return-value]
+
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +112,7 @@ def _should_route_after_eval(state: CreationState) -> Literal["select_revision",
     return "finalize"
 
 
-def build_creation_workflow() -> CompiledStateGraph[Any, Any, Any, Any]:
+def build_creation_workflow(*, checkpointer: Any | None = None) -> CompiledStateGraph[Any, Any, Any, Any]:
     """构建 Creation Workflow 的 LangGraph 状态图。
 
     图结构:
@@ -187,8 +186,7 @@ def build_creation_workflow() -> CompiledStateGraph[Any, Any, Any, Any]:
     )
     builder.add_edge("finalize", END)
 
-    # 编译（MVP 阶段不使用 checkpointer，后续阶段添加）
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 # 模块级单例（惰性构建）

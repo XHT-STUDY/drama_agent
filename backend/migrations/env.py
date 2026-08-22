@@ -28,6 +28,21 @@ if config.config_file_name is not None:
 settings = Settings()
 target_metadata = Base.metadata
 
+_EXTERNAL_TABLES = {
+    "checkpoint_blobs",
+    "checkpoint_migrations",
+    "checkpoint_writes",
+    "checkpoints",
+}
+
+
+def include_object(
+    obj: Any, name: str | None, type_: str, reflected: bool, compare_to: Any
+) -> bool:
+    """忽略由 LangGraph saver 自己迁移的外部表。"""
+    del obj, reflected, compare_to
+    return not (type_ == "table" and name in _EXTERNAL_TABLES)
+
 
 def run_migrations_offline() -> None:
     """离线模式：生成 SQL 脚本而不连接数据库。
@@ -40,6 +55,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -48,7 +64,11 @@ def run_migrations_offline() -> None:
 
 def do_run_migrations(connection: Any) -> None:  # noqa: ANN401
     """在给定的同步连接上执行迁移。"""
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

@@ -2988,7 +2988,7 @@ Prompt 必须区分：
 | J-02 | 项目上下文与预算 | 1d | J-01 | TODO | - | - |
 | J-03 | Planner Skill | 1d | J-02 | TODO | - | - |
 | J-04 | Turn/Action Service/API | 2d | J-01,J-02,J-03,J-05 | TODO | - | - |
-| J-05 | 持久化 Dispatcher 与 checkpoint | 3.5d | J-01 | TODO | - | - |
+| J-05 | 持久化 Dispatcher 与 checkpoint | 3.5d | J-01 | PASS | AI Agent | 2026-08-22：0006 + DB lease Dispatcher + PostgreSQL saver；迁移、ruff、mypy、后端全量分组测试通过 |
 | J-06 | 对话式剧本修订 | 1.5d | J-04,J-05 | TODO | - | - |
 | J-07 | 大纲修订与影响 Tool | 1.5d | J-03 | TODO | - | - |
 | J-08 | 大纲修订工作流 | 1d | J-05,J-07 | TODO | - | - |

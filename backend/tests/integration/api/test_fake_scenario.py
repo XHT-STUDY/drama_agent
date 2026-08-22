@@ -18,7 +18,7 @@ from typing import cast
 
 import pytest
 
-from app.api.v1.runs import _register_fake_fixtures
+from app.application.workflow_dispatcher import _register_fake_fixtures
 from app.domain.evaluation import EvaluationReport, compute_need_revision
 from app.llm.fake import FakeLLM
 

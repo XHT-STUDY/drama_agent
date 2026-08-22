@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,6 +27,23 @@ class WorkflowRun(Base, UUIDMixin):
     """
 
     __tablename__ = "workflow_runs"
+
+    __table_args__ = (
+        Index(
+            "uq_workflow_runs_idempotency",
+            "project_id",
+            "action",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+        Index(
+            "uq_workflow_runs_active_project",
+            "project_id",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'running')"),
+        ),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="RESTRICT"),
@@ -50,6 +68,32 @@ class WorkflowRun(Base, UUIDMixin):
         JSONB,
         default=None,
         comment="Run 创建时的配置快照（所有可配置的参数）",
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(128),
+        default=None,
+        comment="项目与 action 范围内的持久化幂等键",
+    )
+    request_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        default=None,
+        comment="规范化 action/config 请求的 SHA256",
+    )
+    lease_owner: Mapped[str | None] = mapped_column(
+        String(100),
+        default=None,
+        comment="当前 WorkflowDispatcher 租约持有者",
+    )
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=None,
+        comment="Dispatcher 租约过期时间",
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        comment="Dispatcher 领取/恢复次数",
     )
     error_code: Mapped[str | None] = mapped_column(
         String(50),

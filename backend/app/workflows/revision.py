@@ -17,7 +17,7 @@ MAX_REVISION_ROUNDS=1 下成立；未来 MAX>1 需引入"轮次键名"（见计�
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -98,7 +98,9 @@ def _should_route_after_revision(state: CreationState) -> Literal["select_revisi
     return "finalize"
 
 
-def build_revision_workflow() -> CompiledStateGraph[CreationState, None, CreationState, CreationState]:
+def build_revision_workflow(
+    *, checkpointer: Any | None = None
+) -> CompiledStateGraph[CreationState, None, CreationState, CreationState]:
     """构建独立的修订工作流（F-05）。
 
     图结构:
@@ -139,4 +141,4 @@ def build_revision_workflow() -> CompiledStateGraph[CreationState, None, Creatio
         {"select_revision": "select_revision", "finalize": END, "__end__": END},
     )
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

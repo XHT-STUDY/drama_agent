@@ -27,11 +27,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db
-from app.api.v1.runs import RunResponse, schedule_worker
+from app.api.v1.runs import RunResponse
 from app.application.artifact_service import ArtifactService
 from app.application.evaluation_service import EvaluationService
 from app.application.revision_service import RevisionService
 from app.application.run_service import RunService
+from app.application.workflow_dispatcher import schedule_worker
 from app.core.errors import AppError, NotFoundError
 from app.domain.revision import RevisionPlan
 
@@ -138,6 +139,7 @@ async def create_revision(
         idempotency_key=body.idempotency_key,
     )
 
+    await db.commit()
     # 异步启动后台 Worker（best effort，不阻塞响应）
     schedule_worker(run.id, "revise", config_snapshot)
 

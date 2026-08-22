@@ -67,13 +67,15 @@ down:
 migrate:
 	@echo "=== 应用数据库迁移 ==="
 	cd backend && uv run alembic upgrade head
+	cd backend && uv run python -m app.cli.checkpoints setup
 	@echo "=== 迁移完成 ==="
 
 ## 检查数据库迁移是否落后（head 是否已应用）
 migrate-check:
 	@cd backend && uv run alembic current 2>&1 | grep -q "(head)" \
 		&& echo "=== 数据库迁移已是最新 ===" \
-		|| echo "WARN: 数据库迁移落后，请运行 make migrate"
+		|| (echo "ERROR: 数据库迁移落后，请运行 make migrate" && exit 1)
+	@cd backend && uv run python -m app.cli.checkpoints check
 
 ## 检查环境健康状态
 doctor:
@@ -95,7 +97,8 @@ doctor:
 	@docker compose exec -T redis redis-cli ping 2>/dev/null || echo "WARN: Redis 未运行或未就绪，请运行 make up"
 	@echo "=== 检查数据库迁移 ==="
 	@cd backend && uv run alembic current 2>&1 | grep -q "(head)" \
-		&& echo "OK: 迁移已是最新" \
+		&& uv run python -m app.cli.checkpoints check \
+		&& echo "OK: 迁移与 checkpoint schema 已就绪" \
 		|| echo "WARN: 迁移落后，请运行 make migrate"
 	@echo "=== 检查本地运行时目录 ==="
 	@(test -d var/uploads && test -d var/artifacts) || echo "WARN: var/uploads 或 var/artifacts 目录不存在，请运行 make up"

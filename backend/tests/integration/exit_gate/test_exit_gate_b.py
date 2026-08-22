@@ -74,6 +74,10 @@ class TestExitGateB:
         assert data["action"] == "platform_smoke"
 
         # 验证幂等：相同 key 返回相同 run_id
+        proj_resp = await async_client.post(
+            "/api/v1/projects", json={"title": "Gate B 幂等项目"}
+        )
+        project_id = proj_resp.json()["id"]
         key = f"gate-b-idempotent-{uuid.uuid4()}"
         r1 = await async_client.post(
             f"/api/v1/projects/{project_id}/runs",

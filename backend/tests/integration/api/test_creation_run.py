@@ -82,6 +82,17 @@ class TestCreateScriptAPI:
         assert final.status_code == 200
         assert final.json()["status"] in ("completed", "failed", "running")
 
+        from app.core.config import Settings
+        from app.workflows.persistence import open_workflow_checkpointer
+
+        config = {"configurable": {"thread_id": run_id, "checkpoint_ns": ""}}
+        async with open_workflow_checkpointer(
+            Settings(app_env="test")
+        ) as checkpointer:
+            checkpoint = await checkpointer.aget_tuple(config)  # type: ignore[arg-type]
+        assert checkpoint is not None
+        assert checkpoint.config["configurable"]["thread_id"] == run_id
+
     async def test_artifacts_created_after_worker(
         self, async_client: AsyncClient,
     ) -> None:
@@ -205,6 +216,78 @@ class TestCreateScriptAPI:
             },
         )
         assert r1.json()["run_id"] == r2.json()["run_id"]
+
+    async def test_duplicate_idempotency_key_reuses_run_after_service_recreation(
+        self, async_client: AsyncClient,
+    ) -> None:
+        """幂等收据持久化在 DB，应用服务重建后仍返回原 Run。"""
+        from app.application.run_service import RunService
+        from app.db.session import _async_session_factory
+
+        project_id = await self._create_project(async_client)
+        key = f"durable-contract-{uuid.uuid4()}"
+        payload = {"options": {"user_input": "持久化幂等", "source_type": "idea"}}
+        assert _async_session_factory is not None
+
+        async with _async_session_factory() as db, db.begin():
+            first = await RunService().create_run(
+                db,
+                project_id=uuid.UUID(project_id),
+                action="create_script",
+                config=payload,
+                idempotency_key=key,
+            )
+
+        async with _async_session_factory() as db, db.begin():
+            second = await RunService().create_run(
+                db,
+                project_id=uuid.UUID(project_id),
+                action="create_script",
+                config=payload,
+                idempotency_key=key,
+            )
+
+        assert second.id == first.id
+
+    async def test_reused_idempotency_key_with_different_payload_is_rejected(
+        self, async_client: AsyncClient,
+    ) -> None:
+        """同一幂等键不可代表两个不同请求。"""
+        project_id = await self._create_project(async_client)
+        key = f"reused-contract-{uuid.uuid4()}"
+        first = await async_client.post(
+            f"/api/v1/projects/{project_id}/runs",
+            json={"action": "platform_smoke", "config": {"value": 1}, "idempotency_key": key},
+        )
+        second = await async_client.post(
+            f"/api/v1/projects/{project_id}/runs",
+            json={"action": "platform_smoke", "config": {"value": 2}, "idempotency_key": key},
+        )
+        assert first.status_code == 202
+        assert second.status_code == 409
+        assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+    async def test_unknown_action_fails_with_explicit_error(
+        self, async_client: AsyncClient,
+    ) -> None:
+        """未知 action 不会静默完成或永久 queued。"""
+        project_id = await self._create_project(async_client)
+        response = await async_client.post(
+            f"/api/v1/projects/{project_id}/runs",
+            json={"action": "not_a_real_workflow"},
+        )
+        assert response.status_code == 202
+        run_id = response.json()["run_id"]
+
+        for _ in range(50):
+            await asyncio.sleep(0.1)
+            current = await async_client.get(f"/api/v1/runs/{run_id}")
+            if current.json()["status"] == "failed":
+                break
+
+        final = await async_client.get(f"/api/v1/runs/{run_id}")
+        assert final.json()["status"] == "failed"
+        assert final.json()["error_code"] == "UNSUPPORTED_ACTION"
 
     async def test_list_runs_returns_items(
         self, async_client: AsyncClient,

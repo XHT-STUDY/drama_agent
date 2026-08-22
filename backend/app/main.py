@@ -84,6 +84,18 @@ async def lifespan(app: FastAPI) -> Any:
     from app.db.session import init_db
     init_db(settings)
 
+    from app.application.workflow_dispatcher import (
+        shutdown_dispatcher,
+        startup_dispatcher,
+    )
+    from app.workflows.persistence import checkpoint_schema_ready
+
+    if not await checkpoint_schema_ready(settings):
+        raise RuntimeError(
+            "LangGraph checkpoint schema 未初始化，请先运行 make migrate"
+        )
+    await startup_dispatcher()
+
     logger.info(
         "应用启动",
         extra={
@@ -93,6 +105,8 @@ async def lifespan(app: FastAPI) -> Any:
         },
     )
     yield
+
+    await shutdown_dispatcher()
 
     # 关闭数据库连接池
     from app.db.session import close_db
