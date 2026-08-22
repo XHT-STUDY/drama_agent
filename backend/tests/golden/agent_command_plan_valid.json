@@ -1,0 +1,13 @@
+{
+  "turn_type": "plan",
+  "intent": "create_script",
+  "target": {"target_type": "project"},
+  "constraints": ["保留悬疑基调"],
+  "steps": [
+    {"title": "生成创作计划", "description": "根据项目背景整理剧本创作范围"},
+    {"title": "等待确认", "description": "展示计划并等待用户确认后执行"}
+  ],
+  "expected_impact": ["新增项目级剧本创作计划"],
+  "clarification_question": null,
+  "answer": null
+}

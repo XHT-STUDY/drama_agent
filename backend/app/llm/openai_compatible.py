@@ -383,6 +383,7 @@ class OpenAICompatibleLLM(LLMClient):
         """
         # prompt_name → 角色映射
         name_to_role = {
+            "agent_command_planner": "planner",
             "normalize_requirement": "normalizer",
             "story_bible": "planner",
             "outline": "planner",

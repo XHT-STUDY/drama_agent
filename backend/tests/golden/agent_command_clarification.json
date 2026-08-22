@@ -1,0 +1,10 @@
+{
+  "turn_type": "clarification",
+  "intent": null,
+  "target": null,
+  "constraints": [],
+  "steps": [],
+  "expected_impact": [],
+  "clarification_question": "你希望修改哪一个目标：大纲、剧本，还是指定集数？",
+  "answer": null
+}

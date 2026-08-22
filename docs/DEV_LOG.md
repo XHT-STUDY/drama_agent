@@ -3261,3 +3261,33 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 按 PLAN 的依赖顺序执行 Task 3 / J-03：对话命令 Planner Skill。
+
+
+## J-03 对话命令 Planner Skill（2026-08-22）
+
+### 做了什么
+
+- 新增 AgentPlannerInput、AgentPlannerOutput、PlannerTarget、PlannerStep 非执行领域契约；模型配置 extra=forbid，Planner 不接收或返回 requires_confirmation、工具名、API、SQL、Artifact ID。
+- 新增 AgentCommandPlannerSkill：服务端校验 available_intents 白名单，Wave 2 默认开放 create_script / explain / evaluate；模型只提供意图、目标、约束、可读步骤和预期影响，Action 执行步骤仍由服务端生成。
+- 增加确定性 preflight：修改缺少活动上下文、“这里/当前稿”缺少上下文、集数超出项目范围、互相冲突的修改以及暂未开放修订意图都会返回单一澄清问题；连续 3 轮未解决时追加 4 个合法命令示例，禁止猜测。
+- 增加 Planner 输出安全扫描和语义校验；非法结构、未知意图、工具/API/SQL/UUID 等输出统一以 INVALID_OUTPUT 拒绝。requires_confirmation(intent) 固定由服务端决定，只有 explain 不需要确认。
+- 新增 agent_command_planner.md Prompt、manifest 注册和 OpenAI-compatible planner 角色模型路由；新增 valid plan / clarification golden 样例及单元测试。
+
+### 为什么这么做
+
+- J-02 已经提供了受预算约束的项目上下文，J-03 将其变成“理解请求 → 选择意图 → 澄清或提出计划”的 Agent 决策边界，但不允许 LLM 直接生成可执行句柄。
+- 把目标解析、白名单、确认策略和安全拒绝放在服务端，降低 Prompt 偏离、越权调用和错误 Artifact 绑定的风险。
+- 先做确定性澄清再调用模型，既减少无意义的 LLM 成本，也让“不能猜测”的行为可测试、可审计。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/unit/skills/test_agent_command_planner.py tests/contract/test_prompts.py -q | 43 passed |
+| uv run ruff check app/ tests/ | All checks passed |
+| uv run mypy app/ tests/ | Success: no issues found in 296 source files |
+| uv run pytest -ra --disable-warnings | 1019 passed，6 deselected |
+
+### 下一步
+
+- 按 PLAN 的依赖顺序执行 Task 4 / J-04：Turn/Action Service/API，把 Planner 输出接入 AgentTurn 幂等收据、Action 计划生成和确认接口。

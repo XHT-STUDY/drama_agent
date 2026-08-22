@@ -81,6 +81,7 @@ def _auto_register_domain_schemas() -> None:
     在 PromptLoader 首次初始化时调用。
     只注册已实现且通过 A-03 契约测试的 Schema。
     """
+    from app.domain.agent_planner import AgentPlannerInput, AgentPlannerOutput  # noqa: F401
     from app.domain.continuity import (  # noqa: F401
         CharacterState,
         ContinuityState,
@@ -163,6 +164,8 @@ def _auto_register_domain_schemas() -> None:
     register_schema("ConversationSummary", ConversationSummary)
     register_schema("ImportClassificationInput", ImportClassificationInput)
     register_schema("ImportClassification", ImportClassification)
+    register_schema("AgentPlannerInput", AgentPlannerInput)
+    register_schema("AgentPlannerOutput", AgentPlannerOutput)
 
 
 # ========================================================================

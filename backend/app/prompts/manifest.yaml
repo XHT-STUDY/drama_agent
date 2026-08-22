@@ -127,3 +127,14 @@ prompts:
     template: import_classifier.md
     changelog: "初始版本：把上传文本分类为 idea_or_notes / outline / full_script / reference / unknown (G-04)"
     user_content_vars: [filename, text_preview]
+
+
+  # ---- 对话命令 Planner ----
+  - name: agent_command_planner
+    version: "1.0.0"
+    input_schema: AgentPlannerInput
+    output_schema: AgentPlannerOutput
+    owner: planner
+    template: agent_command_planner.md
+    changelog: "初始版本：自然语言请求的白名单意图规划与安全澄清"
+    user_content_vars: [user_request, project_context, active_context]
