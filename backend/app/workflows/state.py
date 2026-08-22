@@ -51,8 +51,16 @@ class CreationState(TypedDict, total=False):
     """当前轮选中的待修订集号（1-based）。"""
     revision_plan_artifact_id: str | None
     """当前轮修订计划 Artifact UUID 字符串。"""
+    continuity_check_artifact_id: str | None
+    """当前轮连续性检查结果 Artifact UUID 字符串（J-06，供结果消息/diff 引用）。"""
     user_instruction: str | None
     """用户补充要求（不可违反锁定事实；进 RevisionPlanInput 供修订计划使用）。"""
+
+    # ---- 对话式剧本修订（J-06）----
+    source_script_artifact_id: str | None
+    """服务端解析的修订目标剧本 Artifact UUID（对话式修订入口，不由 Planner 决定）。"""
+    user_constraints: list[str]
+    """用户约束（来自确认的 ActionPlan），拼接后写入 RevisionPlan 的 user_instruction。"""
     needs_manual_review: bool
     """连续性失败或重评分显著下降（>5 分）时为 True，转人工审查。"""
     needs_manual_review_reason: str | None

@@ -318,6 +318,9 @@ async def _execute_workflow(
     from app.db.repositories.artifacts import ArtifactRepository
     from app.events.publisher import EventPublisher
     from app.prompts.loader import PromptLoader
+    from app.workflows.conversational_revision import (
+        build_conversational_revision_workflow,
+    )
     from app.workflows.creation import build_creation_workflow
     from app.workflows.evaluation import build_evaluation_workflow
     from app.workflows.import_file import build_import_workflow
@@ -397,7 +400,7 @@ async def _execute_workflow(
                     autocommit=True,
                 )
                 return
-            if action not in ("create_script", "evaluate", "revise", "import"):
+            if action not in ("create_script", "evaluate", "revise", "revise_script", "import"):
                 raise AppError(
                     detail=f"不支持的 Workflow action: {action}",
                     status_code=400,
@@ -518,6 +521,48 @@ async def _execute_workflow(
                     "completed_nodes": [],
                     "prompt_versions": {},
                 }
+            elif action == "revise_script":
+                # action=revise_script → 对话式剧本修订子图（J-06）：
+                # 目标由服务端解析的 source script ID 决定（Action 确认时已做
+                # 快照过期检测），prepare_target 内再做防御性归属/状态校验。
+                source_script_id = options.get("source_script_artifact_id")
+                if not source_script_id:
+                    raise AppError(
+                        detail="revise_script 需要 source_script_artifact_id",
+                        status_code=400,
+                        code="UNSUPPORTED_ACTION",
+                    )
+                constraints = list(options.get("user_constraints", []))
+                initial_state = {
+                    "run_id": str(run_id),
+                    "project_id": str(run.project_id),
+                    "action": action,
+                    "source_script_artifact_id": str(source_script_id),
+                    "user_constraints": constraints,
+                    # 用户约束拼接后作为 user_instruction 写入 RevisionPlan
+                    "user_instruction": "；".join(c for c in constraints if c) or None,
+                    "script_artifact_ids": {},
+                    "evaluation_artifact_ids": {},
+                    "needs_revision_decision": False,
+                    "continuity_state_text": "",
+                    "revision_round": 0,
+                    "revision_candidate_episode": None,
+                    "revision_plan_artifact_id": None,
+                    "continuity_check_artifact_id": None,
+                    "needs_manual_review": False,
+                    "needs_manual_review_reason": None,
+                    "current_episode": 1,
+                    "status": "running",
+                    "needs_user_input": False,
+                    "error_node": None,
+                    "error_detail": None,
+                    "completed_nodes": [],
+                    "input_hashes": {},
+                    "prompt_versions": {},
+                }
+                workflow = build_conversational_revision_workflow(
+                    checkpointer=checkpointer
+                )
             else:
                 # action=revise → 独立修订工作流（F-06）：中途播种状态。
                 # 每集取最新 valid 剧本与其绑定评估；用户指定剧本时覆盖对应集，
@@ -668,8 +713,10 @@ async def _execute_workflow(
                     },
                     autocommit=True,
                 )
-            elif final_state.get("needs_revision_decision"):
+            elif final_state.get("needs_revision_decision") and action != "revise_script":
                 # 修订轮次已用满仍存在需修订的集 → 暂停在人工复核点
+                # （revise_script 是单轮用户指定修订，重评结果由 Action
+                #   lifecycle/后续计划处理，不进入自动修订循环）。
                 await run_svc.transition_status(db, run_id, "needs_review", lease_owner=lease_owner)
                 await publisher.publish(
                     db,
@@ -709,6 +756,38 @@ async def _execute_workflow(
                     payload={
                         "message": "评估完成",
                         "evaluation_count": len(final_state.get("evaluation_artifact_ids", {})),
+                    },
+                    autocommit=True,
+                )
+            elif action == "revise_script":
+                # 对话式修订完成：payload 携带 source/new script、plan、
+                # continuity、evaluation Artifact ID，供 lifecycle 生成结果消息。
+                episode = final_state.get("revision_candidate_episode")
+                await run_svc.transition_status(db, run_id, "completed", lease_owner=lease_owner)
+                await publisher.publish(
+                    db,
+                    run_id=run_id,
+                    event_type="run.completed",
+                    payload={
+                        "message": "对话式剧本修订完成",
+                        "episode": episode,
+                        "source_script_artifact_id": final_state.get(
+                            "source_script_artifact_id"
+                        ),
+                        "new_script_artifact_id": (
+                            final_state.get("script_artifact_ids", {}).get(str(episode))
+                            if episode is not None
+                            else None
+                        ),
+                        "revision_plan_artifact_id": final_state.get(
+                            "revision_plan_artifact_id"
+                        ),
+                        "continuity_check_artifact_id": final_state.get(
+                            "continuity_check_artifact_id"
+                        ),
+                        "evaluation_artifact_ids": final_state.get(
+                            "evaluation_artifact_ids", {}
+                        ),
                     },
                     autocommit=True,
                 )

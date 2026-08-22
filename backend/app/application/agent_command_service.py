@@ -33,6 +33,7 @@ from app.core.errors import (
     InvalidActiveContextError,
     NotFoundError,
     ProjectHasActiveRunError,
+    ScriptNotFoundForRevisionError,
     UnsupportedAgentIntentError,
 )
 from app.core.logging import get_logger
@@ -61,6 +62,7 @@ from app.domain.agent_command import (
     ArtifactSnapshot,
     CreateScriptCommand,
     EvaluateCommand,
+    ReviseScriptCommand,
     compute_request_hash,
 )
 from app.domain.agent_planner import AgentPlannerInput, AgentPlannerOutput
@@ -248,6 +250,12 @@ class AgentCommandService:
             # 租约被接管(超期后他人完成):放弃本次结果,返回持久化胜者。
             await db.rollback()
             return await self._duplicate_outcome(db, turn_id)
+        except Exception as exc:
+            # 事务 B 失败(如 revise_script 目标集无有效剧本):
+            # Turn 不能停留在 planning,统一落 failed 终态。
+            logger.exception("Turn 终态写入失败: turn=%s", turn_id)
+            await db.rollback()
+            return await self._fail_turn(db, turn_id, conversation.id, lease_owner, exc)
         return await self._turn_response(db, final_turn), 200
 
     async def get_turn(self, db: AsyncSession, turn_id: uuid.UUID) -> AgentTurnResponse:
@@ -653,6 +661,64 @@ class AgentCommandService:
                 ),
             ]
             snapshots = await self._script_snapshots(db, project.id, episode)
+        elif output.intent == "revise_script":
+            # 目标由服务端解析：目标集的最新 valid 剧本，Planner 不提供 UUID。
+            episode = output.target.episode_number if output.target else None
+            if episode is None:
+                raise ScriptNotFoundForRevisionError(
+                    detail="未能确定修订目标集数，请指定集数或先选择剧本"
+                )
+            source = await ArtifactRepository(db).get_latest_valid(
+                project.id, "script_draft", episode
+            )
+            if source is None:
+                raise ScriptNotFoundForRevisionError(
+                    detail=f"第 {episode} 集没有可修订的有效剧本"
+                )
+            intent = "revise_script"
+            command = ReviseScriptCommand(
+                source_script_id=source.id,
+                episode_number=episode,
+                constraints=constraints,
+            )
+            target = ActionTarget(target_type="script", episode_number=episode)
+            goal = f"按用户要求修订第 {episode} 集剧本并重评"[:2000]
+            steps = [
+                ActionStep(
+                    step_id="prepare_target",
+                    title="锁定修订目标",
+                    description="解析目标剧本版本，锁定原稿与设定/大纲上下文",
+                ),
+                ActionStep(
+                    step_id="ensure_evaluation",
+                    title="补齐目标评估",
+                    description="目标剧本缺少评估时先仅评估该集并持久化报告",
+                ),
+                ActionStep(
+                    step_id="revise",
+                    title="生成修订计划与新稿",
+                    description="把用户约束写入修订计划，产出候选新稿（保持 draft）",
+                ),
+                ActionStep(
+                    step_id="continuity_check",
+                    title="连续性检查",
+                    description="候选稿通过连续性检查后提升为有效版本，失败保留诊断稿",
+                ),
+                ActionStep(
+                    step_id="re_evaluate",
+                    title="重新评估",
+                    description="对修订后的剧本重新评估，产出对比报告",
+                ),
+            ]
+            snapshots = [
+                ArtifactSnapshot(
+                    artifact_id=source.id,
+                    artifact_type=source.type,
+                    episode_number=source.episode_number,
+                    version=source.version,
+                    checksum=source.checksum,
+                )
+            ] if source.checksum is not None else []
         else:
             # Planner 白名单已限定意图;到达这里说明服务端与 Planner 白名单漂移,直接拒绝。
             raise UnsupportedAgentIntentError(
@@ -725,6 +791,14 @@ class AgentCommandService:
             if command.episode_number is not None:
                 options["episode_number"] = command.episode_number
             return {"options": options}
+        if isinstance(command, ReviseScriptCommand):
+            return {
+                "options": {
+                    "source_script_artifact_id": str(command.source_script_id),
+                    "episode_number": command.episode_number,
+                    "user_constraints": list(command.constraints),
+                }
+            }
         return {"options": command.model_dump(mode="json")}
 
     def _render_plan_message(self, plan: AgentActionPlan) -> str:

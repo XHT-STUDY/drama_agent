@@ -3331,3 +3331,45 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 按 PLAN 的依赖顺序执行 Task 6 / J-06：对话式剧本修订工作流（revise_script intent 开放进白名单 + Dispatcher 白名单扩展）。
+
+
+## J-06 对话式剧本修订工作流（2026-08-22）
+
+### 做了什么
+
+- 新增 `workflows/conversational_revision.py` 子图：`prepare_target → ensure_evaluation → revise → continuity_check → re_evaluate → END`；continuity 后复用 `_should_route_after_continuity`（pass→re_evaluate / fail→END），re_evaluate 后无条件 END——一次确认只做一轮用户指定修订，不进入 select_revision 自动循环。
+- 新增 `workflows/nodes/prepare_conversational_revision.py` 两个节点：
+  - prepare_target：对 state 的 `source_script_artifact_id` 做防御性校验（归属项目 / type=script_draft / status=valid），解析集号，补齐 StoryBible / 大纲 / 各集最新 valid 剧本映射（目标集显式指向 source，不要求是最新版本）；
+  - ensure_evaluation：`find_evaluation_for_script` 命中则复用；缺失时仅评估目标集并持久化报告（EvaluationService 同剧本版本幂等），评估 artifact.created 事件。
+- State 新增 `source_script_artifact_id`、`user_constraints`、`continuity_check_artifact_id`（continuity_check 节点两条路径均记录）；Dispatcher 把用户约束拼接为 `user_instruction` 传给 revise → RevisionService 写入 RevisionPlan（input_hash + user_instruction dedup 幂等）。
+- Dispatcher：action 白名单加入 `revise_script`；新分支构建 initial_state 并绑定子图；后处理 `needs_revision_decision` 拦截对 revise_script 豁免（单轮语义），run.completed payload 携带 source/new script、plan、continuity、evaluation Artifact ID（供 J-09 lifecycle 生成结果消息与 diff）。
+- 开放 intent：`DEFAULT_AVAILABLE_INTENTS` 加入 `revise_script`；AgentCommandService 计划模板新增 revise_script 分支——目标集取自 Planner target 的 episode_number，source script 由服务端解析为目标集最新 valid 版本（Planner 不提供 UUID），快照含 checksum；无 episode / 无 valid 剧本抛 `ScriptNotFoundForRevisionError`（404 SCRIPT_NOT_FOUND，新错误类）。`_build_run_config` 支持 ReviseScriptCommand → options `{source_script_artifact_id, episode_number, user_constraints}`。
+- 加固：create_turn 事务 B 的 catch-all → `_fail_turn`（此前 _build_action_plan 抛错会让 Turn 永远停在 planning）；事务 B 失败先 rollback 再写 failed 终态。
+- API_CONTRACT 更新：intent→action 映射、revise_script 计划语义、Run action 枚举与 options 说明。
+
+### 为什么这么做
+
+- 目标解析放在服务端两道防线：计划生成时解析 source（确认前快照过期检测保证未被更新），prepare_target 在执行时再校验一次——Planner 输出永远不含 Artifact 句柄（DESIGN §4.2）。
+- 缺评估先评估是修订计划的前置输入（RevisionPlanInput 需要评估报告），且评估本身幂等，重试不会重复建报告。
+- 候选稿保持 draft → 连续性通过才提升 valid，失败保留诊断稿并 needs_review——复用 F-05 语义，不新造状态机。
+- re_evaluate 后直接 END：用户指定修订是单轮行为，重评仍低分交给 J-09 的 Outcome/后续计划判断，避免自动循环覆盖用户意图。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/integration/workflow/test_conversational_revision.py | 5 passed（TDD anchor: missing_evaluation_is_created_before_user_directed_revision；另有评估复用、重放幂等、连续性失败保留 draft、非法目标失败） |
+| uv run pytest tests/integration/api/test_agent_actions.py | 10 passed（新增 confirm_revise_script_creates_run_with_source_snapshot） |
+| uv run pytest --disable-warnings -ra | **1046 passed，6 deselected**（1040→1046） |
+| uv run ruff check app/ tests/ | All checks passed |
+| uv run mypy app/ tests/ | Success: no issues found in 303 source files |
+
+### 学到了什么
+
+1. 评估"复用 vs 重建"用 Artifact 计数断言比重放事件流简单：原评估 1 份 + 重评 1 份 = 2，重复评估会是 3。
+2. 子图复用 creation 分支节点（revise/continuity/re_evaluate）几乎零成本，关键是 state 契约（revision_candidate_episode / plan id / script ids）在 prepare 阶段补齐。
+3. dispatcher 的 needs_revision_decision 拦截是按"自动修订循环"语义设计的，对话式单轮修订必须显式豁免，否则重评低分会被误报为"轮次用满"。
+
+### 下一步
+
+- 按 PLAN 的依赖顺序执行 Task 7 / J-07：大纲修订 Skill 与影响分析 Tool（OutlineRevisionInput 全量输出 + OutlineImpactTool 确定性比较）。

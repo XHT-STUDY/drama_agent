@@ -2,7 +2,7 @@
 
 > 文档版本：v1.6
 > 编制日期：2026-08-16  
-> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强进行中（J-01～J-05 已完成，M1/M2 里程碑达成，下一任务 J-06）；Phase D（RAG）为 MVP 之外 backlog
+> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强进行中（J-01～J-06 已完成，M3 进行中，下一任务 J-07）；Phase D（RAG）为 MVP 之外 backlog
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -2989,7 +2989,7 @@ Prompt 必须区分：
 | J-03 | Planner Skill | 1d | J-02 | DONE | AI Agent | Planner Skill + AgentPlannerInput/Output；服务端 intent 白名单与三类可读输出；无活动上下文/越界集数/冲突修改确定性澄清；三轮未解决提供 4 个合法命令；拒绝工具/API/SQL/Artifact ID；Prompt manifest v1.0.0；1019 passed/6 deselected，Ruff/mypy clean |
 | J-04 | Turn/Action Service/API | 2d | J-01,J-02,J-03,J-05 | DONE | AI Agent | AgentCommandService 三段式 Turn(事务 A→lease+Planner 零事务→事务 B)+ plan 服务端模板化(create_script 5 步/evaluate 3 步+剧本快照);5 端点(POST turns 200/202、GET turn/action、confirm 202、reject);confirm 行锁内快照过期检测(ACTION_STALE)+重复确认返回原 Run(agent-action:{id} 幂等键)+并发单活跃 Run(PROJECT_HAS_ACTIVE_RUN);explain 无 Run;conversation_id=null 自动建会话标题截 30 字;错误码 8 个入契约;21 个集成测试(5 TDD 锚点);全量 1040 passed/6 deselected,Ruff/mypy clean(300 files) |
 | J-05 | 持久化 Dispatcher 与 checkpoint | 3.5d | J-01 | DONE | AI Agent | 2026-08-22：0006 + DB lease Dispatcher + PostgreSQL saver；迁移、ruff、mypy、后端全量分组测试通过 |
-| J-06 | 对话式剧本修订 | 1.5d | J-04,J-05 | TODO | - | - |
+| J-06 | 对话式剧本修订 | 1.5d | J-04,J-05 | DONE | AI Agent | 2026-08-22：conversational_revision 子图（prepare_target→ensure_evaluation→revise→continuity_check→re_evaluate→END）；prepare_target 防御性校验服务端 source script ID（归属/type/valid）并补齐 SB/大纲/各集 latest valid 映射；缺绑定评估先仅评估目标集（EvaluationService 幂等复用）；用户约束经 user_instruction 写入 RevisionPlan（input_hash+dedup 幂等，重放不产生重复版本）；单轮用户指定修订不进自动循环（re_evaluate 后 END，dispatcher 跳过 needs_revision_decision 拦截）；run.completed payload 携带 source/new script+plan+continuity+evaluation Artifact ID；revise_script intent 开放进 Planner 白名单与计划模板（目标集无 valid 剧本→Turn failed SCRIPT_NOT_FOUND）；6 个集成测试（含 TDD anchor missing_evaluation_is_created_before_user_directed_revision）+1 个 API 确认测试；全量 1046 passed/6 deselected，Ruff/mypy clean（303 files） |
 | J-07 | 大纲修订与影响 Tool | 1.5d | J-03 | TODO | - | - |
 | J-08 | 大纲修订工作流 | 1d | J-05,J-07 | TODO | - | - |
 | J-09 | Action 生命周期、Outcome 与再规划 | 2d | J-04,J-05,J-06,J-08 | TODO | - | - |

@@ -11,6 +11,7 @@
 - **J-02**：项目上下文组装与预算控制——AgentContextService、活动上下文校验、消息 / Artifact 索引、预算保护分段。
 - **J-03**：对话命令 Planner Skill——服务端 `available_intents` 白名单（Wave 2 仅 `create_script | explain | evaluate`）、确定性澄清优先、三轮未解决给出合法命令示例、拒绝工具/API/SQL/Artifact ID 输出。
 - **J-04**：Agent Turn/Action 服务与 API——三段式 Turn 执行（短事务 A → 租约内 Planner → 短事务 B）、plan 全服务端模板化、5 个端点（turns 200/202、GET turn/action、confirm/reject）、confirm 行锁内快照过期检测（`ACTION_STALE`）、Run 幂等键 `agent-action:{action_id}`、并发单活跃 Run 保护。
+- **J-06**：对话式剧本修订工作流——`revise_script` 子图（prepare_target → ensure_evaluation → revise → continuity_check → re_evaluate）、目标由服务端解析的 source script ID 决定、目标缺评估时先仅评估目标集、用户约束写入 RevisionPlan、单轮修订不进自动循环、`revise_script` intent 开放进 Planner 白名单与确认执行（目标集无有效剧本 → `SCRIPT_NOT_FOUND`）。
 
 ### 计划中
 - RAG 检索（Phase D）深入、多用户认证、分布式预算（见 [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) §4）。

@@ -216,6 +216,16 @@ class UnsupportedAgentIntentError(AppError):
     code = "UNSUPPORTED_AGENT_INTENT"
 
 
+class ScriptNotFoundForRevisionError(NotFoundError):
+    """目标集没有可修订的有效剧本（404 SCRIPT_NOT_FOUND，J-06）。
+
+    服务端按集数解析 revise_script 计划的 source script 时，
+    该集不存在最新 valid 剧本。
+    """
+
+    code = "SCRIPT_NOT_FOUND"
+
+
 class BudgetExceededError(AppError):
     """Run 的 LLM 预算超限（409 RUN_BUDGET_EXCEEDED，I-01）。
 

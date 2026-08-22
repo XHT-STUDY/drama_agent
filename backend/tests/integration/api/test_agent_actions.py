@@ -32,6 +32,7 @@ from app.domain.agent_command import (
     CreateScriptCommand,
     EvaluateCommand,
     ExplainCommand,
+    ReviseScriptCommand,
 )
 
 _CHECKSUM_V1 = "a" * 64
@@ -100,6 +101,22 @@ def _explain_plan() -> AgentActionPlan:
         target=ActionTarget(target_type="project"),
         steps=[
             ActionStep(step_id="explain", title="解释", description="生成只读解释"),
+        ],
+    )
+
+
+def _revise_script_plan(episode: int, source_id: uuid.UUID) -> AgentActionPlan:
+    return AgentActionPlan(
+        goal=f"按用户要求修订第 {episode} 集剧本并重评",
+        intent="revise_script",
+        command=ReviseScriptCommand(
+            source_script_id=source_id,
+            episode_number=episode,
+            constraints=["增加主角与教练的正面冲突"],
+        ),
+        target=ActionTarget(target_type="script", episode_number=episode),
+        steps=[
+            ActionStep(step_id="revise", title="修订", description="生成候选新稿并重评"),
         ],
     )
 
@@ -367,6 +384,46 @@ async def test_confirm_unsupported_intent_returns_400(
     assert resp.status_code == 400
     assert resp.json()["code"] == "UNSUPPORTED_AGENT_INTENT"
     assert await _total_run_count(db_session) == 0
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_confirm_revise_script_creates_run_with_source_snapshot(
+    agent_client: AsyncClient,
+    db_session: AsyncSession,
+    no_worker: None,
+) -> None:
+    """确认 revise_script 计划 → Run action=revise_script，config 携带服务端解析的目标与约束。"""
+    project = Project(title="修订测试", target_episode_count=10)
+    db_session.add(project)
+    await db_session.flush()
+    script = await _seed_script(db_session, project.id, episode=2, version=1)
+    _project_id, action_id = await _seed_action(
+        db_session,
+        plan=_revise_script_plan(2, script.id),
+        project_id=project.id,
+        snapshots=[
+            ArtifactSnapshot(
+                artifact_id=script.id,
+                artifact_type="script_draft",
+                episode_number=2,
+                version=1,
+                checksum=_CHECKSUM_V1,
+            )
+        ],
+    )
+
+    resp = await agent_client.post(f"/api/v1/agent/actions/{action_id}/confirm")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["run"]["action"] == "revise_script"
+
+    run_resp = await agent_client.get(f"/api/v1/runs/{body['run']['run_id']}")
+    assert run_resp.status_code == 200
+    options = run_resp.json()["config_snapshot"]["options"]
+    assert options["source_script_artifact_id"] == str(script.id)
+    assert options["episode_number"] == 2
+    assert options["user_constraints"] == ["增加主角与教练的正面冲突"]
 
 
 @pytest.mark.integration

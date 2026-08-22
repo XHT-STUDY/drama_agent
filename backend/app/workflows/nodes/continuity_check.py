@@ -166,7 +166,7 @@ async def continuity_check_node(state: CreationState) -> dict[str, Any]:
         # 持久化连续性检查结果（诊断可追溯）;LLM 语义检查实际调用的 prompt
         # 是 continuity_semantic_check（ContinuityCheckSkill 内部），以此记录版本
         prompt_version = prompt_loader.get("continuity_semantic_check").version
-        await artifact_svc.create_validated_artifact(
+        continuity_artifact = await artifact_svc.create_validated_artifact(
             db,
             project_id=project_id,
             artifact_type="continuity_check",
@@ -194,6 +194,7 @@ async def continuity_check_node(state: CreationState) -> dict[str, Any]:
             return {
                 "needs_manual_review": True,
                 "needs_manual_review_reason": reason,
+                "continuity_check_artifact_id": str(continuity_artifact.id),
                 "completed_nodes": state.get("completed_nodes", []) + ["continuity_check"],
                 "prompt_versions": {**state.get("prompt_versions", {}), "continuity_check": prompt_version},
             }
@@ -215,6 +216,7 @@ async def continuity_check_node(state: CreationState) -> dict[str, Any]:
         progress("continuity_check", "completed", 1.0)
 
         return {
+            "continuity_check_artifact_id": str(continuity_artifact.id),
             "completed_nodes": state.get("completed_nodes", []) + ["continuity_check"],
             "prompt_versions": {**state.get("prompt_versions", {}), "continuity_check": prompt_version},
         }
