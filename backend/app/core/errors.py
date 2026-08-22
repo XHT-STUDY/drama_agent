@@ -91,6 +91,13 @@ class IdempotencyKeyReusedError(AppError):
     code = "IDEMPOTENCY_KEY_REUSED"
 
 
+class InvalidActiveContextError(AppError):
+    """活动 Artifact 与当前项目或请求目标不一致（409）。"""
+
+    status_code = 409
+    code = "INVALID_ACTIVE_CONTEXT"
+
+
 class AgentStateTransitionError(AppError):
     """AgentTurn 或 AgentAction 状态迁移不合法（409）。"""
 

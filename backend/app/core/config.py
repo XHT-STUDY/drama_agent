@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     # ---- 记忆（G-01） ----
     short_term_ttl_seconds: int = 7 * 24 * 3600  # 短期记忆 Redis 缓存 TTL（秒，滑动窗口）
     conversation_summary_threshold: int = 24  # 会话消息数达到该值整数倍时生成摘要
+    agent_context_budget_tokens: int = 12_000
+    agent_recent_message_limit: int = 12
+    agent_turn_lease_seconds: int = 120
+    agent_turn_max_tokens: int = 16_000
+    agent_max_replan_depth: int = 1
 
     # ---- CORS ----
     # 逗号分隔的允许来源列表；在 .env 中写作 "CORS_ORIGINS=*" 或 "CORS_ORIGINS=host1,host2"

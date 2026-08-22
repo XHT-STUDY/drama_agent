@@ -167,6 +167,7 @@ class ContextBuilder:
         rag_fragments: str = "",
         rag_chunk_ids: list[str] | None = None,
         current_target: str = "",
+        protected_sections: set[str] | None = None,
     ) -> tuple[str, ContextManifest]:
         """按任务策略组装上下文（G-02）。
 
@@ -208,10 +209,14 @@ class ContextBuilder:
                 )
 
         # ---- 输出缓冲：current_target 优先，永不截断 ----
-        allocated = self._allocate_with_output_buffer(sections, policy)
+        protected = set(protected_sections or {"current_target"})
+        protected.add("current_target")
+        allocated = self._allocate_with_output_buffer(sections, policy, protected)
 
         # ---- 逐段落到分配上限 + 记录裁剪原因 ----
-        final_sections, manifest = self._fit_sections(sections, allocated, manifest)
+        final_sections, manifest = self._fit_sections(
+            sections, allocated, manifest, protected
+        )
 
         # ---- 组装最终文本 ----
         assembled = self._assemble(final_sections)
@@ -229,6 +234,7 @@ class ContextBuilder:
         self,
         sections: dict[str, str],
         policy: TaskContextPolicy,
+        protected_sections: set[str],
     ) -> dict[str, int]:
         """分配预算：current_target 完整保留，其余段分享剩余。
 
@@ -239,27 +245,31 @@ class ContextBuilder:
             section.value: ratio for section, ratio in policy.ratios.items()
         }
 
-        ct_text = sections.get("current_target", "") or ""
-        ct_chars = len(ct_text)
-        ct_tokens = self._chars_to_tokens(ct_chars)
+        protected_tokens: dict[str, int] = {
+            key: self._chars_to_tokens(len(sections.get(key, "") or ""))
+            for key in protected_sections
+            if sections.get(key, "")
+        }
+        protected_total = sum(protected_tokens.values())
 
-        if ct_tokens > self.budget_tokens:
+        if protected_total > self.budget_tokens:
+            largest = max(protected_tokens, key=lambda name: protected_tokens[name])
             raise ContextTooLargeError(
-                f"current_target 需要约 {ct_tokens} tokens（{ct_chars} 字符），"
-                f"已超过总预算 {self.budget_tokens} tokens（保底 "
-                f"{_MIN_CURRENT_TARGET_TOKENS}）。请缩小当前稿件或调大预算。"
+                f"受保护段落 {largest} 需要约 {protected_tokens[largest]} tokens，"
+                f"受保护内容合计 {protected_total} tokens，已超过总预算 "
+                f"{self.budget_tokens} tokens。请缩小当前请求/活动目标或调大预算。"
             )
 
-        remaining = self.budget_tokens - ct_tokens
+        remaining = self.budget_tokens - protected_total
 
         # 其余段：只在非空段落之间按权重归一化
         active_others = [
             key for key, text in sections.items()
-            if key != "current_target" and text
+            if key not in protected_sections and text
         ]
         weight_sum = sum(ratios.get(key, 0.0) for key in active_others)
 
-        allocated: dict[str, int] = {"current_target": ct_tokens}
+        allocated: dict[str, int] = dict(protected_tokens)
         if weight_sum > 0:
             for key in active_others:
                 allocated[key] = int(remaining * ratios.get(key, 0.0) / weight_sum)
@@ -270,6 +280,7 @@ class ContextBuilder:
         sections: dict[str, str],
         allocated: dict[str, int],
         manifest: ContextManifest,
+        protected_sections: set[str],
     ) -> tuple[dict[str, str], ContextManifest]:
         """把各段文本裁到分配上限；current_target 保证完整。"""
         final_sections: dict[str, str] = {}
@@ -288,6 +299,11 @@ class ContextBuilder:
 
             max_chars = self._tokens_to_chars(max_tokens)
             if len(text) > max_chars:
+                if key in protected_sections:
+                    raise ContextTooLargeError(
+                        f"受保护段落 {key} 无法在预算内完整保留；"
+                        "请缩小当前请求/活动目标或调大预算。"
+                    )
                 final_sections[key] = self._truncate_text(text, max_chars)
                 manifest.sections_truncated.append(key)
                 reason = (

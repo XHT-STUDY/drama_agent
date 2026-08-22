@@ -417,7 +417,7 @@
 ## 2026-07-25 — 阶段 C Exit Gate 验收
 
 **类型：** 阶段验收  
-**日期：** 2026-07-25  
+**日期：** 2026-07-25
 **关联阶段：** Phase C（任务 C-01 ~ C-08）
 
 ### 验收步骤与结果
@@ -1382,7 +1382,7 @@
 ## 2026-07-23 — 阶段 A Exit Gate 验收
 
 **类型：** 阶段验收  
-**日期：** 2026-07-23  
+**日期：** 2026-07-23
 **关联阶段：** Phase A（任务 A-01 ~ A-04）
 
 ### 验收步骤与结果
@@ -1568,7 +1568,7 @@
 ## 2026-07-22 — WSL2 + Docker Engine 环境搭建
 
 **类型：** 基础设施  
-**日期：** 2026-07-22  
+**日期：** 2026-07-22
 **关联任务：** A-02
 
 ### 背景
@@ -3226,3 +3226,38 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 2. 先提交再唤醒：在请求事务提交前启动后台领取，Dispatcher 可能看不到新 Run 并提前退出；显式 commit 后 wake 才不会丢通知。
 3. checkpoint DDL 属于部署步骤：AsyncPostgresSaver.setup() 应由 migrate/CLI 调用；应用启动只做只读 schema 检查。
 4. langgraph-checkpoint-postgres 还需要可用的 libpq 实现：无系统 libpq 的镜像要显式安装 psycopg[binary]，否则导入阶段会报 no pq wrapper。
+
+## J-02 项目上下文与预算（2026-08-22）
+
+### 做了什么
+
+- 新增 backend/app/application/agent_context_service.py，从项目、会话和可选活动 Artifact 读取 Planner 所需的最小事实集：最近消息、最新有效 StoryBible/分集大纲摘要、剧集/评估索引、会话摘要和活动 Artifact 摘要。
+- 活动 Artifact 增加项目归属、类型、集数、版本、checksum、valid 状态校验；跨项目或版本不匹配统一返回 INVALID_ACTIVE_CONTEXT。
+- 扩展 ContextBuilder 的 build_for()，支持多个受保护分段；当前用户请求和活动 Artifact 不会静默截断，预算不足时返回 CONTEXT_TOO_LARGE。
+- 配置新增 agent_context_budget_tokens=12000、agent_recent_message_limit=12、agent_turn_lease_seconds=120、agent_turn_max_tokens=16000、agent_max_replan_depth=1。
+- 新增上下文服务单元测试，覆盖跨项目活动 Artifact、紧凑剧集/评估索引、预算边界和默认配置。
+
+### 为什么这么做
+
+- Planner 需要项目事实，但不能把全部剧本正文和完整历史塞进 Prompt；只保留摘要与索引能控制成本，也能让后续 Planner 的目标选择更确定。
+- 当前请求与用户明确选中的 Artifact 是不可替代的控制输入，必须和普通历史段落区分，预算不足应显式失败而不是悄悄改写用户意图。
+- 活动 Artifact 的归属和版本校验放在服务端，避免前端页面上下文被错误项目或过期版本污染。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/unit/application/test_agent_context_service.py tests/unit/memory/test_context_builder.py tests/unit/memory/test_context_budget.py | 34 passed |
+| uv run ruff check app/ tests/ | All checks passed |
+| uv run mypy app/ tests/ | Success: no issues found in 293 source files |
+| uv run pytest | 1012 passed，6 deselected |
+
+### 学到了什么
+
+1. 上下文预算不能只保护“当前稿件”：对话 Agent 还必须保护当前用户请求和显式活动 Artifact，否则预算裁剪可能改变用户意图。
+2. 项目级 Planner 上下文应优先使用 Artifact 摘要和版本索引；正文通过 Artifact ID 延迟读取，既降低 token 成本，也保留审计入口。
+3. 为共享 Builder 增加新参数时要保留旧入口的类型契约，否则现有 **dict[str, str] 调用会在 mypy 阶段回归。
+
+### 下一步
+
+- 按 PLAN 的依赖顺序执行 Task 3 / J-03：对话命令 Planner Skill。
