@@ -4,8 +4,17 @@
 
 ## [Unreleased]
 
-### Added
-- 计划中：RAG 检索（Phase D）深入、多用户认证、分布式预算（见 [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) §4）。
+### Added（Phase J 对话式创作 Agent，进行中：J-01～J-05 / 12 完成，M1、M2 里程碑达成）
+
+- **J-01**：AgentTurn / AgentAction / Message 持久化契约——严格 Schema（`extra="forbid"`）、Turn 幂等收据 + planning lease、Action/Message 状态机与并发约束（0005 迁移）。
+- **J-05**：持久化 WorkflowDispatcher 与 checkpoint 恢复——数据库租约领取（0006 迁移）、PostgreSQL checkpoint saver、Run 幂等（`(project_id, action, idempotency_key)` 唯一 + `request_hash` 冲突检测）、进程内幂等字典移除。
+- **J-02**：项目上下文组装与预算控制——AgentContextService、活动上下文校验、消息 / Artifact 索引、预算保护分段。
+- **J-03**：对话命令 Planner Skill——服务端 `available_intents` 白名单（Wave 2 仅 `create_script | explain | evaluate`）、确定性澄清优先、三轮未解决给出合法命令示例、拒绝工具/API/SQL/Artifact ID 输出。
+- **J-04**：Agent Turn/Action 服务与 API——三段式 Turn 执行（短事务 A → 租约内 Planner → 短事务 B）、plan 全服务端模板化、5 个端点（turns 200/202、GET turn/action、confirm/reject）、confirm 行锁内快照过期检测（`ACTION_STALE`）、Run 幂等键 `agent-action:{action_id}`、并发单活跃 Run 保护。
+
+### 计划中
+- RAG 检索（Phase D）深入、多用户认证、分布式预算（见 [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) §4）。
+- Phase J 后续：J-06 对话式剧本修订 → J-12（M3 修订链路、M4 工作台与评测）。
 
 ## [0.1.0-rc1] - 2026-08-16
 
