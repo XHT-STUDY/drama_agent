@@ -785,3 +785,41 @@ class TestRealManifest:
                 f"  如果模板内容确实被修改，请同时更新 version 和 changelog。\n"
                 f"  如果是有意修改，请更新本测试的 expected_hashes。"
             )
+
+
+class TestOutlineReviserPrompt:
+    """outline_reviser Prompt 契约（J-07）。"""
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def loader(cls) -> PromptLoader:
+        return PromptLoader()
+
+    def test_manifest_entry_loads_with_schemas(self, loader: PromptLoader) -> None:
+        """manifest 注册 outline_reviser，输入/输出 Schema 均可解析。"""
+        tpl = loader.get("outline_reviser")
+        assert tpl.version == "1.0.0"
+        assert tpl.output_schema == "EpisodeOutlineSet"
+        assert resolve_schema("OutlineRevisionInput") is not None
+        assert resolve_schema("EpisodeOutlineSet") is not None
+
+    def test_template_variables_render(self, loader: PromptLoader) -> None:
+        """模板全部变量可渲染，用户约束被内容边界包裹。"""
+        tpl = loader.get("outline_reviser")
+        rendered = tpl.render(
+            episode_count="10",
+            old_outline='{"episodes": []}',
+            story_bible='{"locked_facts": []}',
+            user_constraints="1. 第 3 集增加正面冲突",
+            locked_facts="- 张德胜教练曾是职业球员",
+            source_outline_artifact_id="00000000-0000-0000-0000-000000000001",
+        )
+        assert "第 3 集增加正面冲突" in rendered
+        assert "用户内容开始" in rendered  # user_constraints 是 user_content_vars
+        assert "00000000-0000-0000-0000-000000000001" in rendered
+
+    def test_missing_variable_fails_render(self, loader: PromptLoader) -> None:
+        """缺少任一变量立即失败（不产出半渲染 Prompt）。"""
+        tpl = loader.get("outline_reviser")
+        with pytest.raises(KeyError):
+            tpl.render(episode_count="10")

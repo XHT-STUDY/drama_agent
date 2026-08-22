@@ -387,6 +387,7 @@ class OpenAICompatibleLLM(LLMClient):
             "normalize_requirement": "normalizer",
             "story_bible": "planner",
             "outline": "planner",
+            "outline_reviser": "planner",
             "write_episode": "writer",
             "evaluate_episode": "evaluator",
             "revision_plan": "reviser",

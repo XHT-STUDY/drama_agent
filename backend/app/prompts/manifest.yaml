@@ -138,3 +138,14 @@ prompts:
     template: agent_command_planner.md
     changelog: "初始版本：自然语言请求的白名单意图规划与安全澄清"
     user_content_vars: [user_request, project_context, active_context]
+
+
+  # ---- 大纲修订 ----
+  - name: outline_reviser
+    version: "1.0.0"
+    input_schema: OutlineRevisionInput
+    output_schema: EpisodeOutlineSet
+    owner: planner
+    template: outline_reviser.md
+    changelog: "初始版本：按用户约束修订分集大纲，输出完整 EpisodeOutlineSet（不接受 patch）"
+    user_content_vars: [old_outline, story_bible, user_constraints]

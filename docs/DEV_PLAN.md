@@ -2,7 +2,7 @@
 
 > 文档版本：v1.6
 > 编制日期：2026-08-16  
-> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强进行中（J-01～J-06 已完成，M3 进行中，下一任务 J-07）；Phase D（RAG）为 MVP 之外 backlog
+> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强进行中（J-01～J-07 已完成，M3 进行中，下一任务 J-08）；Phase D（RAG）为 MVP 之外 backlog
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -2990,7 +2990,7 @@ Prompt 必须区分：
 | J-04 | Turn/Action Service/API | 2d | J-01,J-02,J-03,J-05 | DONE | AI Agent | AgentCommandService 三段式 Turn(事务 A→lease+Planner 零事务→事务 B)+ plan 服务端模板化(create_script 5 步/evaluate 3 步+剧本快照);5 端点(POST turns 200/202、GET turn/action、confirm 202、reject);confirm 行锁内快照过期检测(ACTION_STALE)+重复确认返回原 Run(agent-action:{id} 幂等键)+并发单活跃 Run(PROJECT_HAS_ACTIVE_RUN);explain 无 Run;conversation_id=null 自动建会话标题截 30 字;错误码 8 个入契约;21 个集成测试(5 TDD 锚点);全量 1040 passed/6 deselected,Ruff/mypy clean(300 files) |
 | J-05 | 持久化 Dispatcher 与 checkpoint | 3.5d | J-01 | DONE | AI Agent | 2026-08-22：0006 + DB lease Dispatcher + PostgreSQL saver；迁移、ruff、mypy、后端全量分组测试通过 |
 | J-06 | 对话式剧本修订 | 1.5d | J-04,J-05 | DONE | AI Agent | 2026-08-22：conversational_revision 子图（prepare_target→ensure_evaluation→revise→continuity_check→re_evaluate→END）；prepare_target 防御性校验服务端 source script ID（归属/type/valid）并补齐 SB/大纲/各集 latest valid 映射；缺绑定评估先仅评估目标集（EvaluationService 幂等复用）；用户约束经 user_instruction 写入 RevisionPlan（input_hash+dedup 幂等，重放不产生重复版本）；单轮用户指定修订不进自动循环（re_evaluate 后 END，dispatcher 跳过 needs_revision_decision 拦截）；run.completed payload 携带 source/new script+plan+continuity+evaluation Artifact ID；revise_script intent 开放进 Planner 白名单与计划模板（目标集无 valid 剧本→Turn failed SCRIPT_NOT_FOUND）；6 个集成测试（含 TDD anchor missing_evaluation_is_created_before_user_directed_revision）+1 个 API 确认测试；全量 1046 passed/6 deselected，Ruff/mypy clean（303 files） |
-| J-07 | 大纲修订与影响 Tool | 1.5d | J-03 | TODO | - | - |
+| J-07 | 大纲修订与影响 Tool | 1.5d | J-03 | DONE | AI Agent | 2026-08-22：domain/outline_revision.py（OutlineRevisionInput 含旧大纲/SB/用户约束/source ID；collect_invariant_errors：集数不变+集号连续+required_characters 可追溯+locked_facts 否定窗口检测）+ OutlineReviserSkill（输出完整 EpisodeOutlineSet 不接受 patch，不变量失败带反馈重试 2 次后抛可诊断错误）+ prompt outline_reviser v1.0.0（manifest/loader schema 注册/OpenAI 角色路由 planner）+ OutlineImpactTool（确定性逐字段比较：变更集/字段明细/弧线变化/依赖旧大纲剧本 ID/follow-up；空白规范化不算变化；相同大纲空影响；不调 LLM）+ golden outline_revision_valid（10 集全量、仅第 3 集变化）；单测 12（工具 5 含 TDD anchor + skill/不变量 7）+ 契约 3；全量 1063 passed/6 deselected，Ruff/mypy clean（308 files） |
 | J-08 | 大纲修订工作流 | 1d | J-05,J-07 | TODO | - | - |
 | J-09 | Action 生命周期、Outcome 与再规划 | 2d | J-04,J-05,J-06,J-08 | TODO | - | - |
 | J-10 | 前端 API 与 Hooks | 1d | J-04,J-09 | TODO | - | - |

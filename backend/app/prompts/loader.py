@@ -99,6 +99,7 @@ def _auto_register_domain_schemas() -> None:
     from app.domain.evaluation import EvaluationInput, EvaluationIssue, EvaluationReport  # noqa: F401
     from app.domain.import_file import ImportClassification, ImportClassificationInput  # noqa: F401
     from app.domain.outline import EpisodeOutline, EpisodeOutlineSet, OutlineInput  # noqa: F401
+    from app.domain.outline_revision import OutlineRevisionInput  # noqa: F401
     from app.domain.requirement import NeedsUserInput, NormalizedRequirement, RequirementInput  # noqa: F401
     from app.domain.revision import (  # noqa: F401
         ContinuityCheckInput,
@@ -166,6 +167,7 @@ def _auto_register_domain_schemas() -> None:
     register_schema("ImportClassification", ImportClassification)
     register_schema("AgentPlannerInput", AgentPlannerInput)
     register_schema("AgentPlannerOutput", AgentPlannerOutput)
+    register_schema("OutlineRevisionInput", OutlineRevisionInput)
 
 
 # ========================================================================

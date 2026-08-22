@@ -1,0 +1,264 @@
+{
+  "episodes": [
+    {
+      "episode_number": 1,
+      "title": "被抛弃的天才",
+      "opening_hook": "青训营的淘汰名单上，林峰的名字赫然在列。教练的理由只有一个：身体素质不达标。",
+      "objective": "引出主角林峰被青训队抛弃的遭遇，建立初始处境。",
+      "core_conflict": "林峰被迫离开青训营，面临职业生涯的第一次重大打击。",
+      "key_events": [
+        "林峰被告知淘汰",
+        "林峰离开青训营",
+        "林峰在公园独自练球到深夜"
+      ],
+      "payoff": "林峰在公园展现实力，被路过的老教练张德胜注意到。",
+      "ending_hook": "张德胜递给林峰一张名片：'明天来我的球队试训'。这是陷阱还是机会？",
+      "next_bridge": "林峰将前往张德胜的低级别球队参加试训。",
+      "introduced_loops": [
+        "林峰被淘汰的真正原因",
+        "张德胜的真实身份"
+      ],
+      "resolved_loops": [],
+      "required_characters": [
+        "char_protagonist_001",
+        "char_support_001"
+      ]
+    },
+    {
+      "episode_number": 2,
+      "title": "底层球队的挑战",
+      "opening_hook": "林峰站在破旧的训练场门口，眼前的景象与青训营天差地别。",
+      "objective": "林峰加入低级别球队，面对新的环境和队友的质疑。",
+      "core_conflict": "林峰必须在资源匮乏的环境中证明自己，同时赢得队友的信任。",
+      "key_events": [
+        "林峰第一次参加球队训练",
+        "队长质疑林峰的能力",
+        "林峰在训练赛中展现出战术视野"
+      ],
+      "payoff": "林峰的精准传球帮助球队在训练赛中逆转比分。",
+      "ending_hook": "训练结束后，张德胜单独留下林峰：'你知道我为什么选中你吗？你身上有一样东西，是任何人都无法教会的。'",
+      "next_bridge": "林峰的战术天赋开始被张德胜系统性地培养。",
+      "introduced_loops": [
+        "球队的财务问题"
+      ],
+      "resolved_loops": [],
+      "required_characters": [
+        "char_protagonist_001",
+        "char_support_001"
+      ]
+    },
+    {
+      "episode_number": 3,
+      "title": "试训风波：替补席上的暗流",
+      "opening_hook": "联赛揭幕战，林峰的名字出现在替补名单中。",
+      "objective": "林峰获得上场机会，在正式比赛中证明自己。",
+      "core_conflict": "林峰在试训中被刻意安排替补，与陈浩的旧怨在场上公开化。",
+      "key_events": [
+        "林峰被安排替补",
+        "陈浩当众挑衅林峰",
+        "林峰下半场替补登场梅开二度"
+      ],
+      "payoff": "林峰用两个进球回应挑衅，全场哗然。",
+      "ending_hook": "看台上，一个西装革履的男人拍下了林峰的进球画面。他拨通电话：'陈总，你让我找的那个小子……我找到了。'",
+      "next_bridge": "陈浩及其背后的势力开始注意到林峰的崛起。",
+      "introduced_loops": [
+        "看台上神秘人的身份",
+        "陈浩对林峰的关注"
+      ],
+      "resolved_loops": [
+        "林峰是否能在职业赛场立足"
+      ],
+      "required_characters": [
+        "char_protagonist_001"
+      ]
+    },
+    {
+      "episode_number": 4,
+      "title": "昔日故人的阴影",
+      "opening_hook": "林峰在球队更衣室的电视上看到了陈浩的专访——他已是联赛最佳新秀候选。",
+      "objective": "陈浩正式登场，揭示两人过去的恩怨。",
+      "core_conflict": "林峰与陈浩在场外第一次正面交锋，陈浩试图用资源和地位碾压林峰。",
+      "key_events": [
+        "陈浩在媒体上谈及林峰",
+        "两人在联赛活动中相遇",
+        "陈浩当众羞辱林峰"
+      ],
+      "payoff": "林峰面对羞辱保持冷静，用训练场上的表现回应。",
+      "ending_hook": "陈浩看着林峰离开的背影，对助理说：'安排一下，下次我们要在赛场上碰面——我要让所有人看到，他根本不配站在我面前。'",
+      "next_bridge": "陈浩开始运作两队之间的比赛。",
+      "introduced_loops": [
+        "陈浩父亲的联赛赞助商身份"
+      ],
+      "resolved_loops": [
+        "陈浩对林峰的关注"
+      ],
+      "required_characters": [
+        "char_protagonist_001",
+        "char_antagonist_001"
+      ]
+    },
+    {
+      "episode_number": 5,
+      "title": "球场上的对决",
+      "opening_hook": "杯赛抽签结果揭晓：林峰的球队将在下一轮对阵陈浩所在的联赛强队。",
+      "objective": "林峰与陈浩在正式比赛中正面交锋。",
+      "core_conflict": "实力悬殊的比赛，林峰必须在陈浩的全面压制下找到突破口。",
+      "key_events": [
+        "比赛开始，陈浩率先进球",
+        "林峰用战术传球撕开防线",
+        "下半场林峰受伤坚持比赛"
+      ],
+      "payoff": "虽然球队最终落败，但林峰的表现赢得了对手教练的尊重。",
+      "ending_hook": "赛后退场通道中，陈浩走到林峰面前，低声说：'你以为这样就完了吗？这只是开始。你那个破球队，撑不过这个赛季。'",
+      "next_bridge": "球队的财务危机开始升级。",
+      "introduced_loops": [
+        "球队面临解散的风险"
+      ],
+      "resolved_loops": [
+        "林峰与陈浩的首次场上对决"
+      ],
+      "required_characters": [
+        "char_protagonist_001",
+        "char_antagonist_001",
+        "char_support_001"
+      ]
+    },
+    {
+      "episode_number": 6,
+      "title": "球队存亡",
+      "opening_hook": "俱乐部大门上贴出了一张通知：因财务问题，球队将在赛季末解散。",
+      "objective": "林峰与队友们为了拯救球队而团结一致。",
+      "core_conflict": "球队面临解散，林峰必须找到方法来挽救。",
+      "key_events": [
+        "球队老板宣布可能解散",
+        "球员们发起自救行动",
+        "林峰找到潜在的赞助机会"
+      ],
+      "payoff": "林峰用自己在比赛中的表现吸引了新的赞助商关注。",
+      "ending_hook": "赞助商代表来访当天，陈浩的父亲也出现在俱乐部门口：'这家俱乐部的未来，不是你一个小球员能决定的。'",
+      "next_bridge": "陈浩父亲背后的利益集团开始浮出水面。",
+      "introduced_loops": [
+        "陈浩父亲对联赛的控制力",
+        "张德胜教练的过去"
+      ],
+      "resolved_loops": [
+        "陈浩父亲的联赛赞助商身份"
+      ],
+      "required_characters": [
+        "char_protagonist_001",
+        "char_support_001"
+      ]
+    },
+    {
+      "episode_number": 7,
+      "title": "底牌与牺牲",
+      "opening_hook": "张德胜教练在训练中突然晕倒，送往医院。",
+      "objective": "在教练缺席的情况下，林峰带领球队面对最艰难的一战。",
+      "core_conflict": "内忧外患中，林峰必须扛起领导责任，同时发现陈浩父亲的真正目的。",
+      "key_events": [
+        "张德胜住院",
+        "林峰临时担任训练指导",
+        "发现陈浩父亲试图收购球队土地"
+      ],
+      "payoff": "林峰带领残缺阵容的球队打出了赛季最佳表现，张德胜在病床上通过直播观看比赛。",
+      "ending_hook": "张德胜在电话中对林峰说：'我有一件事瞒了你很久……关于你当年被青训队淘汰的真相。'",
+      "next_bridge": "揭示林峰被淘汰的真相。",
+      "introduced_loops": [
+        "林峰被淘汰的真相"
+      ],
+      "resolved_loops": [
+        "球队财务危机的缓解"
+      ],
+      "required_characters": [
+        "char_protagonist_001",
+        "char_support_001"
+      ]
+    },
+    {
+      "episode_number": 8,
+      "title": "真相与觉醒",
+      "opening_hook": "张德胜在病房中告诉林峰：当初青训淘汰他，不是因为身体素质，而是有人打了招呼。",
+      "objective": "林峰得知被淘汰的真相，心态发生转变，天赋开始完全觉醒。",
+      "core_conflict": "林峰面对被背叛的愤怒与继续前进的理性之间的内心挣扎。",
+      "key_events": [
+        "张德胜揭露真相",
+        "林峰陷入自我怀疑",
+        "林峰在关键比赛前做出选择"
+      ],
+      "payoff": "林峰放下仇恨，将愤怒转化为场上的统治力，打出了职业生涯最高光的比赛。",
+      "ending_hook": "赛后记者会上，林峰面对镜头说：'我要感谢那个当年淘汰我的人——因为你让我明白了，真正的天赋不需要别人的认可。'",
+      "next_bridge": "林峰的宣言震动联赛，陈浩决定亲自下场做最后决战。",
+      "introduced_loops": [
+        "林峰入选国青队的可能性"
+      ],
+      "resolved_loops": [
+        "林峰被淘汰的真相",
+        "林峰战术天赋的完全觉醒"
+      ],
+      "required_characters": [
+        "char_protagonist_001",
+        "char_support_001",
+        "char_antagonist_001"
+      ]
+    },
+    {
+      "episode_number": 9,
+      "title": "最后的决战",
+      "opening_hook": "升降级附加赛——胜者留在联赛，败者跌入深渊。对阵双方：林峰的球队 VS 陈浩的球队。",
+      "objective": "林峰与陈浩在决定命运的最终对决中分出高下。",
+      "core_conflict": "一场定生死的比赛，背后是资本与天赋的对决。",
+      "key_events": [
+        "赛前两队气氛紧张",
+        "上半场陈浩率先进球",
+        "林峰受伤后带伤回到场上",
+        "终场前林峰创造奇迹"
+      ],
+      "payoff": "林峰在伤停补时阶段用一记手术刀般的传球助攻绝杀。",
+      "ending_hook": "终场哨响，林峰倒在球场上，队友们冲过来将他举起。看台上，陈浩的父亲铁青着脸拨通电话：'计划失败了，撤。'",
+      "next_bridge": "球队成功保级，但更大的舞台在等待林峰。",
+      "introduced_loops": [
+        "林峰未来的职业选择"
+      ],
+      "resolved_loops": [
+        "林峰与陈浩的最终对决",
+        "球队解散危机"
+      ],
+      "required_characters": [
+        "char_protagonist_001",
+        "char_antagonist_001",
+        "char_support_001"
+      ]
+    },
+    {
+      "episode_number": 10,
+      "title": "新的起点",
+      "opening_hook": "一个月后，林峰收到了两份邀请：一份来自顶级联赛球队，一份来自国青队。",
+      "objective": "为第一阶段故事收尾，同时为后续留下成长空间。",
+      "core_conflict": "林峰面临人生的重要抉择：去顶级联赛还是为国出战？",
+      "key_events": [
+        "林峰收到两份邀请",
+        "张德胜给出最后的建议",
+        "林峰做出选择"
+      ],
+      "payoff": "林峰选择先为国青队效力，同时承诺不会忘记低级别联赛的根。",
+      "ending_hook": "国青队训练场上，林峰穿上胸前有国旗的球衣，望向远方。新教练走到他身边：'林峰，你的故事才刚刚开始。准备好了吗？'",
+      "next_bridge": "",
+      "introduced_loops": [
+        "国青队的挑战",
+        "顶级联赛的召唤"
+      ],
+      "resolved_loops": [
+        "林峰未来的职业选择"
+      ],
+      "required_characters": [
+        "char_protagonist_001",
+        "char_support_001"
+      ]
+    }
+  ],
+  "arc_summary": "被抛弃的足球少年林峰在低谷中被老教练张德胜发掘，进入低级别球队试训，面对旧队友的挑衅用实力回应，逐步赢回属于自己的赛场。",
+  "validation_notes": [
+    "第 10 集形成小阶段高潮而非强制大结局",
+    "next_bridge 在各集之间形成合理衔接"
+  ]
+}

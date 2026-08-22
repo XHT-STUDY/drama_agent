@@ -3373,3 +3373,44 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 按 PLAN 的依赖顺序执行 Task 7 / J-07：大纲修订 Skill 与影响分析 Tool（OutlineRevisionInput 全量输出 + OutlineImpactTool 确定性比较）。
+
+
+## J-07 大纲修订 Skill 与影响分析 Tool（2026-08-22）
+
+### 做了什么
+
+- 新增 `domain/outline_revision.py`：
+  - `OutlineRevisionInput`（旧大纲 / Story Bible / 用户约束 / source_outline_artifact_id，`extra="forbid"`）；
+  - `collect_invariant_errors`：集数不变（修订不增删集）、集号 1..N 唯一连续（构造校验兜底 + 可诊断错误）、required_characters 可追溯（validate_characters）、locked_facts 未被反转；
+  - `check_locked_facts`：子句级滑动窗口 + 字符 bigram Dice 相似度（阈值 0.75）+ 否定标记判定的确定性检测；子句原文逐字出现视为重述跳过。
+- 新增 `skills/outline_reviser.py`：OutlineReviserSkill 复用 OutlineSkill 的"带反馈重试"模式——LLM 输出完整 EpisodeOutlineSet（输出 Schema 决定 patch 结构无法通过），不变量失败把错误列表作为 system 反馈重试（最多 2 次），用尽抛 `OutlineRevisionValidationError`（含全部诊断行）。
+- 新增 `tools/outline_impact.py`：OutlineImpactTool（纯 Python，不调 LLM）——11 个单集字段 + arc_summary 逐字段比较（`normalize_text` 空白归一，空白差异不算变化）；相同大纲 → 空影响；`DependentScript`（script_id/episode/source_outline_id）按来源大纲过滤，只有所在集变化的剧本进入 `dependent_script_ids` 与 follow-up 建议；metadata 带 input/output schema（MCP 契约）。
+- Prompt 接线：`templates/outline_reviser.md`（v1.0.0，锁定事实置于用户约束之上）、manifest 注册（user_content_vars: old_outline/story_bible/user_constraints → 注入边界包裹）、loader `_auto_register_domain_schemas` 注册 OutlineRevisionInput、`openai_compatible.py` 角色路由 `outline_reviser → planner`。
+- 新增 golden `outline_revision_valid.json`：10 集全量（从 outline_set_valid 派生），仅第 3 集 title/core_conflict/key_events/payoff 变化 + 弧线微调——影响分析测试可精确断言 changed_episodes == [3]。
+
+### 为什么这么做
+
+- "不接受 patch"由两层保证：输出 Schema 是完整 EpisodeOutlineSet（patch dict 无法通过 Schema），即使模型只输出变更集（1 集自洽重编号），集数不变量也会拒绝——patch 永远成不了合法修订。
+- 影响分析做成确定性 Tool 而非 LLM 调用：新旧大纲与依赖剧本都是结构化数据，逐字段比较可精确测试、可审计；follow-up 建议直接供 J-08 工作流的影响摘要与 J-09 后续计划消费。
+- locked_facts 反转检测第一版用"否定词插入变体枚举"，测出抓不到"曾是→不再是"这类替换式反转；重写为子句滑动窗口 + 相似度 + 否定标记后，插入/替换/改写三种显式反转都能命中，且原文重述不误报。语义级反转（换说法陈述相反内容）明确留给连续性检查兜底，启发式的边界写进 docstring。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/unit/tools/test_outline_impact.py | 5 passed（TDD anchor: changed_episode_reports_scripts_derived_from_old_outline；含空白差异、字段明细、元数据契约） |
+| uv run pytest tests/unit/skills/test_outline_reviser.py | 12 passed（happy path、反馈重试后成功、耗尽抛诊断、patch 拒绝、4 个不变量用例） |
+| uv run pytest tests/contract/test_prompts.py | 39 passed（新增 outline_reviser manifest/渲染/缺变量 3 例） |
+| uv run pytest --disable-warnings -ra | **1063 passed，6 deselected**（1046→1063） |
+| uv run ruff check app/ tests/ | All checks passed |
+| uv run mypy app/ tests/ | Success: no issues found in 308 source files |
+
+### 学到了什么
+
+1. Tool 协议的 `execute(**kwargs)` 是强约束——具名关键字参数签名会 mypy override 报错；输入解析（dict→model）放进方法体内部更符合仓库约定。
+2. 否定检测这种"看起来简单"的自然语言启发式，第一版几乎必然漏 case：先写对抗性测试用例（插入/替换/改写/原文重述四类）再选算法，滑动窗口 + bigram 相似度是够用的最小实现。
+3. FakeLLM 的 registry 是"同名永远同一个返回值"，测重试路径要用 SequenceFakeLLM（按调用次序出队 + 捕获 messages），顺带能断言反馈消息内容。
+
+### 下一步
+
+- 按 PLAN 的依赖顺序执行 Task 8 / J-08：大纲修订工作流与版本落库（合法输出成为 latest valid；不变量失败保存 invalid 诊断版本、Run failed、latest valid 不变；报告仍引用旧大纲的剧本）。
