@@ -10,6 +10,7 @@
 - application 不可以保存 Prompt 模板、实现数据库细节
 """
 
+from app.application.agent_command_service import AgentCommandService
 from app.application.conversation_service import ConversationService, MessageService
 from app.application.project_service import ProjectService
 
@@ -17,4 +18,5 @@ __all__ = [
     "ProjectService",
     "ConversationService",
     "MessageService",
+    "AgentCommandService",
 ]

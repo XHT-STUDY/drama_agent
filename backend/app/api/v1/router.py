@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
+from app.api.v1.agent import router as agent_router
 from app.api.v1.artifacts import router as artifacts_router
 from app.api.v1.conversations import router as conversations_router
 from app.api.v1.evaluations import router as evaluations_router
@@ -137,6 +138,7 @@ async def health_ready(request: Request) -> dict[str, Any]:
 
 # ---- 子路由注册 ----
 router.include_router(projects_router)
+router.include_router(agent_router)
 router.include_router(conversations_router)
 router.include_router(artifacts_router)
 router.include_router(evaluations_router)

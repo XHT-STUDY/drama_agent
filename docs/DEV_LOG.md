@@ -3291,3 +3291,43 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 按 PLAN 的依赖顺序执行 Task 4 / J-04：Turn/Action Service/API，把 Planner 输出接入 AgentTurn 幂等收据、Action 计划生成和确认接口。
+
+
+## J-04 Agent Turn/Action Service 与 API（2026-08-22）
+
+### 做了什么
+
+- 新增 AgentCommandService：Turn 三段式执行——短事务 A（校验项目/会话/活动上下文 + `(project_id, idempotency_key)` get-or-create Turn + 一条 user 消息）→ 事务外原子领取 planning lease、构建受预算上下文并调用 Planner（零事务段）→ 短事务 B 写入 clarification/answer/plan/error 并终结 Turn。
+- plan → AgentActionPlan 全服务端模板化：create_script 固定 5 步（需求→SB→大纲→剧本→评估决策，集数取 mvp_outline_count/mvp_script_count）、evaluate 3 步 + 受评估剧本来源快照（每集最新 valid script_draft 的 id/type/episode/version/checksum）；Planner 的 steps 仅作展示丢弃。explain 归一化为只读 answer，不落 Action。
+- 新增 5 个端点：POST /projects/{id}/agent/turns（终态 200 / 他人租约 202 / 同 key 异载荷 409 IDEMPOTENCY_KEY_REUSED）、GET /agent/turns/{id}、GET /agent/actions/{id}、POST /agent/actions/{id}/confirm（202）、POST /agent/actions/{id}/reject（仅 proposed→rejected）。
+- confirm 行锁内做过期检测（快照 vs 最新 valid 不一致 → Action→stale + 409 ACTION_STALE）、Run 幂等键 agent-action:{action_id}（重复确认与崩溃恢复返回原 Run）、并发确认由单项目单活跃 Run 约束兜底（409 PROJECT_HAS_ACTIVE_RUN）；intent→Run action 固定映射，explain 返回 400 UNSUPPORTED_AGENT_INTENT。
+- conversation_id=null 时事务 A 自动建会话，标题取首条消息前 30 字；连续 needs_input 计数排除当前 Turn 后喂给 Planner（第 4 轮给出 4 个合法命令示例）。
+- dependencies.py 增 get_agent_command_service 惰性单例（test 环境 FakeLLM + 默认 plan fixture）；AgentContextService 增公开 validate_active_context 供事务 A 预检（复用 _load_active 全部规则，避免留下永远无法完成的 Turn）。
+- 新错误类：ProjectHasActiveRunError / AgentActionStaleError / UnsupportedAgentIntentError；API_CONTRACT 补 5 端点节 + 8 个 Agent 错误码。
+
+### 为什么这么做
+
+- Planner 幂等收据必须在调用模型前持久化（事务 A），重复请求与崩溃恢复才能复用结果而不是重复扣费；lease 原子领取 + 终态写入校验 owner，保证多进程下只有一个实例写最终响应。
+- 确认只信服务端持久化 Plan，不接受客户端回传——防止被确认的计划与展示的计划不一致；快照过期检测放在 Action 行锁内，消除“检测通过后来源又被更新”的竞态。
+- Run 幂等键派生自 action_id 而不是请求参数，confirm 在 commit 前崩溃也能由下一次确认或 Dispatcher 幂等接管。
+- 计划步骤由服务端按 intent 模板生成：模型只提供意图/约束/影响，执行语义不进 LLM 输出（DESIGN §4.2）。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/integration/api/test_agent_turns.py tests/integration/api/test_agent_actions.py | 21 passed（含 5 个 TDD 锚点：planner_runs_after_initial_transaction_commits / duplicate_clarification_turn_returns_original_response / reused_idempotency_key_with_different_payload_is_rejected / stale_plan_is_blocked_without_creating_run / concurrent_actions_cannot_create_two_active_runs） |
+| uv run pytest | **1040 passed，6 deselected**（1019→1040 恰为 J-04 新增 21） |
+| uv run ruff check app/ tests/ | All checks passed |
+| uv run mypy app/ tests/ | Success: no issues found in 300 source files |
+
+### 学到了什么
+
+1. **rollback 会过期 ORM 对象**：rollback 之后再读属性（哪怕只是 f-string 里取 `turn.id`/`action.status`）都会触发隐式刷新，在 asyncio 下直接 MissingGreenlet。本次在同一处踩了三次——所有 rollback 前必须先把需要的标量捕获成局部变量。
+2. **“从最新往回数连续未解决”要把当前实体排除**：当前 Turn 永远是最新的一行（planning），不排除会让计数恒为 0；这类自引用统计要显式 `exclude_turn_id`。
+3. 事务边界测试用“探针 Skill + 独立会话查询”非常有效：在 LLM 调用前从第二个连接看到 Turn 已 planning、user 消息已可见，直接证明事务 A 与 lease 事务都已提交。
+4. 混合返回类型（200/202 同一 response_model）用注入 `Response` 对象改 `status_code` 实现，OpenAPI 仍由 responses 字典声明两种状态。
+
+### 下一步
+
+- 按 PLAN 的依赖顺序执行 Task 6 / J-06：对话式剧本修订工作流（revise_script intent 开放进白名单 + Dispatcher 白名单扩展）。

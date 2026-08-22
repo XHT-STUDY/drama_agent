@@ -1,7 +1,7 @@
 # DramaAgent API 契约文档
 
 > 版本：v0.1.0-rc1  
-> 最后更新：2026-08-16（Phase I 发布候选：retry / diagnostics / metrics + 错误码全集）
+> 最后更新：2026-08-22（J-04：Agent Turn/Action 五端点 + Agent 错误码；此前 2026-08-16 Phase I 发布候选）
 
 ## 概述
 
@@ -34,10 +34,19 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 | 状态码 | code | 含义 | 触发 |
 |--------|------|------|------|
 | 400 | `VALIDATION_ERROR` | 请求体 / 查询参数校验失败 | Pydantic 校验 |
+| 400 | `UNSUPPORTED_AGENT_INTENT` | Agent intent 不映射任何 WorkflowRun action（如 `explain`） | `POST /agent/actions/{id}/confirm`（J-04） |
 | 404 | `NOT_FOUND` | 资源不存在 | 项目 / Run / Artifact 等 |
+| 404 | `AGENT_TURN_NOT_FOUND` | AgentTurn 不存在 | Agent 查询 / 幂等回退（J-04） |
+| 404 | `AGENT_ACTION_NOT_FOUND` | AgentAction 不存在 | Agent 确认 / 拒绝（J-04） |
 | 409 | `RUN_NOT_RETRYABLE` | Run 处于 `completed` / `cancelled` 终态，不可重试 | `POST /runs/{id}/retry` |
 | 409 | `RUN_ALREADY_ACTIVE` | Run 正在执行（`queued` / `running`），不可重复重试 | `POST /runs/{id}/retry` |
 | 409 | `RUN_BUDGET_EXCEEDED` | 触发 per-run 硬预算（调用数 / Token） | LLM 调用 |
+| 409 | `IDEMPOTENCY_KEY_REUSED` | 同一幂等键被不同请求载荷复用 | Run / Agent Turn 创建（J-04） |
+| 409 | `INVALID_ACTIVE_CONTEXT` | 活动 Artifact / 会话与当前项目或目标不一致 | Agent Turn 创建（J-04） |
+| 409 | `AGENT_TURN_INVALID_TRANSITION` | AgentTurn 状态迁移不合法 | Agent 内部状态机（J-04） |
+| 409 | `AGENT_ACTION_INVALID_TRANSITION` | AgentAction 状态迁移不合法（如重复 reject / 非 proposed 确认） | `POST /agent/actions/{id}/confirm|reject`（J-04） |
+| 409 | `ACTION_STALE` | 计划基于的来源 Artifact 已更新，Action 已转 stale | `POST /agent/actions/{id}/confirm`（J-04） |
+| 409 | `PROJECT_HAS_ACTIVE_RUN` | 项目已有活跃 Run，不能同时执行两个计划 | `POST /agent/actions/{id}/confirm`（J-04） |
 | 409 | `TOOL_ALREADY_REGISTERED` | 工具 / Skill 重名注册冲突 | 扩展注册 |
 | 413 | `FILE_TOO_LARGE` | 上传超过 10 MB | 上传 |
 | 415 | `INVALID_FILE_TYPE` | 仅 TXT / DOCX | 上传 |
@@ -175,6 +184,38 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/metrics` | Prometheus 指标（`metrics_enabled=false` 时 404；不含真实密钥） |
+
+### Agent（J-04）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/projects/{id}/agent/turns` | 执行一次对话 Turn（200 终态 / 202 规划中） |
+| GET | `/agent/turns/{turn_id}` | 查询 Turn 快照（含关联 Action） |
+| GET | `/agent/actions/{action_id}` | 查询 Action 快照（计划 / 来源快照 / Run 引用） |
+| POST | `/agent/actions/{action_id}/confirm` | 确认计划并创建（或复用）WorkflowRun，202 |
+| POST | `/agent/actions/{action_id}/reject` | 拒绝计划（仅 proposed → rejected） |
+
+**Turn 三段式执行**：短事务 A（校验项目/会话/活动上下文 + `(project_id, idempotency_key)` get-or-create Turn + 一条 user 消息）→ 事务外原子领取 planning lease 并调用 Planner → 短事务 B 写入 `clarification` / `answer` / `plan` 并终结 Turn。LLM 调用期间不持有任何事务或行锁。
+
+**请求体**（`POST /projects/{id}/agent/turns`）：
+
+```json
+{
+  "conversation_id": "uuid-or-null（null 时自动建会话，标题取首条消息前 30 字）",
+  "content": "把第三集男女主冲突提前（1..4000 字）",
+  "active_context": {
+    "artifact_id": "uuid", "artifact_type": "script_draft",
+    "episode_number": 3, "version": 2, "checksum": "64-hex"
+  },
+  "idempotency_key": "client-generated-key（必填）"
+}
+```
+
+**响应语义**：响应体为 `AgentTurnResponse`（注意字段名是 `id` 而非 `turn_id`，含 `status` / `turn_type` / `response_message_id` / `action_id` / `error_code`）。终态返回 200：`turn_type=clarification`（`status=needs_input`，无 Action）、`answer`（`status=answered`，只读）、`plan`（`status=action_proposed`，返回 proposed AgentAction）；Planner 失败同样返回 200（`status=failed` + `error_code`，不创建 Action/Run）。重复请求命中有效 lease 下的 planning Turn 返回 202 + 当前快照；命中终态返回与首次完全一致的 200 原响应。同 key 不同载荷返回 409 `IDEMPOTENCY_KEY_REUSED`。
+
+**确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`（`revise_script`/`revise_outline` 待 Task 6/8 开放）；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）。Run 幂等键为 `agent-action:{action_id}`。
+
+**Wave 2 已知限制**：Planner 白名单仅开放 `create_script | explain | evaluate`；单集 evaluate 的 `episode_number` 进入计划与来源快照，但当前 Run 仍评估项目全部剧本（Task 6/8 收敛）。
 
 ### 修订（F-06）
 

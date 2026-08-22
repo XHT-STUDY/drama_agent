@@ -2987,7 +2987,7 @@ Prompt 必须区分：
 | J-01 | AgentTurn、AgentAction 与消息持久化 | 2d | I-06 | DONE | AI Agent | AgentCommand/Plan/Outcome 严格 Schema；AgentTurn 幂等收据 + planning lease/有效持有者终态守卫 + 状态机；AgentAction 唯一 Run/深度约束 + 状态机；Message kind/metadata + 并发 sequence；0005 升降级通过；后端 1001 passed、mypy 287 files、Ruff clean，前端 169 passed + lint/typecheck clean |
 | J-02 | 项目上下文与预算 | 1d | J-01 | DONE | AI Agent | 34 个定向测试通过；后端全量 1012 passed/6 deselected；Ruff/mypy clean；AgentContextService + active context 校验 + 12 条消息/Artifact 索引/预算保护 |
 | J-03 | Planner Skill | 1d | J-02 | DONE | AI Agent | Planner Skill + AgentPlannerInput/Output；服务端 intent 白名单与三类可读输出；无活动上下文/越界集数/冲突修改确定性澄清；三轮未解决提供 4 个合法命令；拒绝工具/API/SQL/Artifact ID；Prompt manifest v1.0.0；1019 passed/6 deselected，Ruff/mypy clean |
-| J-04 | Turn/Action Service/API | 2d | J-01,J-02,J-03,J-05 | TODO | - | - |
+| J-04 | Turn/Action Service/API | 2d | J-01,J-02,J-03,J-05 | DONE | AI Agent | AgentCommandService 三段式 Turn(事务 A→lease+Planner 零事务→事务 B)+ plan 服务端模板化(create_script 5 步/evaluate 3 步+剧本快照);5 端点(POST turns 200/202、GET turn/action、confirm 202、reject);confirm 行锁内快照过期检测(ACTION_STALE)+重复确认返回原 Run(agent-action:{id} 幂等键)+并发单活跃 Run(PROJECT_HAS_ACTIVE_RUN);explain 无 Run;conversation_id=null 自动建会话标题截 30 字;错误码 8 个入契约;21 个集成测试(5 TDD 锚点);全量 1040 passed/6 deselected,Ruff/mypy clean(300 files) |
 | J-05 | 持久化 Dispatcher 与 checkpoint | 3.5d | J-01 | PASS | AI Agent | 2026-08-22：0006 + DB lease Dispatcher + PostgreSQL saver；迁移、ruff、mypy、后端全量分组测试通过 |
 | J-06 | 对话式剧本修订 | 1.5d | J-04,J-05 | TODO | - | - |
 | J-07 | 大纲修订与影响 Tool | 1.5d | J-03 | TODO | - | - |

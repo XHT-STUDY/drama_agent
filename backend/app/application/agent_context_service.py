@@ -79,6 +79,19 @@ class AgentContextService:
             protected_sections={"user_request", "current_target"},
         )
 
+    async def validate_active_context(
+        self,
+        db: AsyncSession,
+        project: Project,
+        active_context: ActiveArtifactContext,
+    ) -> None:
+        """供 Turn 事务 A 预检活动上下文（复用 build 的全部校验规则）。
+
+        在持久化 AgentTurn 与 user 消息之前拒绝非法活动 Artifact,
+        避免留下永远无法完成的 Turn。
+        """
+        await self._load_active(db, project, active_context)
+
     async def _recent_messages(self, db: AsyncSession, conversation_id: uuid.UUID) -> list[Message]:
         stmt = (
             select(Message)

@@ -184,6 +184,38 @@ class RunAlreadyActiveError(AppError):
     code = "RUN_ALREADY_ACTIVE"
 
 
+class ProjectHasActiveRunError(RunAlreadyActiveError):
+    """项目已有活跃 Run，新计划不能同时执行（409 PROJECT_HAS_ACTIVE_RUN，J-04）。
+
+    Agent Action 确认时由单项目单活跃 Run 约束触发；
+    并发确认由数据库 partial unique index 兜底后转换为本错误。
+    """
+
+    status_code = 409
+    code = "PROJECT_HAS_ACTIVE_RUN"
+
+
+class AgentActionStaleError(AppError):
+    """计划基于的来源 Artifact 已更新（409 ACTION_STALE，J-04）。
+
+    确认时快照与最新 valid 版本不一致，Action 被标记为 stale，
+    用户需要重新发起规划。
+    """
+
+    status_code = 409
+    code = "ACTION_STALE"
+
+
+class UnsupportedAgentIntentError(AppError):
+    """intent 不支持确认执行（400 UNSUPPORTED_AGENT_INTENT，J-04）。
+
+    例如 explain 只读意图不映射任何 WorkflowRun action。
+    """
+
+    status_code = 400
+    code = "UNSUPPORTED_AGENT_INTENT"
+
+
 class BudgetExceededError(AppError):
     """Run 的 LLM 预算超限（409 RUN_BUDGET_EXCEEDED，I-01）。
 

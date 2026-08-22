@@ -514,3 +514,19 @@ if state.get("status") == "failed":
 **解决方案**：API fixture teardown 显式 await shutdown_dispatcher() 并等待任务退出；请求入口先 commit durable Run 再 wake。依赖同时声明 psycopg[binary]，checkpoint 表只由 make migrate/CLI setup，测试 session 初始化时显式 setup。
 
 **学习收获**：数据库成为事实源不等于进程内 Task 可以不管理生命周期；测试和服务关闭都必须等待后台任务退出。PostgreSQL 驱动也要验证“能导入并连接”，不能只看依赖解析成功。
+
+
+## 2026-08-22 — rollback 后读 ORM 属性触发 MissingGreenlet（J-04 确认/幂等路径）
+
+**症状**：Agent Turn/Action 集成测试在三个不同路径（幂等预检命中、确认非 proposed Action、确认不支持 intent）均报 `sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called`，堆栈指向服务内一行看似普通的 `await db.execute(...)`。
+
+**产生原因**：`await db.rollback()` 会把该会话加载的 ORM 对象全部标记为 expired。此后任何属性读取（包括 f-string 里取 `turn.id`、`action.status` 这类"只是拼个错误消息"的访问）都会触发隐式 lazy refresh——同步属性访问在 asyncio 上下文里无法 await，于是 SQLAlchemy 抛 MissingGreenlet。`expire_on_commit=False` 只保护 commit，不保护 rollback。本次在同一任务里连踩三处，全部是"rollback 之后才读属性"的变体。
+
+**解决方案**：约定**rollback 之前先把需要的标量值捕获成局部变量**（`existing_id = existing.id` / `current_status = action.status` / `intent = action.intent`），rollback 与 raise 只使用局部变量；需要对象本身时 rollback 后按主键重查（`_duplicate_outcome` 的做法）。
+
+修改文件：[agent_command_service.py](backend/app/application/agent_command_service.py)
+
+**学习收获**：
+1. 在 SQLAlchemy async 里，rollback 的副作用不只是撤销写入，还有"过期全部对象"；错误分支里拼消息用的字段也要在 rollback 前取好。
+2. MissingGreenlet 的堆栈经常指向"最后一条 SQL"而不是真正的触发点，先搜同函数内 rollback 之后的属性访问，再怀疑 IO 逃逸。
+3. 另一个变体：自引用统计（"连续 N 轮未解决"）要把当前实体从查询里显式排除——当前行永远是最新的 planning，不排除会让计数恒为 0，且单测直接调函数时测不出来（外部会话里没有当前行），只有走完整请求路径才暴露。
