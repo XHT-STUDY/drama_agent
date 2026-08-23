@@ -170,6 +170,7 @@ async def retrieve_node(state: CreationState) -> dict[str, Any]:
             try:
                 result = await retriever.retrieve_for_stage(
                     stage, query, top_k=settings.rag_top_k,
+                    project_id=state.get("project_id"),
                 )
                 stage_texts[stage] = _format_stage_context(stage, result)
                 stage_hits[stage] = len(result.chunks)

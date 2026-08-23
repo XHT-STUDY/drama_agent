@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 
 from pydantic import BaseModel, Field
 
@@ -36,9 +37,9 @@ logger = logging.getLogger(__name__)
 # - 分集大纲 → 题材模板 + 开篇钩子（集间节奏 / 开场设计参考）；
 # - 剧本写作 → 爽点 + 人物原型（对白节奏 / 爽感爆发参考）。
 _CREATION_STAGE_CATEGORIES: dict[str, tuple[str, ...]] = {
-    "story_bible": ("genre_template", "character_archetype"),
-    "outline": ("genre_template", "opening_hook"),
-    "writer": ("payoff", "character_archetype"),
+    "story_bible": ("genre_template", "character_archetype", "reference"),
+    "outline": ("genre_template", "opening_hook", "reference"),
+    "writer": ("payoff", "character_archetype", "reference"),
 }
 
 
@@ -53,6 +54,9 @@ class RetrieveConfig(BaseModel):
     category: str | None = Field(None, description="限定文档分类")
     genre: str | None = Field(None, description="限定题材")
     stage: str | None = Field(None, description="限定适用创作阶段")
+    project_id: str | None = Field(
+        None, description="项目作用域：项目自有文档 + 全局语料（K-1）"
+    )
 
 
 class Retriever:
@@ -86,6 +90,7 @@ class Retriever:
         stage: str | None = None,
         min_score: float = 0.0,
         max_chunks_per_document: int | None = None,
+        project_id: str | None = None,
     ) -> RetrievalResult:
         """执行一次检索。
 
@@ -102,7 +107,8 @@ class Retriever:
         try:
             return await self._retrieve_impl(query, top_k=top_k, category=category,
                                              genre=genre, stage=stage, min_score=min_score,
-                                             max_chunks_per_document=max_chunks_per_document)
+                                             max_chunks_per_document=max_chunks_per_document,
+                                             project_id=project_id)
         finally:
             rag_retrieval_duration_seconds.observe(time.monotonic() - _start)
 
@@ -116,6 +122,7 @@ class Retriever:
         stage: str | None = None,
         min_score: float = 0.0,
         max_chunks_per_document: int | None = None,
+        project_id: str | None = None,
     ) -> RetrievalResult:
         """检索实现（被 retrieve 计时包装）。"""
         config = RetrieveConfig(
@@ -125,6 +132,7 @@ class Retriever:
             category=category,
             genre=genre,
             stage=stage,
+            project_id=project_id,
         )
         filters = _build_filters(config)
 
@@ -136,6 +144,9 @@ class Retriever:
             genre=config.genre,
             stage=config.stage,
             min_score=config.min_score,
+            project_id=(
+                uuid.UUID(config.project_id) if config.project_id else None
+            ),
         )
 
         chunks = self._post_process(hits, config)
@@ -157,6 +168,7 @@ class Retriever:
         top_k: int = 5,
         min_score: float = -1.0,
         max_chunks_per_document: int | None = None,
+        project_id: str | None = None,
     ) -> RetrievalResult:
         """按创作阶段检索知识：该阶段对应的每个分类各检索一次后合并。
 
@@ -195,6 +207,7 @@ class Retriever:
                 category=category,
                 min_score=min_score,
                 max_chunks_per_document=max_chunks_per_document,
+                project_id=project_id,
             )
             for chunk in result.chunks:
                 key = str(chunk.chunk_id)

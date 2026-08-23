@@ -4,8 +4,11 @@
 
 ## [Unreleased]
 
+### Added（Phase K 进行中）
+- **K-1**：上传联动摄取——导入分类 `route=hold`（reference）的参考资料自动切块 + 向量化入 knowledge corpus；0007 迁移为 `knowledge_documents` 增加项目作用域 `project_id`（NULL = 全局语料）；检索按“项目自有 + 全局”过滤，项目间互不可见；`reference` 分类进入创作三阶段检索；幂等（同 upload 的 document_hash 命中跳过）；摄取失败降级为告警事件不阻断导入归档（先向量化后落库，无半截文档）。
+
 ### 计划中
-- Phase K：RAG 深入（上传联动摄取、知识库管理 API/前端，见 [DEV_PLAN §20.5](docs/DEV_PLAN.md)）；
+- Phase K 剩余：知识库管理 API/前端、E2E（见 [DEV_PLAN §20.5](docs/DEV_PLAN.md)）；
 - 成本可视化、多用户认证（见 [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) §4）。
 
 ## [0.2.0] - 2026-08-23

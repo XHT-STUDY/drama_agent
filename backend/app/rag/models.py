@@ -39,6 +39,7 @@ class KnowledgeCategory(StrEnum):
     CHARACTER_ARCHETYPE = "character_archetype"
     RUBRIC = "rubric"
     COMPLIANCE = "compliance"
+    REFERENCE = "reference"
 
 
 # 语料中按独立文档存放的分类（rubric 是特殊资产，单独计数）

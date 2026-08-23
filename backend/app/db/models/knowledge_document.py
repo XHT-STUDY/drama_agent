@@ -5,9 +5,10 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Text
+from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,6 +27,12 @@ class KnowledgeDocument(Base, UUIDMixin):
 
     __tablename__ = "knowledge_documents"
 
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT"),
+        default=None,
+        index=True,
+        comment="所属项目（NULL = 全局语料，对所有项目可见）",
+    )
     category: Mapped[str] = mapped_column(
         String(100),
         default="",

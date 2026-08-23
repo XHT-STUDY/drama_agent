@@ -2,7 +2,7 @@
 
 > 文档版本：v1.6
 > 编制日期：2026-08-16  
-> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强**全部完成**（J-01～J-12；M1～M4 里程碑达成）；Phase D（RAG 骨架）已完成；v0.2.0 已定版（K-0 DONE）；Phase K 剩余 K-1～K-4（RAG 深入）待启动（§20.5）
+> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强**全部完成**（J-01～J-12；M1～M4 里程碑达成）；Phase D（RAG 骨架）已完成；v0.2.0 已定版（K-0 DONE）；Phase K 进行中（K-1 DONE；K-2～K-4 待启动，§20.5）
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -3404,7 +3404,7 @@ Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋�
 
 | # | 任务 | 依赖 | 估算 | 要点 |
 |---:|---|---|---:|---|
-| K-1 | 上传联动摄取 | K-0 | 1d | import route=hold（reference）的参考资料自动切块+embedding 入 knowledge corpus（项目级 scope，复用 rag/loader+chunker）；幂等（同 upload 不重复摄取）；摄取失败不影响导入归档 |
+| K-1 | 上传联动摄取 | K-0 | 1d | ✅ DONE（2026-08-23）：import route=hold（reference）的参考资料自动切块+embedding 入 knowledge corpus（项目级 scope，复用 rag/loader+chunker）；幂等（同 upload 不重复摄取）；摄取失败不影响导入归档 |
 | K-2 | 知识库管理 API | K-1 | 0.75d | GET /projects/{id}/knowledge（列表/来源/状态）、DELETE（软删）、POST /projects/{id}/knowledge/search（检索试算，返回 chunk+score+trace）；API_CONTRACT 同步 |
 | K-3 | 前端知识库页 | K-2 | 1d | 项目页入口：corpus 列表（来源上传/类型/向量状态）、删除、检索试算框；复用既有 UI 模式 |
 | K-4 | E2E + 真实 embedding smoke + 文档 | K-3 | 0.75d | E2E：上传参考资料→检索试算可见结果（FakeEmbedder 确定性）；真实 embedding provider 一次 smoke（需 Key）；KNOWN_LIMITATIONS §4 更新（RAG 深入出列） |

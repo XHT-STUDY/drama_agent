@@ -3658,3 +3658,41 @@ Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修�
 ### 下一步
 
 - K-1：上传联动摄取（import route=hold 的参考资料入 knowledge corpus）。
+
+
+## K-1 上传联动摄取（2026-08-23）
+
+### 做了什么
+
+- **0007 迁移**：`knowledge_documents.project_id`（nullable FK + 索引；NULL = 全局语料，对所有项目可见）。
+- **模型/分类**：`KnowledgeCategory` 增加 `REFERENCE`；KnowledgeDocument ORM 增加 project_id。
+- **Repository**：`ingest_document(..., project_id=)` 落库项目作用域；`search_similar(..., project_id=)` 按 `(project_id = :p OR project_id IS NULL)` 过滤——项目自有 + 全局语料可见，其他项目互不可见。
+- **Retriever**：`retrieve()/retrieve_for_stage()` 透传 project_id；`reference` 分类加入创作三阶段（story_bible/outline/writer）检索映射；retrieve 节点从 state 传入 project_id——创作链路的 RAG 上下文从此包含本项目上传资料 + 全局语料。
+- **KnowledgeService.ingest_upload**：上传文本 → 构建 reference 元数据（source=`upload:{id}` → document_hash 与 upload 一一对应）→ 切块 → **先向量化后落库**（embedding 失败时零 DB 写入，不留半截文档）→ SAVEPOINT 内幂等摄取 + 向量回填。
+- **导入挂接**：import 工作流 `route=hold` 分支调用摄取；失败仅发 `KNOWLEDGE_INGEST_FAILED` 告警事件，归档/分类 Artifact 照常完成；node.completed payload 携带 `ingested_chunks`。
+- 测试：`tests/integration/rag/test_upload_ingest.py` 4 例（摄取入库+向量、同 upload 重导幂等、项目隔离+全局语料可见性、embedder 故障降级不阻断）。
+
+### 为什么这么做
+
+- 项目作用域放进 document 而非 chunk：作用域是文档属性，一次 JOIN 过滤即可，避免逐 chunk 冗余；全局语料 NULL 语义让既有 knowledge/ 摄取路径零改动。
+- 先向量化后落库是本次的关键顺序决策：早期版本先落库后向量化，embedding 失败会留下无向量的半截文档（测试抓到）——调整顺序后失败路径零残留，SAVEPOINT 兜底摄取内的一致性。
+- `reference` 进三阶段映射而非单独通道：上传资料是通用参考，复用既有"分阶段收集参考材料"的语义与去重/截断逻辑。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/integration/rag tests/unit/rag | 30 passed（新增 4 例 K-1 集成） |
+| uv run alembic upgrade head | 0007 应用成功 |
+| uv run pytest --disable-warnings | **1103 passed / 8 deselected**（1099→1103） |
+| uv run ruff check / mypy | All checks passed / 0 errors（324 files） |
+
+### 学到了什么
+
+1. 测试里直接 ainvoke 工作流不会迁移 Run 状态（那是 Dispatcher 的职责）——同项目第二次跑要手动置终态，否则撞单活跃 Run 约束。
+2. FakeEmbedder 的哈希向量相似度可为负——检索断言要么放宽 min_score，要么用脚本化 repo（单元层已有此模式）。
+3. 函数内 `from x import y` 的 monkeypatch 目标是模块属性（`embedder_module.load_embedder`），patch 生效但"先落库后向量化"的半截写入照样发生——顺序比异常处理更根本。
+
+### 下一步
+
+- K-2：知识库管理 API（GET /projects/{id}/knowledge 列表、DELETE 软删、POST search 检索试算）。

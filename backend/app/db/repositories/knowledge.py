@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.knowledge_chunk import KnowledgeChunk
@@ -99,6 +99,7 @@ class KnowledgeRepository(BaseRepository):
         chunks: list[ChunkInput],
         *,
         corpus_version: str,
+        project_id: uuid.UUID | None = None,
     ) -> tuple[KnowledgeDocument, bool, bool]:
         """幂等摄取一篇文档。
 
@@ -127,6 +128,7 @@ class KnowledgeRepository(BaseRepository):
             return existing, False, True
 
         doc = KnowledgeDocument(
+            project_id=project_id,
             category=loaded.metadata.category.value,
             title=loaded.metadata.title,
             license=loaded.metadata.license,
@@ -242,6 +244,7 @@ class KnowledgeRepository(BaseRepository):
         genre: str | None = None,
         stage: str | None = None,
         min_score: float | None = None,
+        project_id: uuid.UUID | None = None,
     ) -> list[KnowledgeSearchHit]:
         """按 cosine 相似度检索 chunk（pgvector <=>，走 0002 的 HNSW 索引）。
 
@@ -273,6 +276,15 @@ class KnowledgeRepository(BaseRepository):
             )
             .where(KnowledgeChunk.embedding.is_not(None))
         )
+        if project_id is not None:
+            # 项目作用域：项目自有文档 + 全局语料（project_id IS NULL），
+            # 其他项目的上传资料互不可见（K-1）。
+            stmt = stmt.where(
+                or_(
+                    KnowledgeDocument.project_id == project_id,
+                    KnowledgeDocument.project_id.is_(None),
+                )
+            )
         if category:
             stmt = stmt.where(KnowledgeDocument.category == category)
         if genre:

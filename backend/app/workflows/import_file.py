@@ -138,6 +138,46 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
         # 5. 确定性路由
         route = route_import(classification.content_type)
 
+        # 5.5 K-1：route=hold（reference）→ 自动摄取入项目知识库。
+        # 摄取失败不阻断导入归档（降级为告警事件），幂等由 document_hash 保证。
+        ingested_chunks: int | None = None
+        if route == "hold" and parsed.text:
+            try:
+                from app.application.knowledge_service import KnowledgeService
+                from app.rag.embedder import load_embedder
+
+                embedder = load_embedder(settings)
+                try:
+                    result = await KnowledgeService().ingest_upload(
+                        db,
+                        project_id=project_id,
+                        upload_id=upload.id,
+                        title=(upload.original_name or "").rsplit(".", 1)[0]
+                        or "上传资料",
+                        text=parsed.text,
+                        embedder=embedder,
+                    )
+                    ingested_chunks = result.chunk_count
+                    logger.info(
+                        "上传资料已摄取入项目知识库: upload=%s chunks=%d created=%s",
+                        upload_id, result.chunk_count, result.created,
+                    )
+                finally:
+                    await embedder.close()
+            except Exception as ingest_exc:  # noqa: BLE001 - 摄取是增强路径
+                logger.warning(
+                    "知识库摄取失败（不阻断导入归档）: upload=%s err=%s",
+                    upload_id, ingest_exc,
+                )
+                await publisher.publish(
+                    db, run_id=run_id, event_type="run.warning",
+                    payload={
+                        "code": "KNOWLEDGE_INGEST_FAILED",
+                        "message": f"参考资料入库失败（导入归档不受影响）: {ingest_exc}"[:500],
+                    },
+                    autocommit=True,
+                )
+
         # 6. full_script → 持久化 script_draft（G-06：完整剧本能进入评估流程）。
         # 确定性转换 full_script_to_script_draft 构造最小合法 ScriptDraft；
         # 转换失败（结构不足）仅记录警告，不阻断分类（评估时会因无脚本跳过）。
@@ -170,9 +210,9 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
                 script_artifact_id = str(script_artifact.id)
 
         logger.info(
-            "导入分类完成: upload=%s type=%s route=%s artifact=%s script=%s",
+            "导入分类完成: upload=%s type=%s route=%s artifact=%s script=%s ingested_chunks=%s",
             upload_id, classification.content_type, route, artifact.id,
-            script_artifact_id,
+            script_artifact_id, ingested_chunks,
         )
 
         await publisher.publish(
@@ -184,6 +224,7 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
                 "content_type": classification.content_type,
                 "route": route,
                 "script_artifact_id": script_artifact_id,
+                "ingested_chunks": ingested_chunks,
                 "progress": 1.0,
             },
             autocommit=True,

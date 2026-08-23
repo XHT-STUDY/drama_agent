@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -62,6 +62,7 @@ class _FakeRepo:
         genre: str | None = None,
         stage: str | None = None,
         min_score: float | None = None,
+        project_id: Any = None,
     ) -> list[KnowledgeSearchHit]:
         result = list(self._hits)
         if category:
