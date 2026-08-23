@@ -85,15 +85,19 @@ class EvaluationService:
             return existing
 
         script = ScriptDraft.model_validate(script_artifact.content)
+        # 集数以 Artifact 行为权威（content 集数来自 LLM，FakeLLM 下恒为 1）；
+        # 此前用 content 集数落库导致评估行集数错位（J-12 E2E 暴露）。
+        script_episode = script_artifact.episode_number
+        script.episode_number = script_episode
         outline_artifact, story_bible_artifact = await self._resolve_context(
             db, script_artifact
         )
         episode_outline = self._get_episode_outline(
-            outline_artifact.content if outline_artifact else {}, script.episode_number
+            outline_artifact.content if outline_artifact else {}, script_episode
         )
 
         report = await evaluator.evaluate_episode(
-            episode_number=script.episode_number,
+            episode_number=script_episode,
             script_draft=script,
             episode_outline=episode_outline,
             story_bible=story_bible_artifact.content if story_bible_artifact else {},
@@ -101,11 +105,13 @@ class EvaluationService:
             script_artifact_id=script_artifact_id,
         )
 
+        # 服务端权威回填：报告内容集数与剧本行一致（不被 LLM 自报带偏）
+        report.episode_number = script_episode
         return await self._artifact_svc.create_validated_artifact(
             db,
             project_id=project_id,
             artifact_type="evaluation_report",
-            episode_number=script.episode_number,
+            episode_number=script_episode,
             content=report.model_dump(mode="json"),
             prompt_version=prompt_loader.get("evaluate_episode").version,
             source_artifact_ids=self._build_sources(

@@ -40,7 +40,9 @@ STARTED=0
 cleanup() {
   echo "=== 清理 E2E 进程 ==="
   [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null || true
-  [ -n "$FRONTEND_PID" ] && kill "$FRONTEND_PID" 2>/dev/null || true
+  if [ -n "$FRONTEND_PID" ]; then
+    kill -- "-$FRONTEND_PID" 2>/dev/null || kill "$FRONTEND_PID" 2>/dev/null || true
+  fi
   # 等待子进程退出
   wait "$BACKEND_PID" 2>/dev/null || true
   wait "$FRONTEND_PID" 2>/dev/null || true
@@ -61,13 +63,16 @@ docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U drama -d postgres -c 
     DATABASE_URL="$E2E_DB_URL" \
     DATABASE_URL_SYNC="$E2E_DB_URL_SYNC" \
     uv run alembic upgrade head
+  # LangGraph PostgreSQL saver 表（与 make migrate 等价）
+  DATABASE_URL="$E2E_DB_URL" \
+    uv run python -m app.cli.checkpoints setup
 )
 
-echo "=== [3/6] 启动后端（FakeLLM + FAKE_LLM_SCENARIO=revision，端口 $BACKEND_PORT） ==="
+echo "=== [3/6] 启动后端（FakeLLM + FAKE_LLM_SCENARIO=agent_e2e，端口 $BACKEND_PORT） ==="
 (
   cd backend
   APP_ENV=test \
-    FAKE_LLM_SCENARIO=revision \
+    FAKE_LLM_SCENARIO=agent_e2e \
     DATABASE_URL="$E2E_DB_URL" \
     DATABASE_URL_SYNC="$E2E_DB_URL_SYNC" \
     REDIS_URL="$E2E_REDIS_URL" \
@@ -92,17 +97,21 @@ if [ "$BUILD" = "1" ]; then
   echo "=== [4/6] 构建前端（NEXT_PUBLIC_API_BASE=$BACKEND_PORT） ==="
   (
     cd frontend
-    NEXT_PUBLIC_API_BASE="http://localhost:$BACKEND_PORT/api/v1" pnpm build
+    NEXT_PUBLIC_API_BASE="http://localhost:$BACKEND_PORT/api/v1" \
+    NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED=true pnpm build
   )
 else
   echo "=== [4/6] 跳过前端构建（--no-build，复用 .next） ==="
 fi
 
 echo "=== [5/6] 启动前端（端口 $FRONTEND_PORT） ==="
-(
+# setsid 独立进程组：cleanup 组杀 pnpm→node→next-server 整棵树，
+# 否则 kill 包装进程后 next-server 孤儿继续占用端口（EADDRINUSE 连环失败）。
+setsid bash -c '
   cd frontend
-  NEXT_PUBLIC_API_BASE="http://localhost:$BACKEND_PORT/api/v1" pnpm exec next start -p "$FRONTEND_PORT"
-) &
+  NEXT_PUBLIC_API_BASE="http://localhost:'"$BACKEND_PORT"'/api/v1" \
+  NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED=true exec pnpm exec next start -p "'"$FRONTEND_PORT"'"
+' &
 FRONTEND_PID=$!
 
 # 等待前端就绪

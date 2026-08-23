@@ -693,3 +693,22 @@ async def test_reconciliation_does_not_duplicate_child_action_or_result_message(
     assert len(result_messages) == 1
     follow_up_messages = await _action_messages(db_session, conversation_id, "action_plan")
     assert len(follow_up_messages) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_confirmed_run_exposes_agent_action_id(
+    agent_client: AsyncClient,
+    db_session: AsyncSession,
+    no_worker: None,
+) -> None:
+    """确认创建的 Run 暴露 agent_action_id（J-12：前端/评测建立 Run↔Action 关联）。"""
+    _project_id, action_id = await _seed_action(db_session, plan=_create_script_plan())
+
+    confirm = await agent_client.post(f"/api/v1/agent/actions/{action_id}/confirm")
+    assert confirm.status_code == 202
+    run_id = confirm.json()["run"]["run_id"]
+
+    run_resp = await agent_client.get(f"/api/v1/runs/{run_id}")
+    assert run_resp.status_code == 200
+    assert run_resp.json()["agent_action_id"] == str(action_id)

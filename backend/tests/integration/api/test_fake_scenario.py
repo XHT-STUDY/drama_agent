@@ -72,3 +72,89 @@ async def test_scenario_switch_does_not_leak_to_default_path(
     monkeypatch.delenv("FAKE_LLM_SCENARIO")
     default_report = await _registered_eval_report(monkeypatch)
     assert default_report.overall_score >= 75
+
+
+# ========================================================================
+# J-12：agent_e2e 场景（E2E 单后端同时服务创作/修订/大纲/评估意图）
+# ========================================================================
+
+
+async def test_agent_e2e_scenario_registers_low_score_eval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """agent_e2e 与 revision 同样注册低分评估（旧 H-07 全链路在新场景下不受影响）。"""
+    monkeypatch.setenv("FAKE_LLM_SCENARIO", "agent_e2e")
+    report = await _registered_eval_report(monkeypatch)
+    assert report.overall_score < 75
+    assert compute_need_revision(
+        report.overall_score, report.issues, report.dimension_scores,
+    ) is True
+
+
+async def test_agent_e2e_scenario_registers_outline_reviser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """agent_e2e 注册 outline_reviser fixture（大纲修订工作流可用）。"""
+    from app.domain.outline import EpisodeOutlineSet
+
+    monkeypatch.setenv("FAKE_LLM_SCENARIO", "agent_e2e")
+    llm = FakeLLM(seed=42)
+    _register_fake_fixtures(llm)
+    result = await llm.generate_structured(
+        EpisodeOutlineSet, [], prompt_name="outline_reviser",
+    )
+    parsed = cast(EpisodeOutlineSet, result.parsed)
+    assert parsed is not None and len(parsed.episodes) == 10
+
+
+async def test_agent_e2e_planner_stub_routes_by_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """内容感知 planner 桩：按请求路由 revise_script / revise_outline / evaluate。"""
+    from app.api.dependencies import _AgentE2EPlannerStub
+    from app.domain.agent_planner import AgentPlannerOutput
+
+    monkeypatch.setenv("FAKE_LLM_SCENARIO", "agent_e2e")
+    stub = _AgentE2EPlannerStub(base=FakeLLM(seed=42))
+
+    async def plan(request: str) -> AgentPlannerOutput:
+        # 桩从注入边界提取用户原文（渲染后的 Prompt 含指令词，不能全文匹配）
+        wrapped = f"【用户内容开始】\n{request}\n【用户内容结束】"
+        result = await stub.generate_structured(
+            AgentPlannerOutput,
+            [{"role": "user", "content": wrapped}],
+            prompt_name="agent_command_planner",
+        )
+        assert result.parsed is not None
+        return cast(AgentPlannerOutput, result.parsed)
+
+    revise = await plan("帮我修改第 3 集剧本，增加正面冲突")
+    assert revise.intent == "revise_script"
+    assert revise.target is not None and revise.target.episode_number == 3
+
+    outline = await plan("调整一下大纲，第 5 集节奏太慢")
+    assert outline.intent == "revise_outline"
+
+    evaluate = await plan("评估项目")
+    assert evaluate.intent == "evaluate"
+
+    create = await plan("创建一个足球少年逆袭的剧本")
+    assert create.intent == "create_script"
+
+
+async def test_agent_e2e_planner_stub_delegates_non_planner_prompts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """非 planner 的 prompt_name 委托内部 FakeLLM（全局 fixtures 继续生效）。"""
+    from app.api.dependencies import _AgentE2EPlannerStub
+
+    monkeypatch.setenv("FAKE_LLM_SCENARIO", "agent_e2e")
+    stub = _AgentE2EPlannerStub(base=FakeLLM(seed=42))
+    _register_fake_fixtures(stub._base)  # noqa: SLF001
+
+    from app.domain.evaluation import EvaluationReport
+
+    result = await stub.generate_structured(
+        EvaluationReport, [], prompt_name="evaluate_episode",
+    )
+    assert result.parsed is not None

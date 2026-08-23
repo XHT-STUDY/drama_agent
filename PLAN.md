@@ -457,7 +457,7 @@ CI 用 FakeLLM 验证契约、路由、Turn 幂等、并发确认、lease 接管
 | 9 | Action 生命周期、Outcome 与再规划 | 4,5,6,8 | 2d | Done |
 | 10 | 前端 API 与 Hooks | 4,9 | 1d | Done |
 | 11 | Agent Workspace UI | 9,10 | 2d | Done |
-| 12 | E2E、评测与文档 | 1-11 | 2.5d | Pending |
+| 12 | E2E、评测与文档 | 1-11 | 2.5d | Done |
 
 **Total estimate:** 21 developer-days。加入联调、故障演练和真实模型评测缓冲后，建议按 22～28 个开发人日安排，并拆成 4 个可演示里程碑：
 

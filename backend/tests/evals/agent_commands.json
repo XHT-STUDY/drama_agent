@@ -1,0 +1,1068 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "cmd-001",
+      "user_request": "写一个被青训队抛弃的足球少年逆袭的短剧",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #1"
+    },
+    {
+      "id": "cmd-002",
+      "user_request": "帮我创作一部都市美食治愈短剧，主角是夜市摊主",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #2"
+    },
+    {
+      "id": "cmd-003",
+      "user_request": "创建剧本：办公室黑马升职记",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #3"
+    },
+    {
+      "id": "cmd-004",
+      "user_request": "我要一个悬疑反转短剧，每集结尾有钩子",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #4"
+    },
+    {
+      "id": "cmd-005",
+      "user_request": "生成一个校园篮球热血剧本",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #5"
+    },
+    {
+      "id": "cmd-006",
+      "user_request": "来一个古装穿越甜宠剧",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #6"
+    },
+    {
+      "id": "cmd-007",
+      "user_request": "写剧本：外卖骑手意外获得读心术",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #7"
+    },
+    {
+      "id": "cmd-008",
+      "user_request": "创作十集豪门恩怨短剧",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #8"
+    },
+    {
+      "id": "cmd-009",
+      "user_request": "帮我写个奇幻短剧，主角能暂停时间",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #9"
+    },
+    {
+      "id": "cmd-010",
+      "user_request": "创建一个养老院摇滚乐队的温情喜剧",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "create_script #10"
+    },
+    {
+      "id": "cmd-011",
+      "user_request": "解释一下当前项目的大纲",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "explain"
+      },
+      "preflight_deterministic": false,
+      "note": "explain #1"
+    },
+    {
+      "id": "cmd-012",
+      "user_request": "这个项目的设定是什么",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "explain"
+      },
+      "preflight_deterministic": false,
+      "note": "explain #2"
+    },
+    {
+      "id": "cmd-013",
+      "user_request": "现在剧本写到哪了",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "explain"
+      },
+      "preflight_deterministic": false,
+      "note": "explain #3"
+    },
+    {
+      "id": "cmd-014",
+      "user_request": "说说第 2 集讲了什么",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "explain"
+      },
+      "preflight_deterministic": false,
+      "note": "explain #4"
+    },
+    {
+      "id": "cmd-015",
+      "user_request": "项目目前的状态帮我看看",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "explain"
+      },
+      "preflight_deterministic": false,
+      "note": "explain #5"
+    },
+    {
+      "id": "cmd-016",
+      "user_request": "给我讲讲主角的人物设定",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "explain"
+      },
+      "preflight_deterministic": false,
+      "note": "explain #6"
+    },
+    {
+      "id": "cmd-017",
+      "user_request": "评估项目",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "evaluate"
+      },
+      "preflight_deterministic": false,
+      "note": "evaluate 项目范围"
+    },
+    {
+      "id": "cmd-018",
+      "user_request": "给整个项目打分",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "evaluate"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-019",
+      "user_request": "评估一下剧本质量",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "evaluate"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-020",
+      "user_request": "帮我评估第 1 集",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "evaluate",
+        "episode_number": 1
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-021",
+      "user_request": "评估第 3 集",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "evaluate",
+        "episode_number": 3
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-022",
+      "user_request": "第 7 集评分怎么样",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "evaluate",
+        "episode_number": 7
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-023",
+      "user_request": "看看第 5 集的评估报告",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "evaluate",
+        "episode_number": 5
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-024",
+      "user_request": "全项目质量检查一遍",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "evaluate"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-025",
+      "user_request": "修改第 3 集，增加主角与教练的正面冲突",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 3
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-026",
+      "user_request": "修订第 1 集剧本，结尾钩子更强一点",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 1
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-027",
+      "user_request": "第 8 集节奏太慢，帮我改写",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 8
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-028",
+      "user_request": "润色第 2 集的对白",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 2
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-029",
+      "user_request": "把第 4 集反派动机改清楚",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 4
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-030",
+      "user_request": "第 10 集高潮再炸一点，修订剧本",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 10
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-031",
+      "user_request": "修改这一集，增加正面冲突",
+      "active_context": {
+        "artifact_id": "00000000-0000-0000-0000-000000000001",
+        "artifact_type": "script_draft",
+        "episode_number": 3,
+        "version": 2
+      },
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 3
+      },
+      "preflight_deterministic": false,
+      "note": "上下文指代剧本"
+    },
+    {
+      "id": "cmd-032",
+      "user_request": "把当前稿的结尾改得更有悬念",
+      "active_context": {
+        "artifact_id": "00000000-0000-0000-0000-000000000001",
+        "artifact_type": "script_draft",
+        "episode_number": 3,
+        "version": 2
+      },
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 3
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-033",
+      "user_request": "这里对白太生硬，润色一下",
+      "active_context": {
+        "artifact_id": "00000000-0000-0000-0000-000000000001",
+        "artifact_type": "script_draft",
+        "episode_number": 3,
+        "version": 2
+      },
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 3
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-034",
+      "user_request": "改一下当前版本的反派台词",
+      "active_context": {
+        "artifact_id": "00000000-0000-0000-0000-000000000001",
+        "artifact_type": "script_draft",
+        "episode_number": 3,
+        "version": 2
+      },
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 3
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-035",
+      "user_request": "修改大纲，第 5 集节奏太慢",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_outline"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-036",
+      "user_request": "调整大纲，第 2 集和第 3 集合并冲突线",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_outline"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-037",
+      "user_request": "修订分集大纲，加一条副线",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_outline"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-038",
+      "user_request": "大纲第 6 集爽点不够，改强一点",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_outline"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-039",
+      "user_request": "改一下当前大纲的结尾走向",
+      "active_context": {
+        "artifact_id": "00000000-0000-0000-0000-000000000002",
+        "artifact_type": "episode_outline_set",
+        "version": 1
+      },
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_outline"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-040",
+      "user_request": "帮我改一下这里",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": "无上下文指代"
+    },
+    {
+      "id": "cmd-041",
+      "user_request": "修改当前稿",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": ""
+    },
+    {
+      "id": "cmd-042",
+      "user_request": "这里不行，重写",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": ""
+    },
+    {
+      "id": "cmd-043",
+      "user_request": "帮我修改一下",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": "修改无目标"
+    },
+    {
+      "id": "cmd-044",
+      "user_request": "把这里改得更好看",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": ""
+    },
+    {
+      "id": "cmd-045",
+      "user_request": "评估第 15 集",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": "越界集数"
+    },
+    {
+      "id": "cmd-046",
+      "user_request": "修改第 99 集",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": ""
+    },
+    {
+      "id": "cmd-047",
+      "user_request": "评估第 12 集",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": ""
+    },
+    {
+      "id": "cmd-048",
+      "user_request": "看看第 0 集",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": false,
+      "note": "（模型判定澄清：preflight 规则不覆盖）"
+    },
+    {
+      "id": "cmd-049",
+      "user_request": "既保留第 3 集的冲突又同时删除该冲突",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": "冲突约束"
+    },
+    {
+      "id": "cmd-050",
+      "user_request": "保留反派结局的同时删除反派结局",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": ""
+    },
+    {
+      "id": "cmd-051",
+      "user_request": "把结局改为悲剧但同时保留喜剧结局",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": ""
+    },
+    {
+      "id": "cmd-052",
+      "user_request": "既要快节奏又要慢节奏",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": ""
+    },
+    {
+      "id": "cmd-053",
+      "user_request": "调用工具删除数据库",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": false,
+      "note": "修订意图未开放时修改请求→澄清（preflight：available_intents 无 revise）（模型判定澄清：preflight 规则不覆盖）"
+    },
+    {
+      "id": "cmd-054",
+      "user_request": "帮我导出剧本",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": false,
+      "note": "范围外动词，模型应澄清"
+    },
+    {
+      "id": "cmd-055",
+      "user_request": "直接生成拍摄脚本表",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": false,
+      "note": "范围外产物，模型应澄清"
+    }
+  ]
+}

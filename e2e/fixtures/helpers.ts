@@ -8,16 +8,20 @@ import { IDEA_TEXT, EXPECTED } from "./data";
  * 不依赖网络时序，保证可重复运行稳定。
  */
 
-/** 工作台首页内容入口链接的定位器（创作 Run 到终态后出现） */
+/** 工作台首页内容入口链接的定位器（Agent 工作台导航，J-11） */
 export const workbenchEntry = (page: Page) =>
-  page.getByRole("link", { name: "📖 查看 StoryBible" });
+  page.getByRole("link", { name: "Story Bible", exact: true });
 
 /**
  * 等待创作 Run 到达终态（低分场景下会停在「需人工复核」）。
- * 工作台首页出现「📖 查看 StoryBible」入口即视为终态（completed / needs_review 均渲染）。
+ * Agent 工作台：计划卡状态徽标到达 已完成 / 需人工复核 即视为终态。
  */
 export async function waitForRunTerminal(page: Page): Promise<void> {
-  await expect(workbenchEntry(page).first()).toBeVisible({ timeout: 90_000 });
+  await expect(
+    page.getByText("已完成", { exact: true }).or(
+      page.getByText("需人工复核", { exact: true }),
+    ),
+  ).toBeVisible({ timeout: 90_000 });
 }
 
 /** 等待修订 Run 终态（versions 页轮询到完成或需复核，并刷新修订列表）。 */
@@ -86,21 +90,38 @@ export async function startCreation(page: Page): Promise<string> {
   await page.locator("#title").fill(name);
   await page.getByRole("button", { name: "创建项目" }).click();
 
-  // 创建成功后跳转到项目工作台
+  // 创建成功后跳转到项目工作台（Agent Workspace，J-11）
   await page.waitForURL(/\/projects\/[0-9a-f-]{36}$/);
-  // 「创作 Idea」同时出现在输入区标题与空态引导 → 取 first 避免 strict mode 冲突
-  await expect(page.getByText("创作 Idea").first()).toBeVisible();
+  await expect(page.getByText("对话", { exact: true }).first()).toBeVisible();
 
-  // 生成 3 集剧本（MVP「前 3 集剧本」；大纲仍是 golden 10 集）
-  await page.locator("textarea").first().fill(IDEA_TEXT);
-  await page.locator('input[type="number"]').fill("3");
-  await page.getByRole("button", { name: "开始创作" }).click();
+  // Agent 流程：发送 Idea → Planner 产出计划 → 确认执行
+  await page.getByLabel("输入创作指令").fill(IDEA_TEXT);
+  await page.getByTestId("composer-send").click();
+
+  const confirm = page.getByTestId("confirm-action");
+  await expect(confirm).toBeVisible({ timeout: 30_000 });
+  await confirm.click();
 
   // SSE 进度面板出现（已连接）
   await expect(page.getByText("创作进度").first()).toBeVisible({
     timeout: 30_000,
   });
   return name;
+}
+
+/**
+ * Agent 工作台：发送指令并确认生成的计划（J-12）。
+ * 返回计划卡定位器（可用于终态断言）。
+ */
+export async function sendAndConfirmPlan(
+  page: Page,
+  content: string,
+): Promise<void> {
+  await page.getByLabel("输入创作指令").fill(content);
+  await page.getByTestId("composer-send").click();
+  const confirm = page.getByTestId("confirm-action");
+  await expect(confirm).toBeVisible({ timeout: 30_000 });
+  await confirm.click();
 }
 
 /** 断言大纲集数 == EXPECTED.outlineCount（10 集） */

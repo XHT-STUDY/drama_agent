@@ -191,10 +191,18 @@ export function useAgentConversation(
     },
   });
 
+  // 同一逻辑发送的并发重复提交守卫（双击/双 Enter）：in-flight 期间忽略，
+  // 与 useAgentAction.confirm 的防重复策略一致。
+  const sendInFlightRef = useRef(false);
   const sendTurn = useCallback(
     async (content: string, activeContext?: ActiveArtifactContext | null) => {
-      const turn = await sendMutation.mutateAsync({ content, activeContext });
-      return turn;
+      if (sendInFlightRef.current) return null;
+      sendInFlightRef.current = true;
+      try {
+        return await sendMutation.mutateAsync({ content, activeContext });
+      } finally {
+        sendInFlightRef.current = false;
+      }
     },
     [sendMutation],
   );

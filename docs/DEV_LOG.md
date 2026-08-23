@@ -3589,3 +3589,45 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 最后一个任务 Task 12 / J-12：E2E、Agent 评测、文档与退出门禁（FakeLLM 契约/路由/Turn 幂等/并发确认/lease 接管/checkpoint 恢复/一次后续计划 CI 化，真实模型评测报告与回归门禁）。
+
+
+## J-12 E2E、Agent 评测、文档与退出门禁（2026-08-23）
+
+### 做了什么
+
+- **E2E**（`e2e/agent-workspace.spec.ts`，串行共享项目）：首次创作计划→确认→完成（含刷新恢复消息与进行中 Run）、模糊修改→澄清且无 Run、重复发送不重复消息（同 tick 双 Enter，Hook in-flight 守卫拦截）、`script_revision_from_chat_produces_version_diff`（TDD anchor：active context → 第 3 集修订 → versions 页 v1→v2 Diff）、`partial_outcome_proposes_one_confirmable_follow_up`（TDD anchor：大纲修订 → 部分达成 + 证据 + 剩余约束 → 恰好一个可确认后续计划 → 再确认至终态）、重复确认只发一次请求（按 confirm POST 计数 + data-status 终态断言）。
+- **单后端多意图**：`FAKE_LLM_SCENARIO=agent_e2e` —— 内容感知 planner 桩（从【用户内容开始/结束】注入边界提取用户原文路由 revise_script/revise_outline/evaluate/explain/create_script，避免渲染 Prompt 指令词误路由；取最后一个边界段排除上下文历史干扰）+ 低分评估（兼容 H-07 revision 场景）+ outline_reviser fixture；e2e.sh 前端构建显式 `NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED=true`，并补 checkpoint schema setup、setsid 进程组清理（修复 next-server 孤儿占用 3100 端口导致 EADDRINUSE 连环失败）。
+- **评测资产**（`tests/evals/`）：`agent_commands.json` 55 条（五类 intent/中文指代/明确模糊剧集/active context/冲突约束/越界/白名单未开放）+ `agent_outcomes.json` 32 条（三态/证据充分性/语义约束/非法后续意图/深度上限）；双 harness：CI（数据集契约 + preflight 澄清召回 100%——"调用即失败" LLM 桩证明零模型调用 + Outcome 确定性规则 100%）与 `eval_real`（真实模型 P/R/F1、goal_status 一致率，结果落盘 results/，默认被 addopts 排除）。`docs/AGENT_EVAL_REPORT.md` 明确区分已执行的 CI 契约评测与未执行的真实模型评测（无 API Key，附执行命令与模板，不写模拟数字）。
+- **修复两个真实 Bug**：
+  1. **评估 Artifact 行集数错位**（存量缺陷，J-12 E2E 暴露）：`evaluate_script` 用 content 集数（FakeLLM golden 恒为 1）落库，导致三集评估全部挤进 episode=1 桶、集数错位；`find_evaluation_for_script` 命中错行后 revise 查第 3 集评估失败。修复为行集数权威（outline 查找/报告生成/落库/内容回填全部用剧本行集数）。
+  2. **并发发送守卫**：`useAgentConversation.sendTurn` 增加 in-flight ref（双击/双 Enter 不再产生并发 mutateAsync）。
+- **RunResponse 暴露 `agent_action_id`**（前端/评测建立 Run↔Action 关联）；新增 `tests/integration/api/test_e2e_agent_path.py`（E2E 精确路径的 API 级回归：创作 → ep3 修订全链路）；`test_fake_scenario.py` 增加 agent_e2e 场景断言。
+
+### 为什么这么做
+
+- 单后端服务全部意图：内容感知桩让 7 个 E2E 共享一次基础设施；从注入边界提取原文是关键——桩只信被标记的用户内容，与 Prompt 注入隔离（I-03）同一信任模型。
+- 评测分层是硬约束："不能写模拟数字"——CI 只断言确定性规则（规则错就是错），真实模型指标必须有真实 Key 才产出并落盘，报告模板与执行命令先行。
+- e2e.sh 的 setsid 组杀：kill 包装进程不杀 next-server 孤儿，一次失败后端口被占、后续全部 EADDRINUSE——进程树清理是 E2E 可重复性的前提。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| make lint | 通过（后端 Ruff + 前端 ESLint） |
+| make typecheck | 通过（后端 mypy 322 files + 前端 tsc） |
+| make test | 后端 **1099 passed / 8 deselected**（eval_real×2 默认排除）；前端 **181 passed** |
+| cd backend && uv run pytest tests/evals | CI 契约评测全绿（preflight 召回 100%、Outcome 规则 100%） |
+| bash scripts/e2e.sh --repeat-each=1 | **7 passed**（agent×6 + H-07×1，21.4s） |
+| make e2e REPEAT=5 | **35 passed（7 用例 × 5 轮，1.7m）**——E2E 可重复性门禁通过 |
+| pytest -m eval_real | **未执行**（EVAL_LLM_ENABLED 未设置/无真实 Key）——harness 就绪，报告模板见 AGENT_EVAL_REPORT.md |
+
+### 学到了什么
+
+1. 存量 Bug 的潜伏期可以横跨六个任务：评估行集数错位自 E 阶段就存在，但所有下游（修订选集/重评）都走 state 映射或 plan 引用，直到 J-06 引入"按行集数查评估"才引爆——新查询路径是旧数据的试金石。
+2. E2E 的 planner 桩必须从注入边界提取用户原文：渲染后的 Prompt 指令本身就含"修改/评估"，全文匹配会把任何请求误路由。
+3. Playwright 的 `.or()` 文本链在动态徽标上比 `data-status` 属性选择器脆弱得多——状态断言一律用显式 data 属性。
+4. 双击防重复的测试要模拟"同一逻辑动作"（同 tick 双 Enter），而非两次独立点击——后者点击等待 actionability 会跨越禁用窗口变成两次真实提交。
+
+### 下一步
+
+Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修订闭环、M4 工作台/评测/门禁。剩余 backlog：真实模型评测执行（需要 API Key）、KNOWN_LIMITATIONS 中的 Phase D RAG 等。

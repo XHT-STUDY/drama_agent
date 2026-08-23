@@ -30,7 +30,7 @@ DEFAULT_AVAILABLE_INTENTS = (
 _REVISION_RE = re.compile(r"(修改|修订|改写|重写|调整|润色|删掉|增加|替换)")
 _CONTEXT_REFERENCE_RE = re.compile(r"(这里|此处|这个版本|当前稿|当前剧本|上面)")
 _EPISODE_RE = re.compile(
-    r"(?:第|ep(?:isode)?[\s_-]*)(\d+)(?:[集话回期])?", re.IGNORECASE
+    r"(?:第\s*|ep(?:isode)?[\s_-]*)(\d+)\s*(?:[集话回期])?", re.IGNORECASE
 )
 _CONFLICT_RE = re.compile(
     r"(?:既[^。！？!?]{0,80}又|同时[^。！？!?]{0,80}(?:保留|删除|改为)|"

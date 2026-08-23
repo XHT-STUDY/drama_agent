@@ -60,6 +60,14 @@ export function useAgentAction(
     void queryClient.invalidateQueries({ queryKey: ["agent-messages"] });
   }, [actionId, queryClient]);
 
+  // 轮询观测到终态（Worker 在 Turn 之后追加结果/后续计划消息）→ 失效消息查询
+  const actionStatus = actionQuery.data?.status ?? null;
+  useEffect(() => {
+    if (actionStatus && !NON_TERMINAL_ACTION_STATUSES.has(actionStatus)) {
+      void queryClient.invalidateQueries({ queryKey: ["agent-messages"] });
+    }
+  }, [actionStatus, queryClient]);
+
   const confirmMutation = useMutation({
     mutationFn: async (): Promise<AgentConfirmResponse> => {
       // 防重复点击：in-flight 期间的再次触发直接忽略

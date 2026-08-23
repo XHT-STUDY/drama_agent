@@ -270,6 +270,7 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | `action` | string | 是 | `create_script` / `evaluate` / `revise` / `revise_script` / `revise_outline` / `platform_smoke` / `import` / `export` |
+| `agent_action_id` | string | - | Run 响应字段：由 Agent 确认创建的 Run 携带触发它的 AgentAction ID（普通 Run 为 null，J-12） |
 | `options` | object | `create_script` 时必需 | 创作选项；`revise_script` 时含 `source_script_artifact_id` / `episode_number` / `user_constraints`；`revise_outline` 时含 `source_outline_artifact_id` / `user_constraints` |
 | `options.user_input` | string (1-10000) | 是 | 用户创作的 Idea/Outline |
 | `options.source_type` | string | 否 | 默认 `"idea"` |

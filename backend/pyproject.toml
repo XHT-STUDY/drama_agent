@@ -74,9 +74,9 @@ addopts = [
     "-q",
     "--strict-markers",
     "--strict-config",
-    # 性能测试默认跳过（make perf 显式运行），保证普通 CI 快且确定性
+    # 性能与真实模型评测默认跳过（make perf / pytest -m eval_real 显式运行）
     "-m",
-    "not performance",
+    "not performance and not eval_real",
 ]
 markers = [
     "unit: 纯领域规则、Schema、工具、选择器，不访问网络",
@@ -85,6 +85,7 @@ markers = [
     "workflow: FakeLLM 驱动的节点、分支、恢复测试",
     "smoke: 手工触发真实模型最小链路，不进入普通 CI",
     "performance: 普通 API p95 / 并发 SSE / 1000 Artifact 查询（I-05），默认排除",
+    "eval_real: 真实模型 Agent 评测（J-12），需要 EVAL_LLM_ENABLED=1 与真实 Key，默认排除",
 ]
 
 [tool.mypy]

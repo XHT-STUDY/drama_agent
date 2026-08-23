@@ -1054,7 +1054,8 @@ def _register_fake_fixtures(llm: Any) -> None:
     # 评估 fixture：默认 golden 高分报告（服务端回填 need_revision=False → 走 finalize/completed）。
     # E2E 场景开关 FAKE_LLM_SCENARIO=revision：注册低分报告 → 全部集 need_revision=True →
     # F-05 确定性选最低分集（平局取最小集号）恰好只修 1 集。默认行为不变。
-    if _os.environ.get("FAKE_LLM_SCENARIO") == "revision":
+    scenario = _os.environ.get("FAKE_LLM_SCENARIO")
+    if scenario in ("revision", "agent_e2e"):
         llm.register(
             "evaluate_episode",
             EvaluationReport.model_validate(_load("evaluation_report_lowscore")),
@@ -1067,6 +1068,13 @@ def _register_fake_fixtures(llm: Any) -> None:
     llm.register(
         "continuity_semantic_check",
         ContinuitySemanticCheck.model_validate(_load("continuity_semantic_check_valid")),
+    )
+    # 大纲修订 fixture（J-08）：outline_set_valid → 第 3 集变化的修订版
+    from app.domain.outline import EpisodeOutlineSet as _OutlineSet
+
+    llm.register(
+        "outline_reviser",
+        _OutlineSet.model_validate(_load("outline_revision_valid")),
     )
     # 导入分类 fixture（G-04）：默认 outline golden；API 集成测试按上传内容覆盖。
     llm.register(

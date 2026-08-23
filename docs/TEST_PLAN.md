@@ -235,3 +235,33 @@ def test_real_llm_story_bible() -> None: ...
 - **契约不变量**：`backend/tests/contract/test_evaluation_invariants.py` 对 high/medium/low 三个固定剧本 case 验证评估结构不变量（9 维齐全、overall/need_revision 服务端回填、低分维度必有 issue、FakeLLM 确定性）。
 - **Golden case**：`backend/tests/golden/evaluation_cases/{high,medium,low}.json` 每个含 `expected` 字段声明预期分支（need_revision）。
 - **真实模型 smoke**：`backend/scripts/evaluate_rubric_smoke.py` 对三个 case 重复调用真实 evaluator，输出各维度分均值/标准差与问题交集，用于人工诊断评估稳定性。**不进 CI**，发布前人工执行；脚本从 `.env` 读取密钥且不打印 API Key。
+
+## 11. Agent（Phase J）专项说明（J-12）
+
+### 11.1 评测分层
+
+| 层 | 运行方式 | 内容 |
+|---|---|---|
+| CI 契约评测 | `make test`（默认） | `tests/evals/`：数据集契约（commands ≥50 / outcomes ≥30、五类 intent / 三种 goal_status 全覆盖）、preflight 澄清召回 100%（12 条确定性歧义/越界/冲突用例，零模型调用）、Outcome 确定性规则一致率 100%（26 条） |
+| 真实模型评测 | `pytest -m eval_real`（需 `EVAL_LLM_ENABLED=1` + 真实 Key，默认被 addopts 排除） | commands 全量 P/R/F1 + 澄清召回；outcomes 语义约束 goal_status 一致率；结果落盘 `tests/evals/results/`，报告见 `docs/AGENT_EVAL_REPORT.md`（不得写模拟数字） |
+| E2E | `make e2e REPEAT=5` | `e2e/agent-workspace.spec.ts`（FAKE_LLM_SCENARIO=agent_e2e） |
+
+### 11.2 CI 恢复/并发契约与用例映射
+
+| 契约 | 用例 |
+|---|---|
+| Turn 幂等（同 key 复用收据 / 异载荷 409） | `tests/integration/api/test_agent_turns.py` |
+| 并发确认单活跃 Run / 重复确认复用 Run / ACTION_STALE | `tests/integration/api/test_agent_actions.py` |
+| lease 接管与 checkpoint 恢复 | `tests/integration/workflow/test_dispatcher_recovery.py`、`test_recovery_matrix.py` |
+| 一次后续计划不重复（reconciliation 幂等 / 深度 1 不延伸） | `tests/integration/events/test_agent_action_events.py` |
+| Outcome / 子提案 / GET reconcile | 同上 + `tests/unit/application/test_agent_outcome_service.py` |
+
+### 11.3 FAKE_LLM_SCENARIO 场景
+
+| 场景 | evaluate_episode | planner | 用途 |
+|---|---|---|---|
+| 默认 | 高分 | 固定 create_script 计划 | API 集成测试 |
+| `revision` | 低分 | 固定 create_script | H-07 修订链路（保留） |
+| `agent_e2e` | 低分 | **内容感知桩**（修改+集数→revise_script；大纲→revise_outline；评估→evaluate；解释→explain；其余→create_script），另注册 outline_reviser | J-12 Agent E2E（单后端服务全部意图） |
+
+E2E 场景断言（`tests/integration/api/test_fake_scenario.py`）保证 fixtures 与桩行为不被无意识改动。

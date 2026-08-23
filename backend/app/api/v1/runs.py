@@ -111,11 +111,16 @@ class RunResponse(BaseModel):
     config_snapshot: dict[str, Any] | None = Field(default=None, description="配置快照")
     error_code: str | None = Field(default=None, description="机器可读错误码（failed 时，I-01）")
     error_detail: str | None = Field(default=None, description="错误详情（failed 时，I-01）")
+    agent_action_id: str | None = Field(
+        default=None,
+        description="触发本 Run 的 AgentAction ID（Agent 确认创建时携带，J-12）",
+    )
     created_at: str = Field(..., description="创建时间")
     updated_at: str = Field(..., description="更新时间")
 
     @classmethod
     def from_orm(cls, run: Any) -> RunResponse:
+        config = run.config_snapshot or {}
         return cls(
             run_id=str(run.id),
             project_id=str(run.project_id),
@@ -124,6 +129,7 @@ class RunResponse(BaseModel):
             config_snapshot=run.config_snapshot,
             error_code=run.error_code,
             error_detail=run.error_detail,
+            agent_action_id=config.get("agent_action_id"),
             created_at=run.created_at.isoformat() if run.created_at else "",
             updated_at=run.updated_at.isoformat() if run.updated_at else "",
         )
