@@ -15,6 +15,7 @@
 - **J-07**：大纲修订 Skill 与影响分析 Tool——`OutlineRevisionInput`（旧大纲 / Story Bible / 用户约束 / source outline ID），输出完整 `EpisodeOutlineSet` 不接受 patch；服务端不变量（集数不变、集号唯一连续、required_characters 可追溯、locked_facts 否定窗口检测）；`OutlineImpactTool` 确定性逐字段比较，输出变更集、字段明细、依赖旧大纲的剧本 ID 与 follow-up 建议（空白差异不算变化，不调用 LLM）。
 - **J-08**：大纲修订工作流与版本落库——`revise_outline` 单节点工作流（加载 → Skill → 落库 → 影响分析）；合法输出成为 latest valid（sources 绑定旧大纲 `revises` + Story Bible `references`），旧 Artifact 内容/checksum 不变；不变量失败保存 invalid 诊断版本且 Run failed；`GET /artifacts/{id}/references` 反向引用查询可指出仍引用旧大纲的剧本；`revise_outline` intent 开放进 Planner 白名单与确认执行。
 - **J-09**：AgentAction 生命周期、Outcome 与一次后续计划——Dispatcher 在 Run 状态变化时同步 Action（queued→running→终态）；AgentOutcomeService 确定性证据优先生成 `goal_status`/`evidence_artifact_ids`/`score_delta`/`remaining_constraints`，仅语义约束交由 Evaluator Skill（模型无从改写确定性结论）；部分达成时用最新 Artifact 重新解析目标，创建深度 1 的 proposed 子 Action（唯一约束 + SAVEPOINT 幂等，深度 1 不再延伸）；GET Action 触发 reconciliation 补写 Outcome/结果消息/后续计划；新事件 `agent_action.updated` 携带 `agent_action_id` 与 `goal_status`。
+- **J-10**：前端 Agent API 契约与数据 Hooks——`agentApi`（createTurn 200/202/getTurn/getAction/confirm/reject）与 `conversationsApi`（create/list/messages）；`useAgentConversation`（会话管理、消息分页、发送幂等 key 失败重发复用、202 planning 轮询、输入保留）；`useAgentAction`（非终态轮询/卸载停止、确认防重复点击、重复确认复用 Run、ACTION_STALE 可恢复错误、query invalidation）与 `useAgentActionEvents`（SSE `agent_action.updated`）。
 
 ### 计划中
 - RAG 检索（Phase D）深入、多用户认证、分布式预算（见 [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) §4）。

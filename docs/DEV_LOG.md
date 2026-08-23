@@ -3508,3 +3508,42 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - M4 阶段：按 PLAN 依赖顺序执行 Task 10 / J-10 前端 Agent API 契约与数据 Hooks。
+
+
+## J-10 前端 Agent API 契约与数据 Hooks（2026-08-23）
+
+### 做了什么
+
+- `types/api.ts` 新增与 Pydantic（extra="forbid"）逐字段对齐的类型：Conversation/ChatMessage（MessageKind）、AgentTurnStatus/TurnType、AgentIntent/GoalStatus、AgentActionStatus、ActiveArtifactContext、ArtifactSnapshot、ActionTarget/ActionStep、AgentCommand（按 intent 判别的联合）、AgentActionPlan、RecommendedNextAction、AgentOutcome、AgentTurnResponse、AgentActionResponse、AgentRunSnapshot、AgentConfirmResponse、AgentTurnCreate。
+- `lib/api-client.ts`：
+  - `agentApi`：createTurn（内部 requestWithStatus 返回 {status, data}——200 终态 / 202 规划中）、getTurn、getAction（GET 兼带 J-09 reconciliation）、confirm（重复确认返回原 Run）、reject；
+  - `conversationsApi`：create / list / messages（分页参数与后端一致）。
+- `hooks/use-agent-conversation.ts`：当前会话管理（外部指定或首条消息自动创建并回填）；消息分页（首页 + 剩余向前拼接，sequence 升序）+ loadMore；发送幂等 key（失败重发相同内容复用同一 key → 服务端返回原 Turn，pendingKeyRef 机制）；202 planning 轮询至终态（可配间隔/上限，超时抛 TURN_POLL_TIMEOUT）；终态失效消息查询与 action 查询；失败时 lastFailedContent 交还调用方恢复输入框。
+- `hooks/use-agent-action.ts`：useAgentAction（refetchInterval 仅非终态轮询，终态自动停、组件卸载即停；confirm 以 in-flight ref 防重复点击；重复确认只认服务端返回的 run_id 不建重复本地状态；409 ACTION_STALE → isStale 可恢复错误并保留计划；成功/拒绝后失效 Action 与消息查询）+ useAgentActionEvents（EventSource 订阅 agent_action.updated，卸载 close）。
+- `tests/agent-api.test.ts` 5 例：TDD anchor confirming_same_action_twice_reuses_run（API 层双 confirm 同 Run + Hook 层并行双击只发一次请求）、202 轮询、失败重发幂等 key 复用、ACTION_STALE 可恢复、卸载停止轮询。
+
+### 为什么这么做
+
+- createTurn 必须区分 200/202（202 = 他人租约下规划中，语义是"稍后再查"而非错误），为此在 request 之外加 requestWithStatus，其余端点保持原 request 语义不动。
+- 幂等 key 生命周期绑定"逻辑发送"而非"点击"：失败后 pendingKeyRef 保留 {content, key}，相同内容重发复用；成功即清空——与服务端 (project_id, idempotency_key) 收据语义严格对齐。
+- 轮询交给 react-query 的 refetchInterval 回调（按 data.status 决定继续或 false），卸载停止、终态停止都由框架保证，不自己管理 timer 生命周期。
+- 防重复点击用 ref 而非 state：state 在并发点击的同一个渲染周期内读到的都是旧值，ref 同步写读才能拦住第二次触发。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| cd frontend && pnpm vitest run tests/agent-api.test.ts | 5 passed |
+| cd frontend && pnpm test | **174 passed**（169→174） |
+| cd frontend && pnpm typecheck | tsc --noEmit 通过 |
+| cd frontend && pnpm lint | No ESLint warnings or errors |
+
+### 学到了什么
+
+1. fake timers 与"promise 内部 await setTimeout"的 Hook 测试会死锁（act 等待的 promise 永远不 resolve）——轮询类测试改用真实计时器 + 可配置短间隔（Hook 暴露 pollIntervalMs 选项）更稳。
+2. 测试路由要按"状态机"设计：GET action 的返回随 confirm 次数变化，否则 invalidation 后的断言永远拿旧状态；API 层与 Hook 层断言用不同 action id 隔离，避免相互污染。
+3. @testing-library/react v16 的 renderHook + QueryClientProvider wrapper + waitFor 组合足够覆盖全部数据 Hook 场景，不需要额外渲染组件。
+
+### 下一步
+
+- 按 PLAN 的依赖顺序执行 Task 11 / J-11：对话式创作工作台 UI（会话面板 / 计划确认卡 / 结果与后续计划展示，消费本次交付的两个 Hook）。

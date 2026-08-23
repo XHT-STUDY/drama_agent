@@ -493,3 +493,210 @@ export interface ExportRecord {
   filename: string;
   sizeBytes: number;
 }
+
+// ============================================================
+// 会话与消息 (Conversation / Message) — J-10
+// ============================================================
+
+/** 会话 */
+export interface Conversation {
+  id: string;
+  project_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationCreate {
+  title: string;
+}
+
+export interface ConversationListResponse {
+  items: Conversation[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+/** 消息类型（与后端 MessageCreate.kind 一致） */
+export type MessageKind = "text" | "clarification" | "action_plan" | "action_result" | "error";
+
+/** 单条消息（MessageResponse） */
+export interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant" | "system" | string;
+  content: string;
+  kind: MessageKind | string;
+  metadata: Record<string, unknown>;
+  sequence: number;
+  created_at: string;
+}
+
+export interface MessageListResponse {
+  items: ChatMessage[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+// ============================================================
+// 对话式 Agent (AgentTurn / AgentAction / AgentOutcome) — J-10
+// ============================================================
+
+export type AgentTurnStatus =
+  | "received"
+  | "planning"
+  | "needs_input"
+  | "answered"
+  | "action_proposed"
+  | "failed";
+
+export type AgentTurnType = "clarification" | "answer" | "plan";
+
+export type AgentIntent =
+  | "create_script"
+  | "explain"
+  | "revise_outline"
+  | "revise_script"
+  | "evaluate";
+
+export type AgentGoalStatus = "achieved" | "partially_achieved" | "blocked";
+
+export type AgentActionStatus =
+  | "proposed"
+  | "queued"
+  | "running"
+  | "completed"
+  | "needs_review"
+  | "failed"
+  | "cancelled"
+  | "stale"
+  | "rejected";
+
+/** 用户发起 Turn 时显式选中的页面上下文 */
+export interface ActiveArtifactContext {
+  artifact_id: string;
+  artifact_type: string;
+  episode_number?: number | null;
+  version?: number | null;
+  checksum?: string | null;
+}
+
+/** 来源 Artifact 的版本与 checksum 快照（confirm 过期检测依据） */
+export interface ArtifactSnapshot {
+  artifact_id: string;
+  artifact_type: string;
+  episode_number?: number | null;
+  version: number;
+  checksum?: string | null;
+}
+
+/** 服务端解析后的受限动作目标 */
+export interface ActionTarget {
+  target_type: "project" | "story_bible" | "outline" | "script" | "evaluation";
+  episode_number?: number | null;
+}
+
+/** 计划步骤（服务端模板生成，仅展示） */
+export interface ActionStep {
+  step_id: string;
+  title: string;
+  description: string;
+}
+
+/** 按意图判别的命令联合（与后端 AgentCommand 一致） */
+export type AgentCommand =
+  | { intent: "create_script"; user_input: string; outline_count: number; script_count: number }
+  | { intent: "explain"; target: ActionTarget }
+  | { intent: "revise_outline"; source_outline_id: string; constraints: string[] }
+  | { intent: "revise_script"; source_script_id: string; episode_number: number; constraints: string[] }
+  | { intent: "evaluate"; scope: "project" | "episode"; episode_number?: number | null };
+
+/** 服务端持久化的结构化计划 */
+export interface AgentActionPlan {
+  goal: string;
+  intent: AgentIntent;
+  command: AgentCommand;
+  target: ActionTarget;
+  constraints: string[];
+  steps: ActionStep[];
+  expected_impact: string[];
+}
+
+/** Outcome 可选的一次后续动作建议 */
+export interface RecommendedNextAction {
+  intent: AgentIntent;
+  target: ActionTarget;
+  constraints: string[];
+}
+
+/** Action 终态的目标达成判断 */
+export interface AgentOutcome {
+  goal_status: AgentGoalStatus;
+  evidence_artifact_ids: string[];
+  score_delta?: number | null;
+  remaining_constraints: string[];
+  recommended_next_action?: RecommendedNextAction | null;
+  replan_depth: number;
+}
+
+/** AgentTurn 响应快照 */
+export interface AgentTurnResponse {
+  id: string;
+  project_id: string;
+  conversation_id: string;
+  user_message_id: string;
+  idempotency_key: string;
+  request_hash: string;
+  status: AgentTurnStatus;
+  turn_type?: AgentTurnType | null;
+  response_message_id?: string | null;
+  action_id?: string | null;
+  error_code?: string | null;
+  error_detail?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** AgentAction 响应快照 */
+export interface AgentActionResponse {
+  id: string;
+  project_id: string;
+  conversation_id: string;
+  agent_turn_id: string;
+  parent_action_id?: string | null;
+  replan_depth: number;
+  intent: AgentIntent;
+  status: AgentActionStatus;
+  requires_confirmation: boolean;
+  plan: AgentActionPlan;
+  source_artifact_ids: ArtifactSnapshot[];
+  result?: AgentOutcome | null;
+  run_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 确认响应中的 WorkflowRun 摘要 */
+export interface AgentRunSnapshot {
+  run_id: string;
+  project_id: string;
+  action: string;
+  status: string;
+  created_at: string;
+}
+
+/** 确认 Action 的响应体 */
+export interface AgentConfirmResponse {
+  action: AgentActionResponse;
+  run: AgentRunSnapshot;
+}
+
+/** 创建 Agent Turn 请求体 */
+export interface AgentTurnCreate {
+  conversation_id?: string | null;
+  content: string;
+  active_context?: ActiveArtifactContext | null;
+  idempotency_key: string;
+}

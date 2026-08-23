@@ -9,10 +9,18 @@
  */
 
 import type {
+  AgentActionResponse,
+  AgentConfirmResponse,
+  AgentTurnCreate,
+  AgentTurnResponse,
   Artifact,
+  Conversation,
+  ConversationCreate,
+  ConversationListResponse,
   CreateRevisionRequest,
   CreateRunRequest,
   ErrorResponse,
+  MessageListResponse,
   PaginatedList,
   Project,
   ProjectCreate,
@@ -201,5 +209,117 @@ export const healthApi = {
   },
   ready(): Promise<{ status: string; checks: unknown[] }> {
     return request("/health/ready");
+  },
+};
+
+// ============================================================
+// 会话与消息 — J-10
+// ============================================================
+
+export const conversationsApi = {
+  /** 在项目下创建会话 */
+  create(projectId: string, data: ConversationCreate): Promise<Conversation> {
+    return request(`/projects/${projectId}/conversations`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  /** 按项目分页查询会话列表 */
+  list(
+    projectId: string,
+    offset = 0,
+    limit = 20,
+  ): Promise<ConversationListResponse> {
+    const params = new URLSearchParams({
+      offset: String(offset),
+      limit: String(limit),
+    });
+    return request(
+      `/projects/${projectId}/conversations?${params.toString()}`,
+    );
+  },
+
+  /** 按会话分页查询消息（sequence 升序） */
+  messages(
+    conversationId: string,
+    offset = 0,
+    limit = 50,
+  ): Promise<MessageListResponse> {
+    const params = new URLSearchParams({
+      offset: String(offset),
+      limit: String(limit),
+    });
+    return request(
+      `/conversations/${conversationId}/messages?${params.toString()}`,
+    );
+  },
+};
+
+// ============================================================
+// 对话式 Agent — J-10
+// ============================================================
+
+/** createTurn 的结果：202 表示 Turn 仍在他人租约下规划中 */
+export interface AgentTurnRequestResult {
+  status: number;
+  data: AgentTurnResponse;
+}
+
+async function requestWithStatus<T>(path: string, options: RequestInit = {}): Promise<{ status: number; data: T }> {
+  const url = `${API_BASE}${path}`;
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+    ...options.headers,
+  };
+  const res = await fetch(url, { ...options, headers });
+  if (!res.ok) {
+    let err: ErrorResponse;
+    try {
+      err = await res.json();
+    } catch {
+      err = {
+        request_id: "",
+        detail: `HTTP ${res.status} ${res.statusText}`,
+        code: "NETWORK_ERROR",
+        path,
+        timestamp: new Date().toISOString(),
+      };
+    }
+    throw new ApiError(res.status, err);
+  }
+  return { status: res.status, data: (await res.json()) as T };
+}
+
+export const agentApi = {
+  /** 创建 Turn（200 终态 / 202 规划中）；幂等键由调用方生成与复用 */
+  async createTurn(
+    projectId: string,
+    body: AgentTurnCreate,
+  ): Promise<AgentTurnRequestResult> {
+    return requestWithStatus<AgentTurnResponse>(
+      `/projects/${projectId}/agent/turns`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  },
+
+  /** 查询 Turn 快照（planning 202 轮询 / 终态确认） */
+  getTurn(turnId: string): Promise<AgentTurnResponse> {
+    return request(`/agent/turns/${turnId}`);
+  },
+
+  /** 查询 Action 快照（状态轮询；GET 兼带 J-09 reconciliation） */
+  getAction(actionId: string): Promise<AgentActionResponse> {
+    return request(`/agent/actions/${actionId}`);
+  },
+
+  /** 确认 proposed Action（重复确认返回原 Run，不创建新 Run） */
+  confirm(actionId: string): Promise<AgentConfirmResponse> {
+    return request(`/agent/actions/${actionId}/confirm`, { method: "POST" });
+  },
+
+  /** 拒绝 proposed Action（仅 proposed→rejected） */
+  reject(actionId: string): Promise<AgentActionResponse> {
+    return request(`/agent/actions/${actionId}/reject`, { method: "POST" });
   },
 };
