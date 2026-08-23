@@ -1,0 +1,19 @@
+{
+  "constraint_judgments": [
+    {
+      "constraint": "第 3 集增加林峰与陈浩的正面冲突",
+      "satisfied": true,
+      "reason": "第 3 集核心冲突与关键事件均包含两人对抗"
+    },
+    {
+      "constraint": "保持整体轻松基调",
+      "satisfied": false,
+      "reason": "第 3 集结尾冲突升级，基调偏沉重"
+    }
+  ],
+  "recommended_next_action": {
+    "intent": "revise_script",
+    "episode_number": 3,
+    "reason": "大纲已更新但第 3 集剧本仍引用旧大纲，需要按新大纲修订"
+  }
+}

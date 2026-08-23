@@ -91,6 +91,159 @@ _TERMINAL_TURN_STATUSES = frozenset({"needs_input", "answered", "action_proposed
 MessageKind = Literal["text", "clarification", "action_plan", "action_result", "error"]
 
 
+# ========================================================================
+# 服务端计划模板（模块级函数）——Turn 规划（J-04/06/08）与一次后续计划
+# （J-09 lifecycle）共用同一模板，保证父子 Action 的计划语义一致。
+# 返回 (intent, command, target, goal, steps, snapshots)。
+# ========================================================================
+
+
+def build_revise_script_plan(
+    *, source: Artifact, constraints: list[str]
+) -> tuple[str, ReviseScriptCommand, ActionTarget, str, list[ActionStep], list[ArtifactSnapshot]]:
+    """revise_script 计划模板：source 为服务端解析的目标集最新 valid 剧本。"""
+    episode = source.episode_number
+    steps = [
+        ActionStep(
+            step_id="prepare_target",
+            title="锁定修订目标",
+            description="解析目标剧本版本，锁定原稿与设定/大纲上下文",
+        ),
+        ActionStep(
+            step_id="ensure_evaluation",
+            title="补齐目标评估",
+            description="目标剧本缺少评估时先仅评估该集并持久化报告",
+        ),
+        ActionStep(
+            step_id="revise",
+            title="生成修订计划与新稿",
+            description="把用户约束写入修订计划，产出候选新稿（保持 draft）",
+        ),
+        ActionStep(
+            step_id="continuity_check",
+            title="连续性检查",
+            description="候选稿通过连续性检查后提升为有效版本，失败保留诊断稿",
+        ),
+        ActionStep(
+            step_id="re_evaluate",
+            title="重新评估",
+            description="对修订后的剧本重新评估，产出对比报告",
+        ),
+    ]
+    snapshots = [
+        ArtifactSnapshot(
+            artifact_id=source.id,
+            artifact_type=source.type,
+            episode_number=source.episode_number,
+            version=source.version,
+            checksum=source.checksum,
+        )
+    ] if source.checksum is not None else []
+    return (
+        "revise_script",
+        ReviseScriptCommand(
+            source_script_id=source.id,
+            episode_number=episode,
+            constraints=constraints,
+        ),
+        ActionTarget(target_type="script", episode_number=episode),
+        f"按用户要求修订第 {episode} 集剧本并重评"[:2000],
+        steps,
+        snapshots,
+    )
+
+
+def build_revise_outline_plan(
+    *, source_outline: Artifact, constraints: list[str]
+) -> tuple[str, ReviseOutlineCommand, ActionTarget, str, list[ActionStep], list[ArtifactSnapshot]]:
+    """revise_outline 计划模板：source_outline 为项目最新 valid 大纲。"""
+    episode_count = len(source_outline.content.get("episodes", []))
+    steps = [
+        ActionStep(
+            step_id="prepare_target",
+            title="锁定修订目标",
+            description="加载当前最新有效大纲与 Story Bible 锁定事实",
+        ),
+        ActionStep(
+            step_id="revise_outline",
+            title="生成修订大纲",
+            description="按用户约束输出完整大纲，保持集数与锁定事实不变",
+        ),
+        ActionStep(
+            step_id="impact",
+            title="影响分析",
+            description="逐字段比较新旧大纲，找出受影响的集与剧本",
+        ),
+        ActionStep(
+            step_id="persist",
+            title="版本落库",
+            description="新大纲成为最新有效版本，旧版本不可变",
+        ),
+    ]
+    snapshots = [
+        ArtifactSnapshot(
+            artifact_id=source_outline.id,
+            artifact_type=source_outline.type,
+            episode_number=source_outline.episode_number,
+            version=source_outline.version,
+            checksum=source_outline.checksum,
+        )
+    ] if source_outline.checksum is not None else []
+    return (
+        "revise_outline",
+        ReviseOutlineCommand(source_outline_id=source_outline.id, constraints=constraints),
+        ActionTarget(target_type="outline"),
+        f"按用户要求修订分集大纲（{episode_count} 集）并分析影响"[:2000],
+        steps,
+        snapshots,
+    )
+
+
+def build_evaluate_plan(
+    *, episode: int | None
+) -> tuple[str, EvaluateCommand, ActionTarget, str, list[ActionStep]]:
+    """evaluate 计划模板（快照由调用方按最新剧本建立）。"""
+    scope: Literal["project", "episode"] = "episode" if episode is not None else "project"
+    scope_label = f"第 {episode} 集" if episode is not None else "整个项目"
+    steps = [
+        ActionStep(
+            step_id="collect",
+            title="收集最新剧本版本",
+            description="按集数取每集最新有效剧本作为评估对象",
+        ),
+        ActionStep(
+            step_id="evaluate",
+            title="逐集执行评估",
+            description="使用评分维度与 Rubric 对剧本打分并列出问题",
+        ),
+        ActionStep(
+            step_id="report",
+            title="生成评估报告",
+            description="汇总每集得分与修订建议,产出评估 Artifact",
+        ),
+    ]
+    return (
+        "evaluate",
+        EvaluateCommand(scope=scope, episode_number=episode),
+        ActionTarget(target_type="evaluation", episode_number=episode),
+        f"评估{scope_label}的最新有效剧本并产出报告"[:2000],
+        steps,
+    )
+
+
+def render_plan_message(plan: AgentActionPlan) -> str:
+    """把计划渲染为用户可读的 action_plan 消息文本（J-04/09 共用）。"""
+    lines = [f"计划:{plan.goal}", ""]
+    for step in plan.steps:
+        lines.append(f"- {step.title}:{step.description}")
+    if plan.expected_impact:
+        lines.append("")
+        lines.append("预期影响:" + ";".join(plan.expected_impact))
+    lines.append("")
+    lines.append("回复「确认」后开始执行。")
+    return "\n".join(lines)
+
+
 class AgentCommandService:
     """对话命令的编排服务:Turn 收据、Planner 调度与 Action 确认。"""
 
@@ -273,12 +426,25 @@ class AgentCommandService:
     # ========================================================================
 
     async def get_action(self, db: AsyncSession, action_id: uuid.UUID) -> AgentActionResponse:
-        """查询 Action 的持久化快照。"""
+        """查询 Action 的持久化快照。
+
+        Worker 在 Run 终态后崩溃时，Action 可能停留在 queued/running——
+        此处触发 reconciliation 补写 Outcome、结果消息与可空的后续计划。
+        """
         action = await AgentActionRepository(db).get(action_id)
         if action is None:
             raise NotFoundError(
                 detail=f"AgentAction 不存在: {action_id}", code="AGENT_ACTION_NOT_FOUND"
             )
+        if action.run_id is not None and action.status in ("queued", "running"):
+            run = await self._run_service.get_run(db, action.run_id)
+            if run.status in ("completed", "failed", "needs_review", "cancelled"):
+                from app.application.agent_action_lifecycle import AgentActionLifecycle
+
+                await AgentActionLifecycle().reconcile(db, action_id=action_id)
+                await db.commit()
+                action = await AgentActionRepository(db).get(action_id)
+                assert action is not None
         return self._action_response(action)
 
     async def confirm_action(
@@ -337,7 +503,10 @@ class AgentCommandService:
                 db,
                 project_id=action.project_id,
                 action=run_action,
-                config=self._build_run_config(plan),
+                config={
+                    **self._build_run_config(plan),
+                    "agent_action_id": str(action_id),
+                },
                 idempotency_key=f"agent-action:{action_id}",
             )
         except ProjectHasActiveRunError:
@@ -597,11 +766,12 @@ class AgentCommandService:
         constraints = list(output.constraints)
         expected_impact = list(output.expected_impact)
         intent: AgentIntent = "create_script"  # 分支内按白名单重赋值
+        command: AgentCommand  # 分支内按 intent 赋对应命令
 
         if output.intent == "create_script":
             outline_count = self._settings.mvp_outline_count
             script_count = self._settings.mvp_script_count
-            command: AgentCommand = CreateScriptCommand(
+            command = CreateScriptCommand(
                 user_input=user_request,
                 outline_count=outline_count,
                 script_count=script_count,
@@ -638,31 +808,8 @@ class AgentCommandService:
             snapshots: list[ArtifactSnapshot] = []
         elif output.intent == "evaluate":
             episode = output.target.episode_number if output.target else None
-            scope: Literal["project", "episode"] = (
-                "episode" if episode is not None else "project"
-            )
-            intent = "evaluate"
-            command = EvaluateCommand(scope=scope, episode_number=episode)
-            target = ActionTarget(target_type="evaluation", episode_number=episode)
-            scope_label = f"第 {episode} 集" if episode is not None else "整个项目"
-            goal = f"评估{scope_label}的最新有效剧本并产出报告"[:2000]
-            steps = [
-                ActionStep(
-                    step_id="collect",
-                    title="收集最新剧本版本",
-                    description="按集数取每集最新有效剧本作为评估对象",
-                ),
-                ActionStep(
-                    step_id="evaluate",
-                    title="逐集执行评估",
-                    description="使用评分维度与 Rubric 对剧本打分并列出问题",
-                ),
-                ActionStep(
-                    step_id="report",
-                    title="生成评估报告",
-                    description="汇总每集得分与修订建议,产出评估 Artifact",
-                ),
-            ]
+            intent_str, command, target, goal, steps = build_evaluate_plan(episode=episode)
+            intent = intent_str  # type: ignore[assignment]
             snapshots = await self._script_snapshots(db, project.id, episode)
         elif output.intent == "revise_script":
             # 目标由服务端解析：目标集的最新 valid 剧本，Planner 不提供 UUID。
@@ -678,50 +825,10 @@ class AgentCommandService:
                 raise ScriptNotFoundForRevisionError(
                     detail=f"第 {episode} 集没有可修订的有效剧本"
                 )
-            intent = "revise_script"
-            command = ReviseScriptCommand(
-                source_script_id=source.id,
-                episode_number=episode,
-                constraints=constraints,
-            )
-            target = ActionTarget(target_type="script", episode_number=episode)
-            goal = f"按用户要求修订第 {episode} 集剧本并重评"[:2000]
-            steps = [
-                ActionStep(
-                    step_id="prepare_target",
-                    title="锁定修订目标",
-                    description="解析目标剧本版本，锁定原稿与设定/大纲上下文",
-                ),
-                ActionStep(
-                    step_id="ensure_evaluation",
-                    title="补齐目标评估",
-                    description="目标剧本缺少评估时先仅评估该集并持久化报告",
-                ),
-                ActionStep(
-                    step_id="revise",
-                    title="生成修订计划与新稿",
-                    description="把用户约束写入修订计划，产出候选新稿（保持 draft）",
-                ),
-                ActionStep(
-                    step_id="continuity_check",
-                    title="连续性检查",
-                    description="候选稿通过连续性检查后提升为有效版本，失败保留诊断稿",
-                ),
-                ActionStep(
-                    step_id="re_evaluate",
-                    title="重新评估",
-                    description="对修订后的剧本重新评估，产出对比报告",
-                ),
-            ]
-            snapshots = [
-                ArtifactSnapshot(
-                    artifact_id=source.id,
-                    artifact_type=source.type,
-                    episode_number=source.episode_number,
-                    version=source.version,
-                    checksum=source.checksum,
-                )
-            ] if source.checksum is not None else []
+            (
+                intent_str, command, target, goal, steps, snapshots,
+            ) = build_revise_script_plan(source=source, constraints=constraints)
+            intent = intent_str  # type: ignore[assignment]
         elif output.intent == "revise_outline":
             # 目标由服务端解析：项目最新 valid 大纲，Planner 不提供 UUID。
             source_outline = await ArtifactStore().get_latest(
@@ -731,45 +838,12 @@ class AgentCommandService:
                 raise OutlineNotFoundForRevisionError(
                     detail="项目没有可修订的有效分集大纲"
                 )
-            intent = "revise_outline"
-            command = ReviseOutlineCommand(
-                source_outline_id=source_outline.id,
-                constraints=constraints,
+            (
+                intent_str, command, target, goal, steps, snapshots,
+            ) = build_revise_outline_plan(
+                source_outline=source_outline, constraints=constraints
             )
-            target = ActionTarget(target_type="outline")
-            episode_count = len(source_outline.content.get("episodes", []))
-            goal = f"按用户要求修订分集大纲（{episode_count} 集）并分析影响"[:2000]
-            steps = [
-                ActionStep(
-                    step_id="prepare_target",
-                    title="锁定修订目标",
-                    description="加载当前最新有效大纲与 Story Bible 锁定事实",
-                ),
-                ActionStep(
-                    step_id="revise_outline",
-                    title="生成修订大纲",
-                    description="按用户约束输出完整大纲，保持集数与锁定事实不变",
-                ),
-                ActionStep(
-                    step_id="impact",
-                    title="影响分析",
-                    description="逐字段比较新旧大纲，找出受影响的集与剧本",
-                ),
-                ActionStep(
-                    step_id="persist",
-                    title="版本落库",
-                    description="新大纲成为最新有效版本，旧版本不可变",
-                ),
-            ]
-            snapshots = [
-                ArtifactSnapshot(
-                    artifact_id=source_outline.id,
-                    artifact_type=source_outline.type,
-                    episode_number=source_outline.episode_number,
-                    version=source_outline.version,
-                    checksum=source_outline.checksum,
-                )
-            ] if source_outline.checksum is not None else []
+            intent = intent_str  # type: ignore[assignment]
         else:
             # Planner 白名单已限定意图;到达这里说明服务端与 Planner 白名单漂移,直接拒绝。
             raise UnsupportedAgentIntentError(
@@ -861,15 +935,7 @@ class AgentCommandService:
 
     def _render_plan_message(self, plan: AgentActionPlan) -> str:
         """把计划渲染为用户可读的 action_plan 消息文本。"""
-        lines = [f"计划:{plan.goal}", ""]
-        for step in plan.steps:
-            lines.append(f"- {step.title}:{step.description}")
-        if plan.expected_impact:
-            lines.append("")
-            lines.append("预期影响:" + ";".join(plan.expected_impact))
-        lines.append("")
-        lines.append("回复「确认」后开始执行。")
-        return "\n".join(lines)
+        return render_plan_message(plan)
 
     def _render_explain_answer(self, output: AgentPlannerOutput) -> str:
         """模型未直接给 answer 时,由 steps/影响拼出只读解释。"""

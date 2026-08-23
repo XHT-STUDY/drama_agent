@@ -226,6 +226,52 @@ class AgentOutcome(BaseModel):
     replan_depth: int = Field(default=0, ge=0, le=1)
 
 
+class ConstraintJudgment(BaseModel):
+    """Evaluator 对单条用户语义约束的判断（J-09）。"""
+
+    model_config = {"extra": "forbid"}
+
+    constraint: str = Field(..., min_length=1, max_length=2000)
+    satisfied: bool
+    reason: str = Field(default="", max_length=1000)
+
+
+class OutcomeRecommendation(BaseModel):
+    """Evaluator 的一次后续动作建议（不含执行句柄，目标由服务端重解析）。"""
+
+    model_config = {"extra": "forbid"}
+
+    intent: AgentIntent
+    episode_number: int | None = Field(default=None, ge=1)
+    reason: str = Field(default="", max_length=1000)
+
+
+class AgentOutcomeEvaluatorInput(BaseModel):
+    """AgentOutcomeEvaluatorSkill 的服务端输入（J-09）。"""
+
+    model_config = {"extra": "forbid"}
+
+    goal: str = Field(..., min_length=1, max_length=2000)
+    intent: AgentIntent
+    run_status: str = Field(..., max_length=32)
+    deterministic_goal_status: AgentGoalStatus
+    user_constraints: list[str] = Field(default_factory=list, max_length=20)
+    evidence_summary: str = Field(default="", max_length=6000)
+
+
+class AgentOutcomeEvaluatorOutput(BaseModel):
+    """Evaluator 输出——只允许判断语义约束与建议后续意图。
+
+    模型不得改变 goal_status / score_delta / evidence_artifact_ids；
+    这些字段由服务端确定性证据决定，服务端合并时忽略模型的越权输出。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    constraint_judgments: list[ConstraintJudgment] = Field(default_factory=list, max_length=20)
+    recommended_next_action: OutcomeRecommendation | None = None
+
+
 class AgentTurnResponse(BaseModel):
     """AgentTurn 的持久化响应快照。"""
 

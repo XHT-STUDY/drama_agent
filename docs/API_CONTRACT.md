@@ -216,6 +216,8 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`、`revise_script→revise_script`、`revise_outline→revise_outline`；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）。Run 幂等键为 `agent-action:{action_id}`。
 
+**Action 生命周期与 Outcome（J-09）**：确认后的 Run config 携带 `agent_action_id`，Dispatcher 在 Run 状态变化时同步 Action（queued→running→终态）。Run 终态后回写 `result`（AgentOutcome：`goal_status=achieved|partially_achieved|blocked`、`evidence_artifact_ids`、`score_delta`、`remaining_constraints`、可空 `recommended_next_action`）并向会话追加 `action_result` 消息；部分达成且深度 0 时创建 `parent_action_id`/`replan_depth=1` 的 proposed 子 Action 与 `action_plan` 消息（只展示等待确认，不自动建 Run）。Worker 崩溃后 GET Action 自动 reconciliation 补写（幂等，不重复消息/子提案）。新增 SSE 事件 `agent_action.updated`（payload 含 `agent_action_id`、`status`、`goal_status`），现有消费者忽略新字段仍兼容。
+
 **revise_script 计划（J-06）**：目标由服务端解析——目标集的最新 valid 剧本（Planner 不提供 UUID），来源快照含 checksum；目标集无有效剧本时 Turn→`failed`（404 `SCRIPT_NOT_FOUND` 语义，经 Turn `error_code` 返回）。Run options 携带 `source_script_artifact_id` / `episode_number` / `user_constraints`。
 
 **Wave 2 已知限制**：Planner 白名单开放 `create_script | explain | evaluate | revise_script | revise_outline`（J-06/J-08 起，M3 完成）；单集 evaluate 的 `episode_number` 进入计划与来源快照，但当前 Run 仍评估项目全部剧本。

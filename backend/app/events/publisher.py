@@ -42,6 +42,38 @@ class EventPublisher:
                 self._redis = False
         return self._redis if self._redis is not False else None
 
+    async def publish_agent_action_event(
+        self,
+        db: AsyncSession,
+        *,
+        run_id: uuid.UUID,
+        agent_action_id: uuid.UUID,
+        status: str,
+        goal_status: str | None = None,
+        payload: dict[str, Any] | None = None,
+        autocommit: bool = False,
+    ) -> WorkflowEvent:
+        """发布 AgentAction 状态/结果事件（J-09）。
+
+        SSE payload 携带 agent_action_id 与 goal_status——现有消费者
+        忽略新字段时仍兼容（仅追加字段，不改变既有 run.* 事件结构）。
+        """
+        merged: dict[str, Any] = {
+            "agent_action_id": str(agent_action_id),
+            "status": status,
+        }
+        if goal_status is not None:
+            merged["goal_status"] = goal_status
+        if payload:
+            merged.update(payload)
+        return await self.publish(
+            db,
+            run_id=run_id,
+            event_type="agent_action.updated",
+            payload=merged,
+            autocommit=autocommit,
+        )
+
     async def publish(
         self,
         db: AsyncSession,

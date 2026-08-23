@@ -514,3 +514,182 @@ async def test_get_action_returns_plan_and_run_reference(
     assert body["plan"]["intent"] == "create_script"
     assert body["plan"]["command"]["user_input"] == "足球少年逆袭"
     assert body["run_id"]
+
+
+# ========================================================================
+# J-09：Outcome / 一次后续计划 / reconciliation
+# ========================================================================
+
+
+async def _complete_run_with_partial_outcome(
+    db_session: AsyncSession,
+    run_id: uuid.UUID,
+    *,
+    project_id: uuid.UUID,
+) -> None:
+    """模拟 Worker：Run 完成但回写前崩溃——state_summary 携带部分达成证据。"""
+    from app.artifacts.store import ArtifactStore
+    from app.db.models.workflow_run import WorkflowRun as RunModel
+
+    # 子提案目标重解析需要：第 3 集存在最新 valid 剧本
+    await ArtifactStore().create(
+        db_session,
+        project_id=project_id,
+        artifact_type="script_draft",
+        episode_number=3,
+        status="valid",
+        content={"title": "第 3 集", "scenes": []},
+    )
+    run = (
+        await db_session.execute(select(RunModel).where(RunModel.id == run_id))
+    ).scalar_one()
+    run.status = "completed"
+    run.state_summary = {
+        "outline_set_artifact_id": "00000000-0000-0000-0000-000000000001",
+        "outline_impact": {
+            "changed_episodes": [3],
+            "dependent_script_ids": ["00000000-0000-0000-0000-000000000003"],
+            "follow_ups": [
+                "第 3 集剧本依赖旧大纲且该集大纲已变化，建议发起剧本修订"
+                "（script 00000000-0000-0000-0000-000000000003）"
+            ],
+        },
+    }
+    await db_session.commit()
+
+
+def _revise_outline_plan() -> AgentActionPlan:
+    from app.domain.agent_command import ReviseOutlineCommand
+
+    return AgentActionPlan(
+        goal="按用户要求修订分集大纲（10 集）并分析影响",
+        intent="revise_outline",
+        command=ReviseOutlineCommand(
+            source_outline_id=uuid.uuid4(), constraints=["第 3 集增加正面冲突"]
+        ),
+        target=ActionTarget(target_type="outline"),
+        steps=[
+            ActionStep(step_id="revise_outline", title="修订大纲", description="生成修订大纲并分析影响"),
+        ],
+    )
+
+
+async def _action_messages(
+    db_session: AsyncSession, conversation_id: uuid.UUID, kind: str
+) -> list[Message]:
+    result = await db_session.execute(
+        select(Message).where(Message.conversation_id == conversation_id, Message.kind == kind)
+    )
+    return list(result.scalars().all())
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_partial_outcome_creates_one_confirmable_child_action(
+    agent_client: AsyncClient,
+    db_session: AsyncSession,
+    no_worker: None,
+) -> None:
+    """部分达成 → 一个 proposed 子 Action（可查询、可确认），深度 1。"""
+    project = Project(title="部分达成测试", target_episode_count=10)
+    db_session.add(project)
+    await db_session.flush()
+    outline = Artifact(
+        project_id=project.id,
+        type="episode_outline_set", version=1, episode_number=1,
+        content={"episodes": [], "arc_summary": "arc"}, status="valid",
+        checksum=_CHECKSUM_V1,
+    )
+    db_session.add(outline)
+    await db_session.commit()
+    plan = _revise_outline_plan()
+    plan.command.source_outline_id = outline.id  # type: ignore[union-attr]
+    _project_id, action_id = await _seed_action(
+        db_session, plan=plan, project_id=project.id,
+        snapshots=[ArtifactSnapshot(
+            artifact_id=outline.id, artifact_type="episode_outline_set",
+            episode_number=1, version=1, checksum=_CHECKSUM_V1,
+        )],
+    )
+    confirm = await agent_client.post(f"/api/v1/agent/actions/{action_id}/confirm")
+    assert confirm.status_code == 202
+    run_id = confirm.json()["run"]["run_id"]
+
+    # Worker 完成 Run 但在回写前崩溃 → GET Action 触发 reconciliation
+    await _complete_run_with_partial_outcome(
+        db_session, uuid.UUID(run_id), project_id=project.id
+    )
+    detail = await agent_client.get(f"/api/v1/agent/actions/{action_id}")
+    body = detail.json()
+    assert body["status"] == "completed"
+    assert body["result"]["goal_status"] == "partially_achieved"
+    assert body["result"]["recommended_next_action"]["intent"] == "revise_script"
+
+    # 子 Action：proposed、深度 1、可查询（等待确认，不自动建 Run）
+    child_rows = await db_session.execute(
+        select(AgentAction).where(AgentAction.parent_action_id == action_id)
+    )
+    children = list(child_rows.scalars().all())
+    assert len(children) == 1
+    child = children[0]
+    assert child.status == "proposed"
+    assert child.replan_depth == 1
+    assert child.run_id is None
+    child_detail = await agent_client.get(f"/api/v1/agent/actions/{child.id}")
+    assert child_detail.status_code == 200
+    assert child_detail.json()["plan"]["intent"] == "revise_script"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_reconciliation_does_not_duplicate_child_action_or_result_message(
+    agent_client: AsyncClient,
+    db_session: AsyncSession,
+    no_worker: None,
+) -> None:
+    """重复 reconciliation：仍只有一个子 Action、一条 result / follow_up 消息。"""
+    project = Project(title="重复回写测试", target_episode_count=10)
+    db_session.add(project)
+    await db_session.flush()
+    outline = Artifact(
+        project_id=project.id,
+        type="episode_outline_set", version=1, episode_number=1,
+        content={"episodes": [], "arc_summary": "arc"}, status="valid",
+        checksum=_CHECKSUM_V1,
+    )
+    db_session.add(outline)
+    await db_session.commit()
+    plan = _revise_outline_plan()
+    plan.command.source_outline_id = outline.id  # type: ignore[union-attr]
+    _project_id, action_id = await _seed_action(
+        db_session, plan=plan, project_id=project.id,
+        snapshots=[ArtifactSnapshot(
+            artifact_id=outline.id, artifact_type="episode_outline_set",
+            episode_number=1, version=1, checksum=_CHECKSUM_V1,
+        )],
+    )
+    confirm = await agent_client.post(f"/api/v1/agent/actions/{action_id}/confirm")
+    run_id = uuid.UUID(confirm.json()["run"]["run_id"])
+    action_row = (
+        await db_session.execute(select(AgentAction).where(AgentAction.id == action_id))
+    ).scalar_one()
+    conversation_id = action_row.conversation_id
+
+    await _complete_run_with_partial_outcome(
+        db_session, run_id, project_id=project.id
+    )
+
+    # 三次 GET 都会触发 reconciliation 路径
+    for _ in range(3):
+        detail = await agent_client.get(f"/api/v1/agent/actions/{action_id}")
+        assert detail.status_code == 200
+
+    child_rows = await db_session.execute(
+        select(AgentAction).where(AgentAction.parent_action_id == action_id)
+    )
+    assert len(list(child_rows.scalars().all())) == 1
+
+    result_messages = await _action_messages(db_session, conversation_id, "action_result")
+    assert len(result_messages) == 1
+    follow_up_messages = await _action_messages(db_session, conversation_id, "action_plan")
+    assert len(follow_up_messages) == 1

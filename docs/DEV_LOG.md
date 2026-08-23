@@ -3459,3 +3459,52 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 按 PLAN 的依赖顺序执行 Task 9 / J-09：AgentAction 生命周期、Outcome 与一次后续计划（终态回写、goal_status 判定、(parent_action_id, replan_depth) 唯一的后续 action_plan 提案）。
+
+
+## J-09 AgentAction 生命周期、Outcome 与一次后续计划（2026-08-23）
+
+### 做了什么
+
+- 新增 `application/agent_action_lifecycle.py`：
+  - `mark_running`：Dispatcher 执行器启动时 Action queued→running（contextlib.suppress 幂等）；
+  - `finalize`（幂等）：Run 终态 → AgentOutcome 评估 → Action 终态回写（result 列）→ assistant `action_result` 消息 → 可空后续 `action_plan` 消息 + proposed 子 Action → `agent_action.updated` 事件。queued 停留（Worker 早期崩溃）时先补 queued→running 再进终态；
+  - `reconcile`：从 run.state_summary 重放 finalize——GET Action 在发现"Run 已终态但 Action 未回写"时自动触发。
+- 新增 `application/agent_outcome_service.py`（确定性证据优先）：
+  - 证据收集：final state 的 Artifact ID / outline_impact（changed episodes、dependent scripts、follow-ups）/ needs_manual_review_reason / error；score_delta 从修订计划引用的原评估与新评估确定性计算；
+  - 规则判定：failed/cancelled→blocked；needs_review→partially_achieved；revise_outline 完成但有依赖旧大纲剧本→partially_achieved（follow-ups 进剩余约束，建议 revise_script）；其余 completed→achieved；
+  - 只有语义约束（用户自然语言要求）才调用 AgentOutcomeEvaluatorSkill；模型输出 Schema 只有 constraint_judgments + 白名单 intent 建议——goal_status/score/evidence 无处可写，合并时模型只能补充 remaining_constraints。
+- 新增 `skills/agent_outcome_evaluator.py` + prompt v1.0.0 + golden（部分达成样例）；意图白名单外建议直接拒绝。
+- 一次后续计划：partial/blocked + 原 replan_depth=0 + 白名单建议 → 服务端用当前最新 Artifact 重解析目标（建议不含 UUID），复用从 AgentCommandService 抽出的模块级计划模板（build_revise_script/revise_outline/evaluate_plan）创建 depth=1 proposed 子 Action；follow-up Turn 以 result 消息为触发消息；插入走 begin_nested SAVEPOINT，(parent_action_id, replan_depth) 唯一约束兜底；depth=1 完成后不再生成子提案。
+- 幂等三层：Action 终态 + result 已写入 → finalize 直接返回；消息按 (conversation, kind, agent_action_id, message_type) 查重；子提案先查既有再插入。
+- `events/publisher.py` 新增 `publish_agent_action_event`（事件类型 agent_action.updated，payload 含 agent_action_id/status/goal_status/child_action_id）。
+- Dispatcher：执行器启动 mark_running；主路径兜底提交前 finalize；except（失败）与 RunCancelledError（取消）路径也 finalize（reconciliation 可补写）。confirm 的 Run config 携带 agent_action_id。
+
+### 为什么这么做
+
+- "模型不得改变评分、连续性结果或 Artifact 引用"用 Schema 达成而非运行时过滤——Evaluator 输出模型根本没有这些字段，越权在类型层面不可能。
+- 子 Action 必须有独立 Turn（agent_turn_id 唯一）且 user_message_id 唯一——以已落库的 result 消息作为 follow-up Turn 的触发消息：血缘真实（后续计划确由该结果触发）、不伪造用户输入。
+- 状态机不允许 queued→completed：lifecycle 在回写前补一步 queued→running，避免为崩溃场景放宽 J-01 的迁移白名单。
+- 计划模板抽为模块函数是本次的意外收获：J-04/06/08 三处模板与 J-09 子提案共用一份实现，父子计划语义不会漂移。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/unit/application/test_agent_outcome_service.py | 5 passed（TDD anchor: deterministic_evidence_is_preferred_over_llm_judgment——用"调用即失败"的 LLM 桩证明未调模型） |
+| uv run pytest tests/unit/skills/test_agent_outcome_evaluator.py | 3 passed（golden 白名单、越权意图拒绝、输出 Schema 无权威字段） |
+| uv run pytest tests/integration/events/test_agent_action_events.py | 3 passed（TDD anchor: terminal_run_reconciliation_appends_one_result_message；follow-up 消息唯一、depth 1 不延伸） |
+| uv run pytest tests/integration/api/test_agent_actions.py | 13 passed（TDD anchors: partial_outcome_creates_one_confirmable_child_action、reconciliation_does_not_duplicate_child_action_or_result_message） |
+| uv run pytest --disable-warnings -ra | **1083 passed，6 deselected**（1070→1083） |
+| uv run ruff check app/ tests/ | All checks passed |
+| uv run mypy app/ tests/ | Success: no issues found in 318 source files |
+
+### 学到了什么
+
+1. J-01 的三个唯一约束（agent_turn_id、user_message_id、(parent, replan_depth)）互相咬合——子提案的触发链必须是"result 消息 → follow-up Turn → 子 Action"，先读清约束再设计插入顺序能少走两轮弯路。
+2. 状态机白名单（queued 不能直达 completed）在 reconciliation 场景必然暴露：任何"从中间状态追平"的逻辑都要显式补步，而不是放宽状态机。
+3. SQLAlchemy 客户端默认主键在 flush 前是 None——构造引用新对象 ID 的行必须先 flush 再引用。
+4. 类型层面收权（Schema 不含权威字段）比运行时白名单过滤更稳——测试只需断言"字段不存在"。
+
+### 下一步
+
+- M4 阶段：按 PLAN 依赖顺序执行 Task 10 / J-10 前端 Agent API 契约与数据 Hooks。

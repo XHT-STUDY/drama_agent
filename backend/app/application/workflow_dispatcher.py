@@ -346,6 +346,15 @@ async def _execute_workflow(
             action = run.action
             config_snapshot = run.config_snapshot or {}
 
+            # J-09：Agent Run 启动时同步 Action queued→running
+            agent_action_id_cfg = config_snapshot.get("agent_action_id")
+            if agent_action_id_cfg:
+                from app.application.agent_action_lifecycle import AgentActionLifecycle
+
+                await AgentActionLifecycle().mark_running(
+                    db, uuid.UUID(str(agent_action_id_cfg))
+                )
+
             # I-01：登记 per-run LLM 预算（软/硬上限来自 Settings）；并读取
             # 上一轮 state_summary 作为 retry 恢复的基底（全新 run 为 None）。
             enter_run(
@@ -866,6 +875,27 @@ async def _execute_workflow(
                     autocommit=True,
                 )
 
+            # J-09：Agent Run 终态回写 Action（Outcome、结果消息、可空后续计划）。
+            # 重新读取 Run——post-processing 已把它迁移到终态；非 Agent Run 跳过。
+            if agent_action_id_cfg:
+                try:
+                    from app.application.agent_action_lifecycle import AgentActionLifecycle
+
+                    terminal_run = await run_svc.get_run(db, run_id)
+                    await AgentActionLifecycle().finalize(
+                        db,
+                        action_id=uuid.UUID(str(agent_action_id_cfg)),
+                        run=terminal_run,
+                        final_state=final_state,
+                        agent=agent,
+                        prompt_loader=prompt_loader,
+                    )
+                except Exception:
+                    logger.exception(
+                        "AgentAction 终态回写失败（可由 reconciliation 补写）: run=%s", run_id
+                    )
+                    await db.rollback()
+
             # 兜底提交：确保所有变更已持久化
             # （各节点通过 publisher.publish(autocommit=True) 分段提交，
             #   此处作为最终安全网，防止因异常路径导致数据丢失）
@@ -883,6 +913,9 @@ async def _execute_workflow(
                     payload={"message": "Run 已取消"},
                     autocommit=True,
                 )
+                await _finalize_agent_action_if_any(
+                    db, run_svc, run_id, agent=agent, prompt_loader=prompt_loader
+                )
             except Exception:
                 pass
         except Exception as e:
@@ -897,6 +930,9 @@ async def _execute_workflow(
                     event_type="run.failed",
                     payload={"error": str(e), "error_code": error_code},
                     autocommit=True,
+                )
+                await _finalize_agent_action_if_any(
+                    db, run_svc, run_id, agent=agent, prompt_loader=prompt_loader
                 )
             except Exception:
                 pass
@@ -925,6 +961,35 @@ async def _execute_workflow(
                 await checkpointer_context.__aexit__(None, None, None)
             if hasattr(llm_client, "close"):
                 await llm_client.close()
+
+
+async def _finalize_agent_action_if_any(
+    db: AsyncSession,
+    run_svc: Any,
+    run_id: uuid.UUID,
+    *,
+    agent: Any,
+    prompt_loader: Any,
+) -> None:
+    """异常/取消路径的 AgentAction 终态回写（reconciliation 可补写）。"""
+    try:
+        run = await run_svc.get_run(db, run_id)
+        action_id_cfg = (run.config_snapshot or {}).get("agent_action_id")
+        if not action_id_cfg:
+            return
+        from app.application.agent_action_lifecycle import AgentActionLifecycle
+
+        await AgentActionLifecycle().finalize(
+            db,
+            action_id=uuid.UUID(str(action_id_cfg)),
+            run=run,
+            final_state=run.state_summary or {},
+            agent=agent,
+            prompt_loader=prompt_loader,
+        )
+    except Exception:
+        logger.exception("AgentAction 终态回写失败: run=%s", run_id)
+        await db.rollback()
 
 
 async def _persist_run_error(

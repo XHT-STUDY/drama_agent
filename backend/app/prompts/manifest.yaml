@@ -149,3 +149,14 @@ prompts:
     template: outline_reviser.md
     changelog: "初始版本：按用户约束修订分集大纲，输出完整 EpisodeOutlineSet（不接受 patch）"
     user_content_vars: [old_outline, story_bible, user_constraints]
+
+
+  # ---- 目标达成评估 ----
+  - name: agent_outcome_evaluator
+    version: "1.0.0"
+    input_schema: AgentOutcomeEvaluatorInput
+    output_schema: AgentOutcomeEvaluatorOutput
+    owner: planner
+    template: agent_outcome_evaluator.md
+    changelog: "初始版本：判断用户语义约束是否达成，并建议一次白名单后续意图（不得改写确定性结论）"
+    user_content_vars: [user_constraints, goal]
