@@ -3762,3 +3762,28 @@ Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修�
 ### 下一步
 
 - K-4：E2E（上传参考资料→知识库页检索试算可见结果，FakeEmbedder 确定性）+ 真实 embedding 一次 smoke + KNOWN_LIMITATIONS 更新。
+
+
+## K-4 知识库 E2E、embedding 冒烟与文档收尾（2026-08-23）——Phase K 完成
+
+### 做了什么
+
+- **E2E**（`e2e/knowledge.spec.ts`）：API 铺设（建项目 → multipart 上传参考资料 → import Run 至 completed，`config.upload_id` 为顶层 config 字段）+ UI 断言（知识库页列表"本项目/向量齐全" → 检索试算命中含相似度与 trace → 删除后空态）。FakeEmbedder 确定性，全部 8 用例（3 个 spec）通过。
+- **真实 embedding 冒烟脚本**（`backend/scripts/embedding_smoke.py`）：连通性 + 维度一致性（对照 pgvector 1536 列宽）+ 语义性（相关对相似度 > 无关对）；test 环境拒绝执行；**未执行**（无真实 Key），需 `EMBEDDING_API_KEY` 等环境手工触发。
+- **KNOWN_LIMITATIONS §4**：V1 backlog 第 1 项"RAG 检索深入"出列（Phase K 交付），保留"真实 embedding 冒烟待 Key"的说明。
+- Phase K（K-0～K-4）全部完成：v0.2.0 定版 + 上传摄取/管理 API/前端页/E2E 冒烟。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| bash scripts/e2e.sh --repeat-each=1 | **8 passed**（agent×6 + H-07×1 + knowledge×1，21.3s） |
+| 真实 embedding 冒烟 | **未执行**（无 API Key）——脚本与执行命令就绪 |
+
+### 学到了什么
+
+1. Run 创建请求是 `extra=forbid`：`upload_id` 属于 `config` 字典而非顶层字段——422 比 500 友好，但字段位置要在 API_CONTRACT 里查清再写铺设代码。
+
+### 下一步
+
+- Phase K 候选后续（§20.5）：成本可视化（~2d）→ 多用户认证（~4d）。

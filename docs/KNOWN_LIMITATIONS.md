@@ -39,8 +39,12 @@
 
 ## 4. V1 Backlog（按优先级）
 
-1. **RAG 检索（Phase D）**：pgvector 向量检索接入 `retrieve` 节点，知识库素材参与生成。
-2. **多用户与认证授权**：登录、项目权限、运维端点鉴权（配合 I-03 安全模型扩展）。
+> 2026-08-23 更新：原第 1 项"RAG 检索深入"已随 Phase K（K-1～K-4）交付——
+> 上传参考资料自动入库（项目作用域）、知识库管理 API 与前端页、检索试算、
+> FakeEmbedder 确定性 E2E。**真实 embedding provider 一次冒烟**（
+> `scripts/embedding_smoke.py`）仍需真实 API Key，执行后在此记录。
+
+1. **多用户与认证授权**：登录、项目权限、运维端点鉴权（配合 I-03 安全模型扩展）。
 3. **多轮修订与人工介入工作流**：按轮人工选择修订集、对比采纳。
 4. **成本可视化**：按 Run / 按项目的 Token 报表 + 预算告警（复用 diagnostics 数据）。
 5. **分布式预算 / 幂等**：RunBudget 与 idempotency 下沉到 Redis/DB，支持多实例。
