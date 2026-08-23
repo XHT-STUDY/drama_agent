@@ -3730,3 +3730,35 @@ Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修�
 ### 下一步
 
 - K-3：前端知识库页（项目页入口：corpus 列表/删除/检索试算，复用 K-2 API）。
+
+
+## K-3 前端知识库页（2026-08-23）
+
+### 做了什么
+
+- `types/api.ts` 补 KnowledgeScope/KnowledgeDocumentItem/KnowledgeListResponse/KnowledgeSearchHit/KnowledgeSearchResponse；`api-client.ts` 新增 `knowledgeApi`（list/delete/search）。
+- `features/knowledge/KnowledgeManager.tsx`（纯叶子组件）：文档列表（scope 徽标、分类/来源/块数/向量化状态、项目自有可删 / 全局"平台维护"）、scope 三态过滤、软删除（删除中禁用）、检索试算框（Enter/按钮触发，命中含相似度/作用域/来源/摘要，trace 行显示 corpus 版本与耗时）；空态引导上传参考资料。
+- `app/projects/[id]/knowledge/page.tsx`：数据容器（react-query list/delete/search mutation + invalidation）。
+- AgentWorkspace 次级导航新增"知识库"入口。
+- 测试 `tests/knowledge-page.test.tsx` 4 例：列表与作用域徽标/全局不可删、scope 过滤重新请求、删除调用 DELETE、检索试算命中与 trace。
+
+### 为什么这么做
+
+- 检索试算是 K-2 最有价值的暴露面：用户上传资料后立刻能验证"它到底会不会被检索到、以什么相似度命中"，闭环 K-1 的信任问题。
+- 全局文档显示"平台维护"而非隐藏：作用域差异对用户可见，解释了为什么有的能删有的不能。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| cd frontend && pnpm vitest run tests/knowledge-page.test.tsx | 4 passed |
+| cd frontend && pnpm test | **185 passed**（181→185） |
+| cd frontend && pnpm typecheck / lint | tsc 通过 / No warnings |
+
+### 学到了什么
+
+1. getByText 在徽标签复用场景（作用域徽标 + 过滤按钮同文案）必然 strict 冲突——断言用 getAllByText 或带 count。
+
+### 下一步
+
+- K-4：E2E（上传参考资料→知识库页检索试算可见结果，FakeEmbedder 确定性）+ 真实 embedding 一次 smoke + KNOWN_LIMITATIONS 更新。

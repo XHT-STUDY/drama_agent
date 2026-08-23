@@ -700,3 +700,51 @@ export interface AgentTurnCreate {
   active_context?: ActiveArtifactContext | null;
   idempotency_key: string;
 }
+
+// ============================================================
+// 知识库（K-2/K-3）
+// ============================================================
+
+/** 知识文档作用域 */
+export type KnowledgeScope = "project" | "global";
+
+/** 知识文档列表项（GET /projects/{id}/knowledge） */
+export interface KnowledgeDocumentItem {
+  id: string;
+  scope: KnowledgeScope;
+  title: string;
+  category: string;
+  source: string;
+  chunk_count: number;
+  embedded_chunk_count: number;
+  fully_embedded: boolean;
+  corpus_version?: string | null;
+  created_at: string;
+  deleted: boolean;
+}
+
+export interface KnowledgeListResponse {
+  items: KnowledgeDocumentItem[];
+  total: number;
+}
+
+/** 检索试算命中 */
+export interface KnowledgeSearchHit {
+  chunk_id: string;
+  content: string;
+  score: number;
+  document_id: string;
+  document_title: string;
+  category: string;
+  source: string;
+  scope: KnowledgeScope;
+}
+
+/** 检索试算响应（含 trace 元数据） */
+export interface KnowledgeSearchResponse {
+  query: string;
+  corpus_version: string;
+  filters: Record<string, unknown>;
+  elapsed_ms: number;
+  hits: KnowledgeSearchHit[];
+}

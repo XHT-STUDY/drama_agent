@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added（Phase K 进行中）
+- **K-3**：前端知识库页——`/projects/{id}/knowledge`：文档列表（作用域徽标/块数/向量化状态/来源、scope 过滤）、项目自有文档软删除（全局语料标"平台维护"不可删）、检索试算框（命中含相似度/作用域/来源 + trace 元数据）；AgentWorkspace 次级导航新增知识库入口。
 - **K-2**：知识库管理 API——`GET /projects/{id}/knowledge`（自有 + 全局语料列表，含块数/向量化状态/作用域过滤）、`DELETE`（软删，0008 迁移 `deleted_at`；全局语料与其他项目文档不可删，幂等 404）、`POST .../knowledge/search`（检索试算，命中含 score/scope/来源 + trace 元数据）；检索自动排除已删除文档。
 - **K-1**：上传联动摄取——导入分类 `route=hold`（reference）的参考资料自动切块 + 向量化入 knowledge corpus；0007 迁移为 `knowledge_documents` 增加项目作用域 `project_id`（NULL = 全局语料）；检索按“项目自有 + 全局”过滤，项目间互不可见；`reference` 分类进入创作三阶段检索；幂等（同 upload 的 document_hash 命中跳过）；摄取失败降级为告警事件不阻断导入归档（先向量化后落库，无半截文档）。
 

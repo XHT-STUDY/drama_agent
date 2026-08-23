@@ -20,6 +20,8 @@ import type {
   CreateRevisionRequest,
   CreateRunRequest,
   ErrorResponse,
+  KnowledgeListResponse,
+  KnowledgeSearchResponse,
   MessageListResponse,
   PaginatedList,
   Project,
@@ -321,5 +323,40 @@ export const agentApi = {
   /** 拒绝 proposed Action（仅 proposed→rejected） */
   reject(actionId: string): Promise<AgentActionResponse> {
     return request(`/agent/actions/${actionId}/reject`, { method: "POST" });
+  },
+};
+
+// ============================================================
+// 知识库（K-3）
+// ============================================================
+
+export const knowledgeApi = {
+  /** 项目可见知识文档列表（自有 + 全局语料；scope 过滤） */
+  list(
+    projectId: string,
+    scope: "project" | "global" | "all" = "all",
+  ): Promise<KnowledgeListResponse> {
+    return request(
+      `/projects/${projectId}/knowledge?scope=${scope}`,
+    );
+  },
+
+  /** 软删除项目自有文档（全局语料不可删） */
+  delete(projectId: string, documentId: string): Promise<{ deleted: boolean }> {
+    return request(
+      `/projects/${projectId}/knowledge/${documentId}`,
+      { method: "DELETE" },
+    );
+  },
+
+  /** 检索试算（项目作用域：自有 + 全局语料） */
+  search(
+    projectId: string,
+    body: { query: string; top_k?: number; category?: string | null },
+  ): Promise<KnowledgeSearchResponse> {
+    return request(`/projects/${projectId}/knowledge/search`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 };

@@ -252,6 +252,7 @@ export function AgentWorkspace({ projectId, project }: Props) {
         <Link href={`/projects/${projectId}/scripts/1`} className="text-[var(--accent)] underline">剧本</Link>
         <Link href={`/projects/${projectId}/versions`} className="text-[var(--accent)] underline">修订与版本</Link>
         <Link href={`/projects/${projectId}/exports`} className="text-[var(--accent)] underline">导出中心</Link>
+        <Link href={`/projects/${projectId}/knowledge`} className="text-[var(--accent)] underline">知识库</Link>
       </nav>
     </div>
   );
