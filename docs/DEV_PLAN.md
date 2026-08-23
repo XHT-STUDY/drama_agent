@@ -2,7 +2,7 @@
 
 > 文档版本：v1.6
 > 编制日期：2026-08-16  
-> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强**全部完成**（J-01～J-12；M1～M4 里程碑达成）；Phase D（RAG）为 MVP 之外 backlog
+> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强**全部完成**（J-01～J-12；M1～M4 里程碑达成）；Phase D（RAG 骨架）已完成；下一阶段 Phase K（v0.2.0 发布 + RAG 深入）已规划待启动（§20.5）
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -3377,6 +3377,39 @@ FakeLLM 连续输出两次非法 StoryBible：
 - [ ] 修订前后差异可直观看懂；
 - [ ] 分数下降或连续性失败不会被展示为成功；
 - [ ] 导出文件能直接交付阅读。
+
+---
+
+## 20.5 Phase K 规划（v0.2.0 发布 + RAG 深入，2026-08-23 登记，待启动）
+
+> 状态：**规划待确认**——任务未开始。按仓库规则"一次只做一个任务"顺序执行。
+> 依据：Phase J 全部完成后，KNOWN_LIMITATIONS §4 V1 backlog 按优先级裁剪；
+> Phase D（RAG）D-01~D-05 已 DONE（检索链路/Embedder/pgvector 均在），
+> "RAG 深入"实际指释放既有能力到用户可操作的入口，而非从零建设。
+
+### K-0 v0.2.0 发布收尾（0.5d）
+
+Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋：
+
+- CHANGELOG Unreleased → [0.2.0]（Phase J 全部条目）；
+- backend/frontend 版本号 0.1.0-rc1 → 0.2.0；README 状态表（Phase J 完成）；TEST_REPORT 更新（1099 后端 / 181 前端 / E2E 35×5）；
+- git tag v0.2.0；
+- 交付物：发布提交 + tag。
+
+### Phase K：RAG 深入（合计 3.5d，K-0 后启动）
+
+| # | 任务 | 依赖 | 估算 | 要点 |
+|---:|---|---|---:|---|
+| K-1 | 上传联动摄取 | K-0 | 1d | import route=hold（reference）的参考资料自动切块+embedding 入 knowledge corpus（项目级 scope，复用 rag/loader+chunker）；幂等（同 upload 不重复摄取）；摄取失败不影响导入归档 |
+| K-2 | 知识库管理 API | K-1 | 0.75d | GET /projects/{id}/knowledge（列表/来源/状态）、DELETE（软删）、POST /projects/{id}/knowledge/search（检索试算，返回 chunk+score+trace）；API_CONTRACT 同步 |
+| K-3 | 前端知识库页 | K-2 | 1d | 项目页入口：corpus 列表（来源上传/类型/向量状态）、删除、检索试算框；复用既有 UI 模式 |
+| K-4 | E2E + 真实 embedding smoke + 文档 | K-3 | 0.75d | E2E：上传参考资料→检索试算可见结果（FakeEmbedder 确定性）；真实 embedding provider 一次 smoke（需 Key）；KNOWN_LIMITATIONS §4 更新（RAG 深入出列） |
+
+### Phase K 之后（按优先级，另行登记）
+
+1. **成本可视化（~2d）**：diagnostics 数据 → 按 Run/项目 Token 报表页 + 预算告警展示（复用 run.llm_stats/budget 事件）。
+2. **多用户与认证（~4d）**：JWT/API Key、项目归属、运维端点鉴权——公网部署前必须；会改全部 API 契约，放最后并配契约迁移说明。
+3. KNOWN_LIMITATIONS §4 其余项（多轮人工修订、导入增强、MCP 服务端等）按需。
 
 ---
 
