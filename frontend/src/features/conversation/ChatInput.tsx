@@ -1,12 +1,11 @@
 "use client";
 
-/** ChatInput — 创作输入组件 (H-03).
+/** ChatInput — 创作输入组件（legacy 模式，H-03 / J-11）。
  *
- * 提供文本输入区和"开始创作"按钮，
- * 触发 POST /projects/{id}/runs (action=create_script)。
- * 支持防重复提交、输入校验、API 错误展示。
- *
- * 文件上传区域预留（G-03 完成后接入）。
+ * 对话式 AgentComposer 上线后，本组件仅在
+ * NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED=false 的回滚模式使用；
+ * 首次创作能力（目标集数设置）已迁移到 AgentComposer。
+ * 两种模式共用后端 API 与 Artifact，不复制状态。
  */
 
 import { useState, type FormEvent } from "react";

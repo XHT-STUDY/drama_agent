@@ -45,9 +45,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </aside>
 
-          {/* 主内容区 */}
+          {/* 主内容区（Agent 工作台需要更宽画布，DESIGN §13.1） */}
           <main className="flex-1 overflow-auto">
-            <div className="mx-auto max-w-5xl px-6 py-8">
+            <div className="mx-auto max-w-7xl px-6 py-8">
               {children}
             </div>
           </main>

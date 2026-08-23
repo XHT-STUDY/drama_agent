@@ -3547,3 +3547,45 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 - 按 PLAN 的依赖顺序执行 Task 11 / J-11：对话式创作工作台 UI（会话面板 / 计划确认卡 / 结果与后续计划展示，消费本次交付的两个 Hook）。
+
+
+## J-11 对话式创作工作台 UI（2026-08-23）
+
+### 做了什么
+
+- 新增 `features/agent/` 六个组件：
+  - **AgentWorkspace**：双栏编排（桌面 7:5、1024-1279 8:4、平板以下右栏抽屉、移动端单栏 + sticky 底部 Composer）；会话选择/新建；待确认计划 = 最近 action_plan 消息或刚产出 Turn 的 action；计划 queued/running 且有 run_id 时内嵌 RunProgress（复用 useRunEvents）；右栏计划卡与消息流内嵌卡去重（右栏只兜底消息未刷新的场景）；
+  - **ConversationPanel**：会话列表选择 + 新会话按钮；
+  - **MessageList**：按 kind 渲染——text 左右气泡、clarification 警示卡（**无确认按钮**，回答靠 Composer）、action_result（goal_status 徽标 + 评分变化 + 剩余约束 + 证据链接到 versions 页）、action_plan（经插槽渲染 ActionPlanCard，后续计划同样展示但不会自动确认）、error；
+  - **AgentComposer**：ChatInput 首创能力迁移（目标集数设置——显式调整后附加"（目标 X 集）"提示随消息发送）；Enter 发送/Shift+Enter 换行；发送失败恢复草稿；focusSignal 支持澄清/stale 恢复入口聚焦；空会话 4 个命令示例；aria-live 状态播报；
+  - **ActionPlanCard**：目标/目标集/来源版本快照/约束/步骤/预计影响（含费用与新版本提示）；确认唯一主按钮（in-flight 禁用防重复）+ 拒绝次级；queued/running 进度提示；stale→重新描述需求、failed/needs_review→查看版本 + 重新发起规划；completed 展示 Outcome（结果徽标/评分变化/剩余约束/证据链接/后续建议）；
+  - **ArtifactContextPanel**：最新 Story Bible/大纲/各集最新剧本索引，点击设为 active context（下一轮 Turn 携带）+ 清除；每项链接到现有页面。
+- 设计令牌落地（globals.css）：surface/text/border/accent/success/warning/danger CSS variables、focus-visible、touch-target 44px、transition-state 150ms / transition-drawer 250ms、prefers-reduced-motion 降级；layout 主容器 max-w-5xl → max-w-7xl。
+- 回滚开关：项目页按 `NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED`（默认 true）切换 AgentWorkspace 或 legacy ChatInput+RunProgress；legacy 的页面级进度/空态块在工作台模式下不渲染（避免与工作台重复）；两种模式共用后端 API 与 Artifact，无状态复制。.env.example 补开关。
+- 测试 7 例：TDD anchor ambiguous_turn_renders_clarification_without_confirmation_button、空会话示例点击发送、计划卡确认 POST、结果消息渲染、Enter/Shift+Enter、失败草稿恢复+聚焦、flag=false 渲染 legacy 输入框（vi.stubEnv + resetModules 动态导入）。
+
+### 为什么这么做
+
+- 计划卡放消息流内嵌（而非只在右栏）：计划是消息流的一部分（紧跟产生它的对话），右栏只兜底"Turn 已产出但消息未刷新"的窗口期——否则同一计划渲染两份、确认按钮出现两个。
+- 澄清轮刻意不渲染任何确认按钮：待回答的信息缺口由 Composer 回填，出现按钮会诱导用户确认一个不完整的意图。
+- 集数设置只在用户显式调整后附加到消息：默认场景不污染用户原文，服务端 Planner/Settings 有自己的默认值。
+- 抽屉/单栏用 CSS（lg: 前缀 + fixed overlay）而非路由级拆分：两种视图共享同一组件树与 react-query 缓存，切换零数据迁移。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| cd frontend && pnpm vitest run tests/agent-workspace.test.tsx | 7 passed |
+| cd frontend && pnpm test | **181 passed**（174→181） |
+| cd frontend && pnpm typecheck | tsc --noEmit 通过 |
+| cd frontend && pnpm lint | No ESLint warnings or errors |
+
+### 学到了什么
+
+1. 测试 mock 的"数组返回 = [data, status] 元组"约定很容易踩：单对象响应被方括号包裹后 status 变 undefined → ok:false → 查询静默失败，表象是"数据从来没请求过"。路由 helper 应该用显式元组。
+2. 计划卡的"去重"是真实 UX 问题而不是测试问题：双栏设计里同一条计划天然有两个挂载点，必须明确唯一渲染位置 + 兜底窗口。
+3. vi.stubEnv + vi.resetModules + 动态 import 是测模块级 env flag 的最小组合；不 resetModules 会拿到首次 import 时固化的值。
+
+### 下一步
+
+- 最后一个任务 Task 12 / J-12：E2E、Agent 评测、文档与退出门禁（FakeLLM 契约/路由/Turn 幂等/并发确认/lease 接管/checkpoint 恢复/一次后续计划 CI 化，真实模型评测报告与回归门禁）。

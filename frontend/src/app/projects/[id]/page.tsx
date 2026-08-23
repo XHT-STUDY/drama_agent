@@ -19,8 +19,14 @@ import { Loading } from "@/components/Loading";
 import { StatusBadge } from "@/features/projects/StatusBadge";
 import { ChatInput } from "@/features/conversation/ChatInput";
 import { RunProgress } from "@/features/runs/RunProgress";
+import { AgentWorkspace } from "@/features/agent/AgentWorkspace";
 import { useRunEvents } from "@/hooks/use-run-events";
 import type { Run } from "@/types/api";
+
+/** 界面回滚开关（DESIGN §15）：默认 true；
+ *  false 时恢复 ChatInput + RunProgress 旧布局，两种模式共用后端 API 与 Artifact。 */
+const AGENT_WORKSPACE_ENABLED =
+  process.env.NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED !== "false";
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -128,18 +134,22 @@ export default function ProjectDetailPage() {
         </p>
       </div>
 
-      {/* 创作输入 */}
-      <div className="mb-6">
-        <ChatInput
-          projectId={projectId}
-          onRunCreated={handleRunCreated}
-          hasActiveRun={!!activeRunId && !runEvents.runStatus}
-          scriptCount={project.target_episode_count}
-        />
-      </div>
+      {/* 对话式工作台（默认）或旧版输入 + 进度（回滚开关） */}
+      {AGENT_WORKSPACE_ENABLED ? (
+        <AgentWorkspace projectId={projectId} project={project} />
+      ) : (
+        <div className="mb-6">
+          <ChatInput
+            projectId={projectId}
+            onRunCreated={handleRunCreated}
+            hasActiveRun={!!activeRunId && !runEvents.runStatus}
+            scriptCount={project.target_episode_count}
+          />
+        </div>
+      )}
 
-      {/* SSE 进度 */}
-      {activeRunId && (
+      {/* SSE 进度（legacy 模式；工作台内嵌自己的 RunProgress） */}
+      {!AGENT_WORKSPACE_ENABLED && activeRunId && (
         <div className="mb-6">
           <RunProgress
             runId={activeRunId}
@@ -184,8 +194,8 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {/* 无活跃 Run 时的展示 */}
-      {!activeRunId && (
+      {/* 无活跃 Run 时的展示（legacy 模式） */}
+      {!AGENT_WORKSPACE_ENABLED && !activeRunId && (
         <>
           {/* runs 数据加载中 → 显示轻量加载指示器（避免闪现空状态） */}
           {!runsReady && (
