@@ -44,6 +44,9 @@ def _hit(
         title=title,
         category=category,
         chunk_index=0,
+        document_id=uuid.uuid4(),
+        source="test",
+        project_id=None,
     )
 
 

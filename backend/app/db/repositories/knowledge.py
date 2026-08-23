@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import cast
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.knowledge_chunk import KnowledgeChunk
@@ -35,6 +36,9 @@ class KnowledgeSearchHit:
     title: str
     category: str
     chunk_index: int
+    document_id: uuid.UUID
+    source: str
+    project_id: uuid.UUID | None
 
 
 class KnowledgeRepository(BaseRepository):
@@ -76,6 +80,69 @@ class KnowledgeRepository(BaseRepository):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_documents_for_project(
+        self, project_id: uuid.UUID
+    ) -> list[tuple[KnowledgeDocument, int, int]]:
+        """列出项目可见的知识文档（项目自有 + 全局语料），排除已删除。
+
+        Returns:
+            (document, chunk_count, embedded_chunk_count) 元组列表，
+            项目自有在前、全局在后，各自按创建时间升序。
+        """
+        chunk_count = (
+            select(
+                KnowledgeChunk.document_id,
+                func.count().label("total"),
+                func.count(KnowledgeChunk.embedding).label("embedded"),
+            )
+            .group_by(KnowledgeChunk.document_id)
+            .subquery()
+        )
+        stmt = (
+            select(
+                KnowledgeDocument,
+                func.coalesce(chunk_count.c.total, 0),
+                func.coalesce(chunk_count.c.embedded, 0),
+            )
+            .outerjoin(chunk_count, chunk_count.c.document_id == KnowledgeDocument.id)
+            .where(
+                KnowledgeDocument.deleted_at.is_(None),
+                or_(
+                    KnowledgeDocument.project_id == project_id,
+                    KnowledgeDocument.project_id.is_(None),
+                ),
+            )
+            .order_by(
+                KnowledgeDocument.project_id.desc(),  # 项目自有（非 NULL）在前
+                KnowledgeDocument.created_at,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return [
+            (cast(KnowledgeDocument, row[0]), int(row[1]), int(row[2]))
+            for row in result.all()
+        ]
+
+    async def soft_delete_document(
+        self, document_id: uuid.UUID, project_id: uuid.UUID
+    ) -> KnowledgeDocument | None:
+        """软删除项目自有文档（全局语料返回 None——不可经项目端点删除）。
+
+        幂等：已删除的文档再次删除返回 None（视作不存在）。
+        """
+        doc = await self.session.get(KnowledgeDocument, document_id)
+        if (
+            doc is None
+            or doc.deleted_at is not None
+            or doc.project_id != project_id
+        ):
+            return None
+        from datetime import UTC, datetime
+
+        doc.deleted_at = datetime.now(UTC)
+        await self.session.flush()
+        return doc
 
     async def count_documents(self, corpus_version: str | None = None) -> int:
         """统计文档数（可按语料版本过滤）。"""
@@ -268,6 +335,9 @@ class KnowledgeRepository(BaseRepository):
                 KnowledgeChunk.chunk_index,
                 KnowledgeDocument.title,
                 KnowledgeDocument.category,
+                KnowledgeDocument.id,
+                KnowledgeDocument.source,
+                KnowledgeDocument.project_id,
                 score_expr,
             )
             .join(
@@ -285,6 +355,8 @@ class KnowledgeRepository(BaseRepository):
                     KnowledgeDocument.project_id.is_(None),
                 )
             )
+        # 软删除文档不参与检索（K-2）
+        stmt = stmt.where(KnowledgeDocument.deleted_at.is_(None))
         if category:
             stmt = stmt.where(KnowledgeDocument.category == category)
         if genre:
@@ -305,7 +377,10 @@ class KnowledgeRepository(BaseRepository):
                 chunk_index=row[2],
                 title=row[3],
                 category=row[4],
-                score=float(row[5]),
+                document_id=row[5],
+                source=row[6],
+                project_id=row[7],
+                score=float(row[8]),
             )
             for row in result.all()
         ]

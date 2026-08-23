@@ -3696,3 +3696,37 @@ Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修�
 ### 下一步
 
 - K-2：知识库管理 API（GET /projects/{id}/knowledge 列表、DELETE 软删、POST search 检索试算）。
+
+
+## K-2 知识库管理 API（2026-08-23）
+
+### 做了什么
+
+- **0008 迁移**：`knowledge_documents.deleted_at`（timestamptz 软删标记 + 索引）。
+- **Repository**：`list_documents_for_project`（自有 + 全局、块数/已向量化块数聚合、排除已删、项目自有在前）；`soft_delete_document`（作用域守卫：非本项目/全局/已删 → None）；`search_similar` 排除已删除文档；`KnowledgeSearchHit` 补 document_id/source/project_id 供 API 展示。
+- **API（`api/v1/knowledge.py`）**：GET 列表（scope=project|global|all 过滤、fully_embedded 状态）、DELETE 软删（幂等；`KNOWLEDGE_DOC_NOT_FOUND` 404）、POST 检索试算（embed → 项目作用域检索 → 命中含 chunk 摘要/score/scope/来源 + trace 元数据；min_score 试算默认 -1 不设阈值）。
+- 测试：`tests/integration/api/test_knowledge_api.py` 4 例（列表与作用域、软删守卫与幂等、检索命中与 trace、项目 404）。
+
+### 为什么这么做
+
+- 软删而非物理删：知识文档是检索语料的事实源，误删可恢复；检索/列表统一 `deleted_at IS NULL` 过滤，与 projects/conversations 的软删约定一致。
+- 全局语料不可经项目端点删除（404 语义）：全局语料属于全部项目，项目级删除权限会破坏其他项目——治理留给 CLI/运维。
+- 检索试算不落 RetrievalTrace Artifact：试算是管理面操作，落 Artifact 会污染创作产物链（trace 元数据直接放响应）。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/integration/api/test_knowledge_api.py | 4 passed |
+| uv run pytest --disable-warnings | **1107 passed / 8 deselected**（1103→1107） |
+| uv run ruff check / mypy | All checks passed / 0 errors（326 files） |
+| uv run alembic upgrade head | 0008 应用成功 |
+
+### 学到了什么
+
+1. Mapped[datetime | None] 不带显式 DateTime(timezone=True) 时 SQLAlchemy 推断为无时区类型——写入 aware datetime 在 asyncpg 直接类型错误；时间戳列永远显式声明 timezone=True（本次模型与迁移都补了）。
+2. 给 dataclass（KnowledgeSearchHit）加字段会破坏所有位置构造的调用方——测试 helper 的关键字构造一次补齐即可，mypy 帮忙找全。
+
+### 下一步
+
+- K-3：前端知识库页（项目页入口：corpus 列表/删除/检索试算，复用 K-2 API）。

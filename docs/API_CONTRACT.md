@@ -230,6 +230,16 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 | GET | `/projects/{id}/revisions` | 列出项目修订计划 |
 | GET | `/projects/{id}/revisions/{plan_id}` | 计划详情 + 解析结果链 |
 
+### 知识库（K-2）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/projects/{id}/knowledge?scope=project\|global\|all` | 项目可见知识文档列表（自有 + 全局语料；含块数、向量化状态、来源与作用域） |
+| DELETE | `/projects/{id}/knowledge/{document_id}` | 软删除项目自有文档（幂等；全局语料与其他项目文档 → 404 `KNOWLEDGE_DOC_NOT_FOUND`） |
+| POST | `/projects/{id}/knowledge/search` | 检索试算：`{query, top_k?, category?, min_score?}` → 命中（chunk 摘要/score/scope/来源）+ trace（corpus_version/filters/elapsed_ms），不落 Artifact |
+
+检索作用域与创作链路一致：项目自有文档 + 全局语料，其他项目互不可见（K-1）。
+
 ### 上传（G-03）
 
 | 方法 | 路径 | 说明 |
