@@ -1,6 +1,6 @@
 # DramaAgent API 契约文档
 
-> 版本：v0.1.0-rc1  
+> 版本：v0.2.0  
 > 最后更新：2026-08-22（J-04：Agent Turn/Action 五端点 + Agent 错误码；此前 2026-08-16 Phase I 发布候选）
 
 ## 概述

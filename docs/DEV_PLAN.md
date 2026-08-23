@@ -2,7 +2,7 @@
 
 > 文档版本：v1.6
 > 编制日期：2026-08-16  
-> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强**全部完成**（J-01～J-12；M1～M4 里程碑达成）；Phase D（RAG 骨架）已完成；下一阶段 Phase K（v0.2.0 发布 + RAG 深入）已规划待启动（§20.5）
+> 项目阶段：MVP — Phase A~I 全部完成，发布候选 **v0.1.0-rc1**；Phase J Agent 化增强**全部完成**（J-01～J-12；M1～M4 里程碑达成）；Phase D（RAG 骨架）已完成；v0.2.0 已定版（K-0 DONE）；Phase K 剩余 K-1～K-4（RAG 深入）待启动（§20.5）
 > 依据文档：《DramaAgent 项目开发计划》  
 > 适用对象：产品负责人、后端/前端开发者、测试人员、AI Coding Agent
 
@@ -3387,14 +3387,18 @@ FakeLLM 连续输出两次非法 StoryBible：
 > Phase D（RAG）D-01~D-05 已 DONE（检索链路/Embedder/pgvector 均在），
 > "RAG 深入"实际指释放既有能力到用户可操作的入口，而非从零建设。
 
-### K-0 v0.2.0 发布收尾（0.5d）
+### K-0 v0.2.0 发布收尾（0.5d）——✅ DONE（2026-08-23）
 
 Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋：
 
 - CHANGELOG Unreleased → [0.2.0]（Phase J 全部条目）；
 - backend/frontend 版本号 0.1.0-rc1 → 0.2.0；README 状态表（Phase J 完成）；TEST_REPORT 更新（1099 后端 / 181 前端 / E2E 35×5）；
 - git tag v0.2.0；
-- 交付物：发布提交 + tag。
+- 交付物：发布提交 + tag。已交付：CHANGELOG [0.2.0]（含 J-12 顺带修复的 Fixed 节）、
+  backend/pyproject + frontend/package.json + 前端侧栏版本号 → 0.2.0、
+  README（Phase J 状态行 + 能力总览 + 最新验证）、TEST_REPORT v0.2.0
+  （1099/181/35×5；覆盖率实测总体 85% ≥75%、核心 92% ≥85%）、
+  API_CONTRACT/KNOWN_LIMITATIONS 版本头、git tag v0.2.0。
 
 ### Phase K：RAG 深入（合计 3.5d，K-0 后启动）
 

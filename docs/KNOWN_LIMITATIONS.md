@@ -1,4 +1,4 @@
-# DramaAgent 已知限制与 V1 Backlog（MVP v0.1.0-rc1）
+# DramaAgent 已知限制与 V1 Backlog（v0.2.0）
 
 > 本文档记录 MVP 明确接受的限制与 V1 backlog 候选。每项标注「MVP 接受」或「backlog」，
 > 便于发布说明与后续排期。权威安全模型见 [SECURITY.md](SECURITY.md)，扩展边界见 [EXTENSIONS.md](EXTENSIONS.md)。

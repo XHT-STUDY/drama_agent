@@ -41,7 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               ))}
             </nav>
             <div className="border-t border-gray-100 px-4 py-3">
-              <p className="text-xs text-gray-400">DramaAgent v0.1.0</p>
+              <p className="text-xs text-gray-400">DramaAgent v0.2.0</p>
             </div>
           </aside>
 

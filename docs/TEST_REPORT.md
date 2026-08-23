@@ -1,7 +1,8 @@
-# DramaAgent 测试报告（Phase I 发布候选，v0.1.0-rc1）
+# DramaAgent 测试报告（v0.2.0）
 
-> 本报告对应 I-05「性能、覆盖率与全量回归」，并汇总 Phase I 收尾时的全部验证结果。
-> 权威任务状态见 [DEV_PLAN.md](DEV_PLAN.md) §13；本报告给出可复现的数字与复现命令。
+> 汇总 Phase J（对话式创作 Agent，J-01～J-12）完成时的全部验证结果；
+> v0.1.0-rc1（Phase I）的历史数字见 [CHANGELOG.md](CHANGELOG.md)。
+> 权威任务状态见 [DEV_PLAN.md](DEV_PLAN.md)；本报告给出可复现的数字与复现命令。
 
 ## 1. 测试范围与运行方式
 
@@ -13,31 +14,36 @@
 | 工作流测试 | `tests/workflow` | 默认 `pytest` |
 | 安全回归 | `tests/security` | 默认 `pytest` |
 | 性能测试 | `tests/performance` | `make perf`（默认被 `-m not performance` 排除） |
+| Agent 契约评测 | `tests/evals` | 默认 `pytest`（FakeLLM / 确定性规则） |
+| 真实模型评测 | `eval_real` 标记 | `pytest -m eval_real`（需 `EVAL_LLM_ENABLED=1` + 真实 Key，默认排除） |
 | 手工冒烟 | `smoke` 标记 | 不进入 CI，手工触发真实模型 |
-| E2E（Playwright） | `e2e/dramaagent.spec.ts` | `make e2e REPEAT=N` |
+| E2E（Playwright） | `e2e/dramaagent.spec.ts` + `e2e/agent-workspace.spec.ts` | `make e2e REPEAT=N` |
 
-所有自动化测试使用 **FakeLLM**，无真实 LLM 调用；真实模型仅用于 `smoke` 标记的手工验证。
+所有自动化测试使用 **FakeLLM / FakeEmbedder**，无真实 LLM 调用；真实模型仅用于 `smoke` / `eval_real` 标记的手工验证。
 
 ## 2. 测试计数
 
 | 项目 | 结果 | 备注 |
 | --- | --- | --- |
-| 后端全量 `pytest`（排除 performance / smoke） | **974 passed / 0 failed**（6 deselected） | I-05 新增 6 个 performance 测试默认跳过 |
-| 性能套件 `make perf` | **6 passed / 0 failed** | API 延迟 3 + 并发 SSE 2 + 1000 Artifact 1 |
-| E2E `make e2e REPEAT=5` | **5/5 passed**（14.9s） | FakeLLM + 低分场景，隔离 postgres/redis |
-| 前端 Vitest | 全部通过 | 含 I-03 转义回归 |
+| 后端全量 `pytest`（排除 performance / eval_real） | **1099 passed / 0 failed**（8 deselected） | deselected = performance ×6 + eval_real ×2（需真实 Key） |
+| Agent 契约评测（`tests/evals`，含于全量） | preflight 澄清召回 **100%**（12 条确定性用例，零模型调用）；Outcome 确定性规则 **100%**（26 条） | 数据集：命令 55 条 / Outcome 32 条 |
+| 性能套件 `make perf` | **6 passed / 0 failed**（v0.1.0-rc1 实测） | API 延迟 3 + 并发 SSE 2 + 1000 Artifact 1 |
+| E2E `make e2e REPEAT=5` | **35/35 passed**（7 用例 × 5 轮，1.7m） | agent workspace ×6 + H-07 全链路 ×1；`FAKE_LLM_SCENARIO=agent_e2e` |
+| 前端 Vitest | **181 passed** | 含 agent hooks/workspace 组件测试（J-10/J-11） |
 
 ## 3. 覆盖率门禁（双门禁）
 
 > 复用同一份 `.coverage` 数据：`make cov` 先跑 `pytest --cov`（强制总体门禁），
 > 再 `coverage report --include=...`（强制核心门禁）。
 
-| 门禁 | 阈值 | 实测 | 结果 |
+| 门禁 | 阈值 | 实测（2026-08-23，`make cov`） | 结果 |
 | --- | --- | --- | --- |
-| 总体覆盖率 | ≥ 75%（pyproject `fail_under=75`） | **88%** | ✅ |
+| 总体覆盖率 | ≥ 75%（pyproject `fail_under=75`） | **85%** | ✅ |
 | 核心覆盖率（domain / workflows / artifacts） | ≥ 85%（CI + `make cov`） | **92%** | ✅ |
 
-复现：`make cov`（含全部测试 + 双门禁）。
+复现：`make cov`（含全部测试 + 双门禁）。总体覆盖较 rc1 的 88% 下降 3 个百分点：
+Phase J 新增约 100 个测试的同时新增了等量生产代码（Agent 服务/工作流/评测 harness），
+核心模块覆盖率保持 92% 不变。
 
 ## 4. 性能指标（§1.6 非功能指标）
 
@@ -80,6 +86,9 @@
 ## 7. 已知失败与限制
 
 - 无存量失败；2 个历史 TestStructuredLogging 失败已在 I-02 修复。
+- **真实模型评测未执行**（`pytest -m eval_real`）：环境无真实 API Key；
+  harness/数据集就绪，执行方式与报告模板见 [AGENT_EVAL_REPORT.md](AGENT_EVAL_REPORT.md)
+  （DESIGN §2 成功标准中的生产模型准确率指标待此闭环）。
 - 性能测试需 `make up`（真实 DB/Redis），不进入普通 CI（默认排除 performance 标记）。
 - SSE 测试在客户端断开风暴时会产生 asyncio 连接级日志噪声（uvicorn 记录
   `protocol.data_received() call failed`），属预期行为，不影响结果与连接释放断言。

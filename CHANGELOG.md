@@ -4,7 +4,15 @@
 
 ## [Unreleased]
 
-### Added（Phase J 对话式创作 Agent，进行中：J-01～J-05 / 12 完成，M1、M2 里程碑达成）
+### 计划中
+- Phase K：RAG 深入（上传联动摄取、知识库管理 API/前端，见 [DEV_PLAN §20.5](docs/DEV_PLAN.md)）；
+- 成本可视化、多用户认证（见 [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) §4）。
+
+## [0.2.0] - 2026-08-23
+
+对话式创作 Agent（Phase J）：12/12 任务完成，M1～M4 里程碑达成。质量门禁：后端 1099 passed、前端 181 passed、E2E 7 用例 × 5 轮全绿、mypy/Ruff 零错误。真实模型评测（`pytest -m eval_real`）需 API Key，尚未执行（见 [AGENT_EVAL_REPORT.md](docs/AGENT_EVAL_REPORT.md)）。
+
+### Added（Phase J 对话式创作 Agent）
 
 - **J-01**：AgentTurn / AgentAction / Message 持久化契约——严格 Schema（`extra="forbid"`）、Turn 幂等收据 + planning lease、Action/Message 状态机与并发约束（0005 迁移）。
 - **J-05**：持久化 WorkflowDispatcher 与 checkpoint 恢复——数据库租约领取（0006 迁移）、PostgreSQL checkpoint saver、Run 幂等（`(project_id, action, idempotency_key)` 唯一 + `request_hash` 冲突检测）、进程内幂等字典移除。
@@ -19,9 +27,11 @@
 - **J-11**：对话式创作工作台 UI——双栏布局（会话/消息/Composer/内嵌 RunProgress + 产物索引/active context/计划卡），平板抽屉、移动端单栏与底部 Composer；ActionPlanCard 确认唯一主按钮 + stale/needs_review/failed 恢复入口；结果消息展示 goal_status/评分变化/剩余约束/证据链接；设计令牌与可访问性（aria-live、44px 触控、reduced motion、可见焦点）；`NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED` 回滚开关（false 恢复旧布局，两模式共用 API 与 Artifact）。
 - **J-12**：E2E、Agent 评测与退出门禁——`e2e/agent-workspace.spec.ts`（首次创作计划→确认→完成+刷新恢复、澄清无 Run、重复发送不重复消息、第 3 集修订→版本 Diff、大纲修订→部分达成→一次后续计划→再确认、重复确认单 Run）；`FAKE_LLM_SCENARIO=agent_e2e` 内容感知 planner 桩（注入边界提取用户原文，五意图+explain 路由）；`tests/evals/` 命令评测集 55 条 + Outcome 评测集 32 条与双模式 harness（CI 确定性契约 100%，`eval_real` marker 真实模型评测落盘不写模拟数字）；RunResponse 暴露 `agent_action_id`；`docs/AGENT_EVAL_REPORT.md` 与 TEST_PLAN §11。
 
-### 计划中
-- RAG 检索（Phase D）深入、多用户认证、分布式预算（见 [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) §4）。
-- Phase J 后续：J-06 对话式剧本修订 → J-12（M3 修订链路、M4 工作台与评测）。
+### Fixed（J-12 顺带修复）
+
+- 评估 Artifact 行集数错位（自 Phase E 潜伏的存量缺陷）：`evaluate_script` 改为以剧本 Artifact 行集数为权威（outline 查找 / 报告生成 / 落库 / 内容回填），此前 FakeLLM 场景下三集评估全部落入 episode=1 桶导致集数错位。
+- 前端并发发送守卫：`useAgentConversation.sendTurn` 增加 in-flight ref，双击 / 双 Enter 不再产生并发提交。
+- E2E 编排：e2e.sh 以 setsid 进程组启停前端，修复 next-server 孤儿进程占用端口导致后续运行 EADDRINUSE 连环失败。
 
 ## [0.1.0-rc1] - 2026-08-16
 

@@ -3631,3 +3631,30 @@ E 阶段是"契约层已就绪、逻辑层空白"。Rubric 是评估的权威标
 ### 下一步
 
 Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修订闭环、M4 工作台/评测/门禁。剩余 backlog：真实模型评测执行（需要 API Key）、KNOWN_LIMITATIONS 中的 Phase D RAG 等。
+
+
+## K-0 v0.2.0 发布收尾（2026-08-23）
+
+### 做了什么
+
+- CHANGELOG：Unreleased（Phase J 全部条目）→ **[0.2.0] - 2026-08-23**；新增 Fixed 节记录 J-12 顺带修复（评估行集数错位存量缺陷 / 前端并发发送守卫 / e2e.sh 进程组清理）；Unreleased 仅保留 Phase K 与后续 backlog。
+- 版本号：backend/pyproject.toml、frontend/package.json、前端侧栏文案、API_CONTRACT 头、KNOWN_LIMITATIONS 标题 → 0.2.0。
+- README：状态表加 J 行（Phase J DONE）并修正 D 行（RAG 骨架已完成，非"未开始"）；最新验证更新为 2026-08-23 数字；能力总览补"对话式创作 Agent（J）"与 RAG 实况。
+- TEST_REPORT 定版 v0.2.0：后端 1099/8 deselected、Agent 契约评测（preflight 召回 100% / Outcome 规则 100%）、E2E 35/35（7×5）、前端 181；覆盖率重跑实测——总体 85%（较 rc1 的 88% 降 3pp，Phase J 新增生产代码摊薄，核心保持 92%）并如实记录原因；已知限制补"真实模型评测未执行"。
+- git tag v0.2.0。
+
+### 为什么这么做
+
+- 定版是最便宜的"落袋"：12 个任务的成果在版本边界上可引用、可回滚、可对比。
+- 覆盖率数字必须重测而不是沿用 rc1：总体 85% 虽降仍过门禁，降因（新增代码摊薄）写进报告，避免下次有人发现数字对不上。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| make cov | 1099 passed / 8 deselected；总体 85% ≥75% ✅、核心 92% ≥85% ✅ |
+| cd frontend && pnpm test | 181 passed |
+
+### 下一步
+
+- K-1：上传联动摄取（import route=hold 的参考资料入 knowledge corpus）。
