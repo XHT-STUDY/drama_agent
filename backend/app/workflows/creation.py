@@ -120,6 +120,10 @@ def _should_route_after_eval(state: CreationState) -> Literal["select_revision",
     - 失败 → __end__
     - 全部通过 → finalize（Run 完成）
     """
+    if state.get("stage_gate") == "scripts":
+        # L-4 剧本分批门：本批完成，停下等用户（继续下一批 / 聊天修改）
+        logger.info("剧本分批门：本批完成，暂停等待确认")
+        return "__end__"
     if state.get("needs_revision_decision"):
         logger.info("存在需修订的集，进入自动修订分支")
         return "select_revision"

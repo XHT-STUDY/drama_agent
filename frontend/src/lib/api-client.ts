@@ -200,9 +200,12 @@ export const runsApi = {
     return request(`/runs/${runId}/cancel`, { method: "POST" });
   },
 
-  /** 确认门续跑（L-3）：分段创作停在 stage_gate 后继续执行 */
-  continueRun(runId: string): Promise<Run> {
-    return request(`/runs/${runId}/continue`, { method: "POST" });
+  /** 确认门续跑（L-3/L-4）：batch_size 进入批模式（本批集数），缺省写剩余全部 */
+  continueRun(runId: string, body?: { batch_size?: number }): Promise<Run> {
+    return request(`/runs/${runId}/continue`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    });
   },
 };
 

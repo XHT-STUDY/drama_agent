@@ -467,10 +467,15 @@ describe("ActionPlanCard 确认门继续按钮（L-3）", () => {
   it("分段门 needs_review 显示继续按钮并 POST continue", async () => {
     const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
     route("GET", /\/agent\/actions\/a1$/, () => actionFixture({ status: "needs_review" }));
+    route("GET", /\/runs\/run-1$/, () => ({
+      run_id: "run-1", project_id: "p1", action: "create_script",
+      status: "needs_review", stage_gate: "outline",
+      created_at: NOW, updated_at: NOW,
+    }));
     let continued = 0;
     route("POST", /\/runs\/run-1\/continue$/, () => {
       continued += 1;
-      return { run_id: "run-1", project_id: "p1", action: "create_script", status: "queued", agent_action_id: null, created_at: NOW, updated_at: NOW };
+      return { run_id: "run-1", project_id: "p1", action: "create_script", status: "queued", agent_action_id: null, stage_gate: null, created_at: NOW, updated_at: NOW };
     });
 
     render(
@@ -481,9 +486,12 @@ describe("ActionPlanCard 确认门继续按钮（L-3）", () => {
       ),
     );
 
-    const btn = await screen.findByTestId("continue-creation");
+    // L-4 起按钮组替代单按钮：大纲门提供 先写第1集/前5集/写全部
+    const btn = await screen.findByTestId("continue-all");
     expect(btn).toBeTruthy();
-    expect(screen.getByText(/确认后继续创作剧本/)).toBeTruthy();
+    expect(screen.getByTestId("continue-batch-1")).toBeTruthy();
+    expect(screen.getByTestId("continue-batch-5")).toBeTruthy();
+    
 
     fireEvent.click(btn);
     await waitFor(() => expect(continued).toBe(1));
@@ -504,5 +512,56 @@ describe("ActionPlanCard 确认门继续按钮（L-3）", () => {
     );
     await waitFor(() => expect(screen.getByText("创建剧本")).toBeTruthy());
     expect(screen.queryByTestId("continue-creation")).toBeNull();
+  });
+});
+
+
+describe("ActionPlanCard 剧本分批门（L-4）", () => {
+  it("scripts 门显示三个批次按钮并按选择 POST batch_size", async () => {
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const base = actionFixture();
+    const fixture: AgentActionResponse = {
+      ...base,
+      status: "needs_review",
+      run_id: "run-1",
+      plan: {
+        ...base.plan,
+        command: {
+          intent: "create_script", user_input: "x",
+          outline_count: 10, script_count: 2, stop_after: "scripts",
+        } as unknown as AgentActionResponse["plan"]["command"],
+      },
+    };
+    route("GET", /\/agent\/actions\/a1$/, () => fixture);
+    route("GET", /\/runs\/run-1$/, () => ({
+      run_id: "run-1", project_id: "p1", action: "create_script",
+      status: "needs_review", stage_gate: "scripts",
+      created_at: NOW, updated_at: NOW,
+    }));
+    const bodies: Array<Record<string, unknown>> = [];
+    route("POST", /\/runs\/run-1\/continue$/, (body) => {
+      bodies.push(body);
+      return {
+        run_id: "run-1", project_id: "p1", action: "create_script",
+        status: "queued", stage_gate: null, created_at: NOW, updated_at: NOW,
+      };
+    });
+
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }) },
+        React.createElement(ActionPlanCard, { actionId: "a1", projectId: "p1" }),
+      ),
+    );
+
+    await waitFor(() => expect(screen.getByTestId("continue-batch-1")).toBeTruthy());
+    expect(screen.getByTestId("continue-batch-5")).toBeTruthy();
+    expect(screen.getByTestId("continue-all")).toBeTruthy();
+
+    console.log('L4 DEBUG calls:', JSON.stringify(calls.filter(c => c.url.includes("runs"))));
+    fireEvent.click(screen.getByTestId("continue-batch-5"));
+    await waitFor(() => expect(bodies.length).toBe(1));
+    expect(bodies[0].batch_size).toBe(5);
   });
 });

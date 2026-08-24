@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added（Phase L 进行中）
+- **L-4**：剧本分批生成——continue 请求支持 `batch_size`（1 集 / 5 集 / 剩余全部）；批模式本批写完并评估后停在 `scripts` 门（事件含已写/目标集数），可逐批推进或先聊天改稿；`RunResponse` 暴露 `stage_gate`；计划卡按门类型显示批次按钮组（大纲门同样提供"先写第 1 集 / 前 5 集 / 写全部"起批方式）；write_episodes 复用已有集跳过续写、Artifact 幂等不重算。
 - **L-3**：确认门续跑——`POST /runs/{id}/continue`（仅 stage_gate=outline 可续；剥离门字段；大纲刷新为最新 valid 版本，暂停期间聊天改版生效；从 checkpoint 恢复不重算）；前端分段门 needs_review 计划卡显示「继续创作剧本」主按钮。
 - **L-2**：分段创作确认门——Turn 请求 `staged=true` 时创作计划带 `stop_after=outline`，Run 在 StoryBible 与大纲就绪后转 `needs_review`（事件携带 `stage_gate` 与 Artifact ID），不写剧本；创作图 outline 节点后新增条件边；前端 Composer「创作设置」新增分阶段开关。
 - **L-1**：目标集数端到端生效——Turn 请求新增结构化 `target_episode_count`（1-50），create_script 计划的大纲与剧本集数按用户选择生成，替代此前「文本提示被系统默认覆盖」的行为；集数参与幂等 request_hash；前端 Composer「创作设置」改为结构化传递，仅显式调整时携带。

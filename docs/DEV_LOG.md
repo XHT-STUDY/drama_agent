@@ -3879,3 +3879,40 @@ Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修�
 ### 下一步
 
 - L-4：剧本分批生成——计划卡/续跑时提供 1 集 / 5 集 / 剩余全部选项（write_episodes 从已有集数续写）。
+
+
+## L-4 剧本分批生成（2026-08-24）——Phase L 完成
+
+### 做了什么
+
+- **批门机制（复用 L-2/L-3 门骨架）**：State 新增 `target_episode_count`（dispatcher 从 options 注入）；evaluate_episodes 节点在 `stop_after=scripts` 且已写 < 目标时置 `stage_gate=scripts`；creation 图 eval 后路由最优先判断批门 → END（低分自动修订决策留给用户聊天触发，批模式不自动改稿）；dispatcher 后处理泛化为 outline|scripts 双门（payload 携带 written/target）。
+- **continue 端点**：请求体 `{batch_size?: 1-50}`——提供时 `options.script_count = 已有集数 + batch`（封顶 outline_count）并保留 `stop_after=scripts`；缺省写剩余全部（非批模式）。scripts 门同样可续（活跃/非门 Run 守卫不变）。
+- **RunResponse.stage_gate**：从 state_summary 提取，前端不再依赖 plan.command 推断门类型。
+- **前端**：ActionPlanCard 在 needs_review 时查 Run（`runsApi.get`）取 stage_gate——outline 门显示"先写第 1 集 / 前 5 集 / 写全部"三键起批；scripts 门显示"下一集 / 下 5 集 / 写完剩余全部"；`continueRun` 携带 batch_size。
+- 续写复用 write_episodes 既有逻辑（existing 跳过 + start..end 区间）+ Artifact input_hash 幂等——不重算已有集。
+- 测试：API 3 例（batch 终点计算与门保留、封顶、缺省全写）+ workflow 批门 1 例（写 2/10 集后停 scripts 门、评估已跑）+ 前端 1 例（按钮组渲染与 batch POST）。
+
+### 为什么这么做
+
+- 批模式复用门骨架而非新 Run 类型：门 = needs_review + stage_gate 的既有语义，checkpoint/E2E/前端继续按钮全部自然继承；"一集一集生成并确认"正是 outline 门的多次循环。
+- 批门停在评估之后、自动修订之前：批模式用户想先看本批评估再决定（聊天 revise_script），自动修订每批跑会篡改用户刚确认的稿。
+- 批终点封顶 target：batch 超剩余时写满即止，最后一批自动等价"写完全部"（stop_after 仍在但 eval 节点判断 written==target 不置门）。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/integration/api/test_run_continue.py | 6 passed（新增 3） |
+| uv run pytest tests/integration/workflow/test_staged_creation.py | 4 passed（新增批门） |
+| uv run pytest --disable-warnings | **1122 passed / 8 deselected**（1118→1122） |
+| cd frontend && pnpm test | **192 passed**（191→192） |
+| Ruff / mypy / ESLint / tsc | 全部通过（328 files） |
+
+### 学到了什么
+
+1. 模块级与 describe 内同名 fixture（actionFixture）作用域陷阱：L-4 复用了模块级版本而它 run_id=null——run 查询 enabled 永假、按钮永不出现；两个 fixture 该合并成一个。
+2. useQuery 的 enabled 依赖数据加载完成后的字段——调试"查询没发"时先打印 fetch 调用列表再查 enabled 链。
+
+### 下一步
+
+Phase L（分阶段创作与集数自由）全部完成。用户完整旅程：选集数 + 分阶段开关 → SB/大纲门确认（可聊天改大纲，续跑采用最新版）→ 剧本按 1/5/全部分批生成，每批带评估暂停可改稿。候选后续：成本可视化 / 多用户认证（§20.5）。

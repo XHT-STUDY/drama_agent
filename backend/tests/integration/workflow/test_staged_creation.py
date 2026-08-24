@@ -195,3 +195,57 @@ async def test_continue_after_gate_writes_scripts_without_recompute(
     assert summary["outline_set_artifact_id"] == outline_before
     # 剧本已写出
     assert summary.get("script_artifact_ids")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_batch_mode_stops_at_scripts_gate(
+    test_project: uuid.UUID,
+    workflow_config: RunnableConfig,
+    test_engine: Any,
+) -> None:
+    """L-4 批模式：stop_after=scripts → 本批写完+评估后停 scripts 门（不写满目标）。"""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select, update
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    import app.db.session as db_session
+    from app.application.workflow_dispatcher import _execute_workflow
+    from app.db.models.workflow_run import WorkflowRun
+
+    factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+    db_session._async_session_factory = factory
+
+    db = workflow_config["configurable"]["db"]
+    run_svc = workflow_config["configurable"]["run_service"]
+    run = await run_svc.create_run(
+        db=db, project_id=test_project, action="create_script",
+        config={"options": {
+            "user_input": (
+                "被青训队抛弃的足球少年林峰凭借战术视野天赋，"
+                "从底层联赛逆袭至职业巅峰，要求强爽点与每集结尾钩子。"
+            ),
+            "outline_count": 10, "script_count": 2,
+            "stop_after": "scripts",  # 批模式：本批只写 2 集
+        }},
+    )
+    await db.execute(update(WorkflowRun).where(WorkflowRun.id == run.id).values(
+        status="running", lease_owner="b1",
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=5), attempt_count=1))
+    await db.commit()
+    await _execute_workflow(run.id, "create_script", {}, "b1")
+
+    fresh = await factory().__aenter__()
+    final = (await fresh.execute(
+        select(WorkflowRun).where(WorkflowRun.id == run.id)
+    )).scalar_one()
+    await fresh.__aexit__(None, None, None)
+
+    summary = final.state_summary or {}
+    # 停在 scripts 门：写了 2 集（< 目标 10），未写满
+    assert final.status == "needs_review"
+    assert summary.get("stage_gate") == "scripts"
+    assert len(summary.get("script_artifact_ids") or {}) == 2
+    # 评估已跑（本批有评估结果）
+    assert summary.get("evaluation_artifact_ids")

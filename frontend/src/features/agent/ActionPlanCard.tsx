@@ -14,7 +14,7 @@
 
 import Link from "next/link";
 import type { AgentOutcome } from "@/types/api";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { runsApi } from "@/lib/api-client";
 import { useAgentAction } from "@/hooks/use-agent-action";
@@ -114,9 +114,21 @@ export function ActionPlanCard({
     rejecting,
   } = useAgentAction(actionId);
 
-  // L-3 确认门续跑：分段创作 needs_review 时"继续创作剧本"
+  // L-3/L-4 确认门：needs_review 且 Run 停在门上 → 查 run.stage_gate 提供续跑选项
+  const runQuery = useQuery({
+    queryKey: ["gated-run", action?.run_id],
+    enabled: action?.status === "needs_review" && !!action?.run_id,
+    queryFn: () => runsApi.get(action!.run_id!),
+  });
+  const stageGate =
+    action?.status === "needs_review" ? runQuery.data?.stage_gate ?? null : null;
+
   const continueMutation = useMutation({
-    mutationFn: () => runsApi.continueRun(action!.run_id!),
+    mutationFn: (batchSize?: number | undefined) =>
+      runsApi.continueRun(
+        action!.run_id!,
+        batchSize ? { batch_size: batchSize } : undefined,
+      ),
     onSuccess: () => onContinued?.(),
   });
 
@@ -209,31 +221,89 @@ export function ActionPlanCard({
         </div>
       )}
 
-      {/* L-3 分段确认门：needs_review 且计划为分段创作 → 继续按钮（唯一主操作） */}
-      {action.status === "needs_review" &&
-        plan.command.intent === "create_script" &&
-        plan.command.stop_after === "outline" &&
-        action.run_id && (
-          <div className="mt-4">
-            <p className="mb-2 text-xs text-[var(--text-muted)]">
-              StoryBible 与大纲已生成（暂停期间如有修改，将以最新版本继续），确认后继续创作剧本。
-            </p>
+      {/* L-3/L-4 确认门续跑：Run 停在门上 → 按门类型提供继续选项 */}
+      {stageGate === "outline" && (
+        <div className="mt-4">
+          <p className="mb-2 text-xs text-[var(--text-muted)]">
+            StoryBible 与大纲已生成（暂停期间如有修改，将以最新版本继续）。选择本批生成方式：
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
-              onClick={() => continueMutation.mutate()}
+              onClick={() => continueMutation.mutate(1)}
               disabled={continueMutation.isPending}
-              data-testid="continue-creation"
-              className="touch-target w-full rounded-lg bg-[var(--accent)] px-4 text-sm font-medium text-white transition-state hover:bg-[var(--accent-hover)] disabled:opacity-50 sm:w-auto sm:min-w-40"
+              data-testid="continue-batch-1"
+              className="touch-target rounded-lg border border-[var(--border)] px-4 text-sm text-[var(--text)] transition-state hover:border-[var(--accent)] disabled:opacity-50"
             >
-              {continueMutation.isPending ? "继续中…" : "继续创作剧本"}
+              先写第 1 集
             </button>
-            {continueMutation.isError && (
-              <p className="mt-2 text-xs text-[var(--danger)]" role="alert">
-                {(continueMutation.error as Error).message}
-              </p>
-            )}
+            <button
+              type="button"
+              onClick={() => continueMutation.mutate(5)}
+              disabled={continueMutation.isPending}
+              data-testid="continue-batch-5"
+              className="touch-target rounded-lg border border-[var(--border)] px-4 text-sm text-[var(--text)] transition-state hover:border-[var(--accent)] disabled:opacity-50"
+            >
+              先写前 5 集
+            </button>
+            <button
+              type="button"
+              onClick={() => continueMutation.mutate(undefined)}
+              disabled={continueMutation.isPending}
+              data-testid="continue-all"
+              className="touch-target rounded-lg bg-[var(--accent)] px-4 text-sm font-medium text-white transition-state hover:bg-[var(--accent-hover)] disabled:opacity-50 sm:min-w-32"
+            >
+              {continueMutation.isPending ? "继续中…" : "写全部剧本"}
+            </button>
           </div>
-        )}
+          {continueMutation.isError && (
+            <p className="mt-2 text-xs text-[var(--danger)]" role="alert">
+              {(continueMutation.error as Error).message}
+            </p>
+          )}
+        </div>
+      )}
+      {stageGate === "scripts" && (
+        <div className="mt-4">
+          <p className="mb-2 text-xs text-[var(--text-muted)]" aria-live="polite">
+            本批剧本与评估已完成，可继续下一批（每批完成后暂停，可先聊天修改剧本）。
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => continueMutation.mutate(1)}
+              disabled={continueMutation.isPending}
+              data-testid="continue-batch-1"
+              className="touch-target rounded-lg border border-[var(--border)] px-4 text-sm text-[var(--text)] transition-state hover:border-[var(--accent)] disabled:opacity-50"
+            >
+              下一集
+            </button>
+            <button
+              type="button"
+              onClick={() => continueMutation.mutate(5)}
+              disabled={continueMutation.isPending}
+              data-testid="continue-batch-5"
+              className="touch-target rounded-lg border border-[var(--border)] px-4 text-sm text-[var(--text)] transition-state hover:border-[var(--accent)] disabled:opacity-50"
+            >
+              下 5 集
+            </button>
+            <button
+              type="button"
+              onClick={() => continueMutation.mutate(undefined)}
+              disabled={continueMutation.isPending}
+              data-testid="continue-all"
+              className="touch-target rounded-lg bg-[var(--accent)] px-4 text-sm font-medium text-white transition-state hover:bg-[var(--accent-hover)] disabled:opacity-50 sm:min-w-32"
+            >
+              {continueMutation.isPending ? "继续中…" : "写完剩余全部"}
+            </button>
+          </div>
+          {continueMutation.isError && (
+            <p className="mt-2 text-xs text-[var(--danger)]" role="alert">
+              {(continueMutation.error as Error).message}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* queued/running 提示（进度由工作台内嵌 RunProgress 展示） */}
       {(action.status === "queued" || action.status === "running") && (

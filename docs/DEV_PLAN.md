@@ -3429,7 +3429,7 @@ Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋�
 | L-1 | 集数端到端生效 | K-4 | 0.5d | Turn 请求结构化 `target_episode_count`（替代 Composer 文本提示）→ 计划模板 CreateScriptCommand/options 使用用户集数；幂等 request_hash 纳入该字段 |
 | L-2 | 分段创作 Run（停在确认门） | L-1 | 1d | ✅ DONE（2026-08-23）：Turn 请求 `staged` → CreateScriptCommand.stop_after=outline → options；creation 图 outline 后条件边（stage_gate 置位即 END）；Dispatcher 后处理 stage_gate → needs_review + run.needs_review 事件携带新旧 Artifact ID；Composer 设置面板分阶段开关 |
 | L-3 | 续跑动作 continue_creation | L-2 | 1.5d | ✅ DONE（2026-08-24）：POST /runs/{id}/continue（仅 stage_gate=outline 的 needs_review 可续；剥离 stop_after/stage_gate；大纲刷新为最新 valid——暂停期间聊天改版生效；回 queued 从 checkpoint 恢复不重算 SB/大纲）；前端 ActionPlanCard 分段门 needs_review 显示"继续创作剧本"主按钮 |
-| L-4 | 剧本分批生成 | L-3 | 1d | 计划卡提供 1 集 / 5 集 / 剩余全部选项；write_episodes 从已有集数续写（Artifact 幂等不重算） |
+| L-4 | 剧本分批生成 | L-3 | 1d | ✅ DONE（2026-08-24）：continue 请求 batch_size（本批集数，封顶目标）；批模式 stop_after=scripts——write_episodes 写 existing+batch 集、评估后停 scripts 门；RunResponse 暴露 stage_gate；计划卡按门类型显示按钮组（下一集/下 5 集/剩余全部；大纲门同样提供三种起批方式）；write_episodes 复用 existing 跳过续写 |
 
 ---
 

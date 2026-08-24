@@ -482,6 +482,9 @@ async def _execute_workflow(
                     "needs_manual_review_reason": None,
                     "stop_after": options.get("stop_after") or "",
                     "stage_gate": "",
+                    "target_episode_count": int(
+                        options.get("outline_count", options.get("script_count", 3))
+                    ),
                     "current_episode": 1,
                     "status": "running",
                     "needs_user_input": False,
@@ -747,19 +750,28 @@ async def _execute_workflow(
                     payload={"reason": "用户输入不完整，需要补充信息"},
                     autocommit=True,
                 )
-            elif final_state.get("stage_gate") == "outline":
-                # L-2 分段创作门：SB+大纲就绪，等待确认（L-3 续跑/聊天修改）
+            elif final_state.get("stage_gate") in ("outline", "scripts"):
+                # L-2/L-4 确认门：outline = SB+大纲就绪；scripts = 本批剧本+评估完成
+                gate = str(final_state.get("stage_gate"))
+                written = len(final_state.get("script_artifact_ids") or {})
+                target = final_state.get("target_episode_count") or 0
+                if gate == "outline":
+                    message = "StoryBible 与分集大纲已生成，等待确认后继续创作剧本"
+                else:
+                    message = f"本批剧本已完成（共 {written}/{target} 集），可继续下一批或先修改剧本"
                 await run_svc.transition_status(db, run_id, "needs_review", lease_owner=lease_owner)
                 await publisher.publish(
                     db,
                     run_id=run_id,
                     event_type="run.needs_review",
                     payload={
-                        "reason": "stage_gate:outline",
-                        "stage_gate": "outline",
-                        "message": "StoryBible 与分集大纲已生成，等待确认后继续创作剧本",
+                        "reason": f"stage_gate:{gate}",
+                        "stage_gate": gate,
+                        "message": message,
                         "outline_set_artifact_id": final_state.get("outline_set_artifact_id"),
                         "story_bible_artifact_id": final_state.get("story_bible_artifact_id"),
+                        "written_episodes": written,
+                        "target_episode_count": target,
                     },
                     autocommit=True,
                 )

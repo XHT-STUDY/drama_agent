@@ -218,6 +218,8 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **续跑（L-3）**：`POST /runs/{id}/continue`——仅 `needs_review` 且 `stage_gate=outline` 的 Run 可续（否则 409 `RUN_NOT_RETRYABLE`；活跃中重复续跑 409 `RUN_ALREADY_ACTIVE`）。续跑时剥离 `stop_after`/`stage_gate`，并把大纲刷新为项目**最新 valid 版本**（暂停期间通过聊天修改大纲的成果生效）；Run 回 `queued`，从 checkpoint 恢复——SB/大纲不重算，直接进入剧本阶段。事件 `run.queued` payload 含 `stage_gate_cleared=outline`。
 
+**剧本分批（L-4）**：`POST /runs/{id}/continue` 请求体 `{batch_size?: int(1-50)}`——提供时进入批模式：本批终点 = 已有集数 + batch（封顶 `outline_count` 目标），`options.stop_after="scripts"`；本批剧本写完并评估后 Run 再次停在 `stage_gate=scripts`（`run.needs_review` payload 含 `written_episodes`/`target_episode_count`），可继续下一批或先聊天改稿。缺省 batch_size = 写剩余全部（非批模式）。`GET /runs/{id}` 响应新增 `stage_gate` 字段（outline / scripts / null）。
+
 **响应语义**：响应体为 `AgentTurnResponse`（注意字段名是 `id` 而非 `turn_id`，含 `status` / `turn_type` / `response_message_id` / `action_id` / `error_code`）。终态返回 200：`turn_type=clarification`（`status=needs_input`，无 Action）、`answer`（`status=answered`，只读）、`plan`（`status=action_proposed`，返回 proposed AgentAction）；Planner 失败同样返回 200（`status=failed` + `error_code`，不创建 Action/Run）。重复请求命中有效 lease 下的 planning Turn 返回 202 + 当前快照；命中终态返回与首次完全一致的 200 原响应。同 key 不同载荷返回 409 `IDEMPOTENCY_KEY_REUSED`。
 
 **确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`、`revise_script→revise_script`、`revise_outline→revise_outline`；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）。Run 幂等键为 `agent-action:{action_id}`。

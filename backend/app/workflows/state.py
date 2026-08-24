@@ -64,7 +64,9 @@ class CreationState(TypedDict, total=False):
 
     # ---- 分段创作（L-2）----
     stop_after: str
-    """分段创作门（"outline" = SB+大纲后暂停等确认；空 = 全流程）。"""
+    """分段创作门（"outline" = 大纲门；"scripts" = 剧本分批门；空 = 全流程）。"""
+    target_episode_count: int
+    """最终目标集数（L-4 批门判断：已写 < 目标 → 停）。"""
     stage_gate: str
     """已到达的确认门（outline）；dispatcher 据此把 Run 转 needs_review。"""
 

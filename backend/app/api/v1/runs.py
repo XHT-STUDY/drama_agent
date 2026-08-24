@@ -116,6 +116,10 @@ class RunResponse(BaseModel):
         default=None,
         description="触发本 Run 的 AgentAction ID（Agent 确认创建时携带，J-12）",
     )
+    stage_gate: str | None = Field(
+        default=None,
+        description="当前确认门（outline=大纲门 / scripts=剧本分批门；L-2/L-4）",
+    )
     created_at: str = Field(..., description="创建时间")
     updated_at: str = Field(..., description="更新时间")
 
@@ -131,6 +135,7 @@ class RunResponse(BaseModel):
             error_code=run.error_code,
             error_detail=run.error_detail,
             agent_action_id=config.get("agent_action_id"),
+            stage_gate=(run.state_summary or {}).get("stage_gate"),
             created_at=run.created_at.isoformat() if run.created_at else "",
             updated_at=run.updated_at.isoformat() if run.updated_at else "",
         )
@@ -252,27 +257,42 @@ async def cancel_run(
     return RunResponse.from_orm(run)
 
 
+class ContinueRunRequest(BaseModel):
+    """续跑请求体（L-4）。"""
+
+    model_config = {"extra": "forbid"}
+
+    batch_size: int | None = Field(
+        default=None, ge=1, le=50,
+        description="本批集数（L-4）：如 1=下一集、5=下 5 集；缺省 = 剩余全部（批模式关闭）",
+    )
+
+
 @router.post("/runs/{run_id}/continue", response_model=RunResponse)
 async def continue_run(
     run_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    body: ContinueRunRequest | None = None,
 ) -> RunResponse:
-    """确认门续跑（L-3）：分段创作停在 stage_gate 后继续执行。
+    """确认门续跑（L-3/L-4）：分段创作停在 stage_gate 后继续执行。
 
-    仅 needs_review 且 state_summary.stage_gate=outline 的 Run 可续：
-    - 剥离 stop_after / stage_gate（不再停门）；
-    - 大纲刷新为项目最新 valid 版本（暂停期间聊天改过大纲则用新版）；
-    - 回到队列，从 checkpoint（completed_nodes）恢复——SB/大纲不重算。
+    支持 outline 门（SB+大纲确认）与 scripts 门（剧本分批）：
+    - 剥离 stage_gate / stop_after；
+    - outline 门：大纲刷新为项目最新 valid（暂停期间聊天改版生效）；
+    - batch_size 提供时进入批模式：options.script_count = 已有集数 + batch
+      （不超过目标），本批完成后再次停在 scripts 门；缺省写剩余全部。
+    - 回到队列，从 checkpoint 恢复——已完成产物不重算。
     """
     run = await _service.get_run(db, run_id)
     if run.status in ("queued", "running"):
         raise RunAlreadyActiveError(detail=f"Run 正在执行（{run.status}），不可重复续跑")
     summary = run.state_summary or {}
-    if run.status != "needs_review" or summary.get("stage_gate") != "outline":
+    gate = summary.get("stage_gate")
+    if run.status != "needs_review" or gate not in ("outline", "scripts"):
         raise RunNotRetryableError(
             detail=(
                 f"Run 不可续跑（状态 {run.status}，"
-                f"stage_gate={summary.get('stage_gate') or '无'}）：仅分段创作的确认门可继续"
+                f"stage_gate={gate or '无'}）：仅分段创作/剧本分批的确认门可继续"
             )
         )
 
@@ -288,13 +308,26 @@ async def continue_run(
     latest_outline = await ArtifactStore().get_latest(
         db, run.project_id, "episode_outline_set", 1
     )
-    if latest_outline is not None:
+    if gate == "outline" and latest_outline is not None:
         resumed["outline_set_artifact_id"] = str(latest_outline.id)
     run.state_summary = resumed
 
     config = dict(run.config_snapshot or {})
     options = dict(config.get("options") or {})
     options.pop("stop_after", None)
+    # L-4 批模式：本批终点 = 已有集数 + batch（不超过目标集数）
+    batch = body.batch_size if body else None
+    if batch is not None:
+        existing = len(resumed.get("script_artifact_ids") or {})
+        target = int(options.get("outline_count") or options.get("script_count") or existing)
+        end = min(existing + batch, target)
+        if end > existing:
+            options["script_count"] = end
+            options["stop_after"] = "scripts"
+            resumed_stop = dict(resumed)
+            resumed_stop["stop_after"] = "scripts"
+            resumed_stop.pop("stage_gate", None)
+            run.state_summary = resumed_stop
     config["options"] = options
     run.config_snapshot = config
 

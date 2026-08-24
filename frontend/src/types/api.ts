@@ -184,6 +184,10 @@ export interface Run {
   action: string;
   status: RunStatus;
   config_snapshot?: Record<string, unknown>;
+  /** 触发本 Run 的 AgentAction ID（Agent 确认创建时） */
+  agent_action_id?: string | null;
+  /** 当前确认门（outline=大纲门 / scripts=剧本分批门；null = 无门） */
+  stage_gate?: string | null;
   created_at: string;
   updated_at: string;
 }

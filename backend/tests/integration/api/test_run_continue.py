@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -151,3 +152,98 @@ async def test_continue_twice_conflicts(
     second = await client.post(f"/api/v1/runs/{run.id}/continue")
     assert second.status_code == 409
     assert second.json()["code"] == "RUN_ALREADY_ACTIVE"
+
+
+# ========================================================================
+# L-4：批模式 continue
+# ========================================================================
+
+
+async def _seed_scripts_gate(
+    db: AsyncSession, *, written: int = 3, target: int = 10
+) -> WorkflowRun:
+    """播种停在 scripts 门的 Run（已写 written 集，目标 target）。"""
+    project = Project(title="L-4 批门", target_episode_count=target)
+    db.add(project)
+    await db.flush()
+    scripts = {
+        str(ep): str(uuid.uuid4()) for ep in range(1, written + 1)
+    }
+    run = WorkflowRun(
+        project_id=project.id,
+        action="create_script",
+        status="needs_review",
+        config_snapshot={"options": {
+            "user_input": "x", "outline_count": target, "script_count": target,
+            "stop_after": "scripts",
+        }},
+        state_summary={
+            "stage_gate": "scripts",
+            "stop_after": "scripts",
+            "target_episode_count": target,
+            "script_artifact_ids": scripts,
+            "completed_nodes": [
+                "normalize", "retrieve", "story_bible", "outline",
+                "write_episodes", "evaluate_episodes",
+            ],
+        },
+    )
+    db.add(run)
+    await db.commit()
+    return run
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_batch_continue_sets_end_and_keeps_gate(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scripts 门 batch=5：终点 = 3+5=8，stop_after=scripts 保留（批模式）。"""
+    from app.api.v1 import runs as runs_module
+
+    monkeypatch.setattr(runs_module, "schedule_worker", lambda *a: None)
+    run = await _seed_scripts_gate(db_session, written=3, target=10)
+
+    resp = await client.post(f"/api/v1/runs/{run.id}/continue", json={"batch_size": 5})
+    assert resp.status_code == 200
+    options = resp.json()["config_snapshot"]["options"]
+    assert options["script_count"] == 8
+    assert options["stop_after"] == "scripts"
+
+    await db_session.refresh(run)
+    assert (run.state_summary or {})["stop_after"] == "scripts"
+    assert "stage_gate" not in (run.state_summary or {})
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_batch_continue_caps_at_target(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """batch 超过剩余（3+50 > 10）→ 终点封顶 target=10。"""
+    from app.api.v1 import runs as runs_module
+
+    monkeypatch.setattr(runs_module, "schedule_worker", lambda *a: None)
+    run = await _seed_scripts_gate(db_session, written=3, target=10)
+
+    resp = await client.post(f"/api/v1/runs/{run.id}/continue", json={"batch_size": 50})
+    assert resp.status_code == 200
+    assert resp.json()["config_snapshot"]["options"]["script_count"] == 10
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_no_batch_writes_all(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """缺省 batch：写剩余全部（stop_after 剥离，非批模式）。"""
+    from app.api.v1 import runs as runs_module
+
+    monkeypatch.setattr(runs_module, "schedule_worker", lambda *a: None)
+    run = await _seed_scripts_gate(db_session, written=3, target=10)
+
+    resp = await client.post(f"/api/v1/runs/{run.id}/continue", json={})
+    assert resp.status_code == 200
+    options = resp.json()["config_snapshot"]["options"]
+    assert "stop_after" not in options
+    assert resp.json()["stage_gate"] is None

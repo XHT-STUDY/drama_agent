@@ -136,7 +136,7 @@ async def evaluate_episodes_node(state: CreationState) -> dict[str, Any]:
         )
         progress("evaluate_episodes", "completed", 0.99)
 
-        return {
+        result: dict[str, Any] = {
             "evaluation_artifact_ids": {
                 **state.get("evaluation_artifact_ids", {}),
                 **evaluation_artifact_ids,
@@ -148,6 +148,13 @@ async def evaluate_episodes_node(state: CreationState) -> dict[str, Any]:
                 "evaluate_episode": prompt_loader.get("evaluate_episode").version,
             },
         }
+        # L-4 剧本分批门：批模式且未写满目标 → 置位（路由 END，修订决策留给用户）
+        if state.get("stop_after") == "scripts":
+            written = len(state.get("script_artifact_ids") or {})
+            target = int(state.get("target_episode_count") or 0)
+            if target and written < target:
+                result["stage_gate"] = "scripts"
+        return result
     except Exception as e:
         logger.exception("评估节点失败")
         await publisher.publish(
