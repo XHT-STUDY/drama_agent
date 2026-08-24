@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import pytest
 from langchain_core.runnables import RunnableConfig
@@ -102,3 +103,95 @@ async def test_full_flow_unchanged_without_stop_after(
     assert final_state.get("stage_gate", "") == ""
     assert "write_episodes" in final_state.get("completed_nodes", [])
     assert "evaluate_episodes" in final_state.get("completed_nodes", [])
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_continue_after_gate_writes_scripts_without_recompute(
+    test_project: uuid.UUID,
+    workflow_config: RunnableConfig,
+    artifact_service: Any,
+    test_engine: Any,
+) -> None:
+    """L-3 全链路：分段停门 → continue（剥离门字段）→ 恢复执行写剧本。
+
+    completed_nodes 保留 → SB/大纲节点早退不重算；剧本与评估照常产出。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from app.application.workflow_dispatcher import _execute_workflow
+    from app.db.models.workflow_run import WorkflowRun
+
+    db = workflow_config["configurable"]["db"]
+    run_svc = workflow_config["configurable"]["run_service"]
+    # _execute_workflow 使用全局 session factory → 指向测试引擎
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    import app.db.session as db_session
+
+    factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+    db_session._async_session_factory = factory
+
+    # 第一段：staged → 停门
+    run = await run_svc.create_run(
+        db=db, project_id=test_project, action="create_script",
+        config={"options": {
+            "user_input": (
+                "被青训队抛弃的足球少年林峰凭借战术视野天赋，"
+                "从底层联赛逆袭至职业巅峰，要求强爽点与每集结尾钩子。"
+            ),
+            "outline_count": 10,
+            "script_count": 3, "stop_after": "outline",
+        }},
+    )
+    await db.execute(update(WorkflowRun).where(WorkflowRun.id == run.id).values(
+        status="running", lease_owner="t1",
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=5), attempt_count=1))
+    await db.commit()
+    await _execute_workflow(run.id, "create_script", {}, "t1")
+    await db.commit()
+    await db.rollback()  # 放弃本会话快照，重新读取 dispatcher 写入的终态
+    from sqlalchemy import select as _sel
+    fresh = await async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)().__aenter__()
+    gated = (await fresh.execute(
+        _sel(WorkflowRun).where(WorkflowRun.id == run.id)
+    )).scalar_one()
+    assert gated.status == "needs_review", gated.status
+    assert (gated.state_summary or {}).get("stage_gate") == "outline"
+    await fresh.__aexit__(None, None, None)
+
+    sb_before = (gated.state_summary or {})["story_bible_artifact_id"]
+    outline_before = (gated.state_summary or {})["outline_set_artifact_id"]
+
+    # continue：剥离门字段（端点逻辑的等价操作，直接在测试内执行）
+    resumed = {
+        k: v for k, v in (gated.state_summary or {}).items()
+        if k not in ("stage_gate", "stop_after")
+    }
+    config = dict(gated.config_snapshot or {})
+    config["options"] = {k: v for k, v in (config.get("options") or {}).items() if k != "stop_after"}
+    await db.execute(update(WorkflowRun).where(WorkflowRun.id == run.id).values(
+        state_summary=resumed, config_snapshot=config,
+        status="running", lease_owner="t2",
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=5), attempt_count=2))
+    await db.commit()
+
+    # 第二段：恢复执行 → 剧本与评估产出
+    await _execute_workflow(run.id, "create_script", {}, "t2")
+    await db.rollback()
+    fresh2 = await async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)().__aenter__()
+    final = (await fresh2.execute(
+        _sel(WorkflowRun).where(WorkflowRun.id == run.id)
+    )).scalar_one()
+    await fresh2.__aexit__(None, None, None)
+    assert final.status in ("completed", "needs_review")
+    assert (final.state_summary or {}).get("stage_gate", "") == ""
+
+    summary = final.state_summary or {}
+    # SB/大纲未被重算（同一 Artifact ID）
+    assert summary["story_bible_artifact_id"] == sb_before
+    assert summary["outline_set_artifact_id"] == outline_before
+    # 剧本已写出
+    assert summary.get("script_artifact_ids")

@@ -3845,3 +3845,37 @@ Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修�
 ### 下一步
 
 - L-3：`continue_creation` 续跑动作——确认门后的"继续"按钮/指令，从 state 恢复（checkpoint）进入剧本阶段；聊天改稿复用 revise_outline/revise_script。
+
+
+## L-3 确认门续跑 continue（2026-08-24）
+
+### 做了什么
+
+- **`POST /runs/{id}/continue`**（runs.py，与 retry 同模式）：校验 Run 为 needs_review 且 `state_summary.stage_gate=outline`（活跃中重复续跑 → `RUN_ALREADY_ACTIVE`，其他 needs_review → `RUN_NOT_RETRYABLE`）；剥离 state 与 options 中的 `stop_after`/`stage_gate`；**大纲 Artifact ID 刷新为项目最新 valid**（暂停期间 revise_outline 的成果生效）；Run 回 queued + `run.queued` 事件（`stage_gate_cleared=outline`）+ 唤醒 worker。
+- **前端**：`runsApi.continueRun`；ActionPlanCard 在 `needs_review && command.stop_after==outline && run_id` 时渲染"继续创作剧本"主按钮（文案说明将采用最新大纲），点击 POST continue 并失效查询。
+- 测试：API 3 例（续跑清理+大纲刷新、非分段门 409、重复续跑 409）+ workflow 全链路 1 例（分段停门 → 剥离门字段 → dispatcher 恢复执行 → 剧本/评估产出且 SB/大纲 Artifact ID 不变=不重算）+ 前端 2 例（按钮渲染与 POST、非分段计划无按钮）。
+
+### 为什么这么做
+
+- 续跑归 Run 生命周期（复用 retry 的"checkpoint 重放 + completed_nodes 早退"机制）而非新 AgentAction：确认门不是新计划，是同一 Run 的继续；dispatch 恢复机制天然不重算 SB/大纲。
+- 大纲刷新为最新 valid 是"确认语义"的关键：用户在暂停期间聊天改了大纲，点"继续"应该用改后的版本——否则确认门形同虚设。
+- 活跃检查放在门校验之前：queued/running 的重复点击先撞 `RUN_ALREADY_ACTIVE`，比"不可续"的语义更准确。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/integration/api/test_run_continue.py | 3 passed |
+| uv run pytest tests/integration/workflow/test_staged_creation.py | 3 passed（含全链路续跑） |
+| uv run pytest --disable-warnings | **1118 passed / 8 deselected**（1114→1118） |
+| cd frontend && pnpm test | **191 passed**（189→191） |
+| Ruff / mypy / ESLint / tsc | 全部通过（328 files） |
+
+### 学到了什么
+
+1. 直接 ainvoke 工作图的测试断言要用**独立 fresh session** 读 Run 终态——测试会话的 identity map 与 dispatcher 的独立 session 提交互相不可见，rollback 也不够。
+2. normalize 节点有"输入过短"守卫：测试种子输入必须够长（>某阈值），否则走 needs_user_input 分支而非预期路径——种子数据要过节点校验。
+
+### 下一步
+
+- L-4：剧本分批生成——计划卡/续跑时提供 1 集 / 5 集 / 剩余全部选项（write_episodes 从已有集数续写）。

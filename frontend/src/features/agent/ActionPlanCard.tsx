@@ -14,6 +14,9 @@
 
 import Link from "next/link";
 import type { AgentOutcome } from "@/types/api";
+import { useMutation } from "@tanstack/react-query";
+
+import { runsApi } from "@/lib/api-client";
 import { useAgentAction } from "@/hooks/use-agent-action";
 
 const GOAL_STATUS_LABEL: Record<string, string> = {
@@ -90,9 +93,16 @@ interface Props {
   projectId: string;
   /** stale / 重新发起时聚焦 Composer（恢复入口） */
   onAskAgain?: () => void;
+  /** 计划执行确认后的刷新（继续按钮成功后失效查询） */
+  onContinued?: () => void;
 }
 
-export function ActionPlanCard({ actionId, projectId, onAskAgain }: Props) {
+export function ActionPlanCard({
+  actionId,
+  projectId,
+  onAskAgain,
+  onContinued,
+}: Props) {
   const {
     action,
     isLoading,
@@ -103,6 +113,12 @@ export function ActionPlanCard({ actionId, projectId, onAskAgain }: Props) {
     reject,
     rejecting,
   } = useAgentAction(actionId);
+
+  // L-3 确认门续跑：分段创作 needs_review 时"继续创作剧本"
+  const continueMutation = useMutation({
+    mutationFn: () => runsApi.continueRun(action!.run_id!),
+    onSuccess: () => onContinued?.(),
+  });
 
   if (isLoading || !action) {
     return (
@@ -192,6 +208,32 @@ export function ActionPlanCard({ actionId, projectId, onAskAgain }: Props) {
           </button>
         </div>
       )}
+
+      {/* L-3 分段确认门：needs_review 且计划为分段创作 → 继续按钮（唯一主操作） */}
+      {action.status === "needs_review" &&
+        plan.command.intent === "create_script" &&
+        plan.command.stop_after === "outline" &&
+        action.run_id && (
+          <div className="mt-4">
+            <p className="mb-2 text-xs text-[var(--text-muted)]">
+              StoryBible 与大纲已生成（暂停期间如有修改，将以最新版本继续），确认后继续创作剧本。
+            </p>
+            <button
+              type="button"
+              onClick={() => continueMutation.mutate()}
+              disabled={continueMutation.isPending}
+              data-testid="continue-creation"
+              className="touch-target w-full rounded-lg bg-[var(--accent)] px-4 text-sm font-medium text-white transition-state hover:bg-[var(--accent-hover)] disabled:opacity-50 sm:w-auto sm:min-w-40"
+            >
+              {continueMutation.isPending ? "继续中…" : "继续创作剧本"}
+            </button>
+            {continueMutation.isError && (
+              <p className="mt-2 text-xs text-[var(--danger)]" role="alert">
+                {(continueMutation.error as Error).message}
+              </p>
+            )}
+          </div>
+        )}
 
       {/* queued/running 提示（进度由工作台内嵌 RunProgress 展示） */}
       {(action.status === "queued" || action.status === "running") && (

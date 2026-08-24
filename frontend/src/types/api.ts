@@ -607,7 +607,13 @@ export interface ActionStep {
 
 /** 按意图判别的命令联合（与后端 AgentCommand 一致） */
 export type AgentCommand =
-  | { intent: "create_script"; user_input: string; outline_count: number; script_count: number }
+  | {
+      intent: "create_script";
+      user_input: string;
+      outline_count: number;
+      script_count: number;
+      stop_after?: "outline" | null;
+    }
   | { intent: "explain"; target: ActionTarget }
   | { intent: "revise_outline"; source_outline_id: string; constraints: string[] }
   | { intent: "revise_script"; source_script_id: string; episode_number: number; constraints: string[] }

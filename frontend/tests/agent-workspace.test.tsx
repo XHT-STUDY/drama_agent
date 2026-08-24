@@ -21,6 +21,7 @@ vi.mock("next/navigation", () => ({
 import { AgentWorkspace } from "@/features/agent/AgentWorkspace";
 import { AgentComposer } from "@/features/agent/AgentComposer";
 import { MessageList } from "@/features/agent/MessageList";
+import { ActionPlanCard } from "@/features/agent/ActionPlanCard";
 import type { AgentActionResponse, ChatMessage } from "@/types/api";
 
 // ---- fetch 路由 mock ----
@@ -438,5 +439,70 @@ describe("AgentComposer 分阶段开关（L-2）", () => {
     fireEvent.change(textarea, { target: { value: "写个剧本" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
     expect(onSend).toHaveBeenCalledWith("写个剧本", undefined);
+  });
+});
+
+
+describe("ActionPlanCard 确认门继续按钮（L-3）", () => {
+  function actionFixture(overrides: Record<string, unknown>) {
+    const base = actionFixtureBase();
+    return { ...base, ...overrides } as typeof base;
+  }
+
+  function actionFixtureBase() {
+    return JSON.parse(JSON.stringify({
+      id: "a1", project_id: "p1", conversation_id: "c1", agent_turn_id: "t1",
+      replan_depth: 0, intent: "create_script", status: "proposed",
+      requires_confirmation: true,
+      plan: {
+        goal: "创建剧本", intent: "create_script",
+        command: { intent: "create_script", user_input: "x", outline_count: 10, script_count: 3, stop_after: "outline" },
+        target: { target_type: "project" }, constraints: [], steps: [], expected_impact: [],
+      },
+      source_artifact_ids: [], result: null, run_id: "run-1",
+      created_at: NOW, updated_at: NOW,
+    }));
+  }
+
+  it("分段门 needs_review 显示继续按钮并 POST continue", async () => {
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    route("GET", /\/agent\/actions\/a1$/, () => actionFixture({ status: "needs_review" }));
+    let continued = 0;
+    route("POST", /\/runs\/run-1\/continue$/, () => {
+      continued += 1;
+      return { run_id: "run-1", project_id: "p1", action: "create_script", status: "queued", agent_action_id: null, created_at: NOW, updated_at: NOW };
+    });
+
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }) },
+        React.createElement(ActionPlanCard, { actionId: "a1", projectId: "p1" }),
+      ),
+    );
+
+    const btn = await screen.findByTestId("continue-creation");
+    expect(btn).toBeTruthy();
+    expect(screen.getByText(/确认后继续创作剧本/)).toBeTruthy();
+
+    fireEvent.click(btn);
+    await waitFor(() => expect(continued).toBe(1));
+  });
+
+  it("非分段计划不显示继续按钮", async () => {
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const fixture = actionFixture({ status: "needs_review" });
+    delete (fixture.plan.command as Record<string, unknown>).stop_after;
+    route("GET", /\/agent\/actions\/a1$/, () => fixture);
+
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+        React.createElement(ActionPlanCard, { actionId: "a1", projectId: "p1" }),
+      ),
+    );
+    await waitFor(() => expect(screen.getByText("创建剧本")).toBeTruthy());
+    expect(screen.queryByTestId("continue-creation")).toBeNull();
   });
 });

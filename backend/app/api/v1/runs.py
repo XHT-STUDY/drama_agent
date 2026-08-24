@@ -21,6 +21,7 @@ from app.api.dependencies import get_db
 from app.application.run_service import RunService
 from app.application.workflow_dispatcher import schedule_worker
 from app.core.errors import RunAlreadyActiveError, RunNotRetryableError
+from app.events.publisher import EventPublisher
 from app.events.stream import router as sse_router
 from app.observability.diagnostics import RunDiagnosticsResponse
 
@@ -248,6 +249,69 @@ async def cancel_run(
     处中断（cancel 后不再创建新 Artifact），Run 由 Worker 转为 cancelled。
     """
     run = await _service.cancel_run(db, run_id)
+    return RunResponse.from_orm(run)
+
+
+@router.post("/runs/{run_id}/continue", response_model=RunResponse)
+async def continue_run(
+    run_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RunResponse:
+    """确认门续跑（L-3）：分段创作停在 stage_gate 后继续执行。
+
+    仅 needs_review 且 state_summary.stage_gate=outline 的 Run 可续：
+    - 剥离 stop_after / stage_gate（不再停门）；
+    - 大纲刷新为项目最新 valid 版本（暂停期间聊天改过大纲则用新版）；
+    - 回到队列，从 checkpoint（completed_nodes）恢复——SB/大纲不重算。
+    """
+    run = await _service.get_run(db, run_id)
+    if run.status in ("queued", "running"):
+        raise RunAlreadyActiveError(detail=f"Run 正在执行（{run.status}），不可重复续跑")
+    summary = run.state_summary or {}
+    if run.status != "needs_review" or summary.get("stage_gate") != "outline":
+        raise RunNotRetryableError(
+            detail=(
+                f"Run 不可续跑（状态 {run.status}，"
+                f"stage_gate={summary.get('stage_gate') or '无'}）：仅分段创作的确认门可继续"
+            )
+        )
+
+    # 剥离分段门字段；清掉复核标记
+    resumed = {
+        k: v
+        for k, v in summary.items()
+        if k not in ("stage_gate", "stop_after", "needs_manual_review", "needs_manual_review_reason")
+    }
+    # 暂停期间大纲可能被 revise_outline 更新 → 刷新为最新 valid
+    from app.artifacts.store import ArtifactStore
+
+    latest_outline = await ArtifactStore().get_latest(
+        db, run.project_id, "episode_outline_set", 1
+    )
+    if latest_outline is not None:
+        resumed["outline_set_artifact_id"] = str(latest_outline.id)
+    run.state_summary = resumed
+
+    config = dict(run.config_snapshot or {})
+    options = dict(config.get("options") or {})
+    options.pop("stop_after", None)
+    config["options"] = options
+    run.config_snapshot = config
+
+    run.error_code = None
+    run.error_detail = None
+    await db.flush()
+    await _service.transition_status(db, run_id, "queued")
+    await db.commit()
+
+    await EventPublisher().publish(
+        db,
+        run_id=run_id,
+        event_type="run.queued",
+        payload={"message": "确认门已确认，继续创作剧本", "stage_gate_cleared": "outline"},
+        autocommit=True,
+    )
+    schedule_worker(run.id, run.action, run.config_snapshot or {})
     return RunResponse.from_orm(run)
 
 
