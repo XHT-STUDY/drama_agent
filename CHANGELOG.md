@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Added（Phase L 进行中）
+- **L-1**：目标集数端到端生效——Turn 请求新增结构化 `target_episode_count`（1-50），create_script 计划的大纲与剧本集数按用户选择生成，替代此前「文本提示被系统默认覆盖」的行为；集数参与幂等 request_hash；前端 Composer「创作设置」改为结构化传递，仅显式调整时携带。
+
 ### Added（Phase K 进行中）
 - **K-4**：知识库 E2E 与冒烟——`e2e/knowledge.spec.ts`（上传参考资料 → 导入自动入库 → 知识库页列表/检索试算命中 → 删除清空，FakeEmbedder 确定性）；`scripts/embedding_smoke.py`（真实 provider 连通性/维度/语义性冒烟，需真实 Key，未执行）；KNOWN_LIMITATIONS V1 backlog 第 1 项（RAG 深入）出列。
 - **K-3**：前端知识库页——`/projects/{id}/knowledge`：文档列表（作用域徽标/块数/向量化状态/来源、scope 过滤）、项目自有文档软删除（全局语料标"平台维护"不可删）、检索试算框（命中含相似度/作用域/来源 + trace 元数据）；AgentWorkspace 次级导航新增知识库入口。
