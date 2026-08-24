@@ -95,12 +95,16 @@ async def outline_node(state: CreationState) -> dict[str, Any]:
         )
         progress("outline", "completed", 0.40)
 
-        return {
+        result: dict[str, Any] = {
             "outline_set_artifact_id": str(artifact.id),
             "current_episode": 1,
             "completed_nodes": state.get("completed_nodes", []) + ["outline"],
             "prompt_versions": {**state.get("prompt_versions", {}), "outline": prompt_version},
         }
+        if state.get("stop_after") == "outline":
+            # L-2 分段门：SB+大纲就绪，路由将 END，Dispatcher 转 needs_review
+            result["stage_gate"] = "outline"
+        return result
     except Exception as e:
         logger.exception("分集大纲生成失败")
         await publisher.publish(

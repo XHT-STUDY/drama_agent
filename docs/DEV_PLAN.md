@@ -3427,7 +3427,7 @@ Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋�
 | # | 任务 | 依赖 | 估算 | 要点 |
 |---:|---|---|---:|---|
 | L-1 | 集数端到端生效 | K-4 | 0.5d | Turn 请求结构化 `target_episode_count`（替代 Composer 文本提示）→ 计划模板 CreateScriptCommand/options 使用用户集数；幂等 request_hash 纳入该字段 |
-| L-2 | 分段创作 Run（停在确认门） | L-1 | 1d | `create_outline` 阶段参数：需求 → SB → 大纲后 Run 转 needs_review，不写剧本；计划卡展示"下一步：确认后继续" |
+| L-2 | 分段创作 Run（停在确认门） | L-1 | 1d | ✅ DONE（2026-08-23）：Turn 请求 `staged` → CreateScriptCommand.stop_after=outline → options；creation 图 outline 后条件边（stage_gate 置位即 END）；Dispatcher 后处理 stage_gate → needs_review + run.needs_review 事件携带新旧 Artifact ID；Composer 设置面板分阶段开关 |
 | L-3 | 续跑动作 continue_creation | L-2 | 1.5d | 确认 SB/大纲后从 checkpoint 恢复进入下一阶段；聊天改稿复用 revise_outline/revise_script（J-08/J-06） |
 | L-4 | 剧本分批生成 | L-3 | 1d | 计划卡提供 1 集 / 5 集 / 剩余全部选项；write_episodes 从已有集数续写（Artifact 幂等不重算） |
 

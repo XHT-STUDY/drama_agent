@@ -214,6 +214,8 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **`target_episode_count`（L-1，可选 1-50）**：用户选择的目标集数。提供时 create_script 计划的大纲与剧本集数均按此值生成（「我选多少就制作多少」）；缺省回退 `mvp_outline_count`/`mvp_script_count` 系统默认。该字段参与幂等 request_hash——同一 key 携带不同集数返回 409 `IDEMPOTENCY_KEY_REUSED`。
 
+**`staged`（L-2，默认 false）**：分阶段创作。true 时 create_script 计划带 `stop_after=outline`——Run 在 StoryBible 与分集大纲产出后转 `needs_review`（`run.needs_review` 事件 payload 含 `stage_gate=outline` 与新旧 Artifact ID），不写剧本；等待确认后由续跑动作（L-3）继续。同样参与幂等 request_hash。
+
 **响应语义**：响应体为 `AgentTurnResponse`（注意字段名是 `id` 而非 `turn_id`，含 `status` / `turn_type` / `response_message_id` / `action_id` / `error_code`）。终态返回 200：`turn_type=clarification`（`status=needs_input`，无 Action）、`answer`（`status=answered`，只读）、`plan`（`status=action_proposed`，返回 proposed AgentAction）；Planner 失败同样返回 200（`status=failed` + `error_code`，不创建 Action/Run）。重复请求命中有效 lease 下的 planning Turn 返回 202 + 当前快照；命中终态返回与首次完全一致的 200 原响应。同 key 不同载荷返回 409 `IDEMPOTENCY_KEY_REUSED`。
 
 **确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`、`revise_script→revise_script`、`revise_outline→revise_outline`；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）。Run 幂等键为 `agent-action:{action_id}`。

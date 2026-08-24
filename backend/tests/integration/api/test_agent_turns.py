@@ -533,3 +533,51 @@ async def test_same_key_different_episode_count_rejected(
     )
     assert second.status_code == 409
     assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_staged_turn_stops_after_outline(
+    agent_api: AsyncClient, async_client: AsyncClient, planner_llm: FakeLLM
+) -> None:
+    """staged Turn → 计划含确认门步骤，确认后 Run options 带 stop_after=outline。"""
+    planner_llm.register("agent_command_planner", _plan_output())
+    project_id = await _create_project(async_client)
+
+    resp = await agent_api.post(
+        f"/api/v1/projects/{project_id}/agent/turns",
+        json={**_turn_body("写一个足球少年逆袭短剧", "staged-1"), "staged": True},
+    )
+    assert resp.status_code == 200
+    action_id = resp.json()["action_id"]
+    detail = await agent_api.get(f"/api/v1/agent/actions/{action_id}")
+    plan = detail.json()["plan"]
+    assert plan["command"]["stop_after"] == "outline"
+    assert any(s["step_id"] == "stage_gate" for s in plan["steps"])
+
+    confirm = await agent_api.post(f"/api/v1/agent/actions/{action_id}/confirm")
+    assert confirm.status_code == 202
+    run_id = confirm.json()["run"]["run_id"]
+    run_resp = await agent_api.get(f"/api/v1/runs/{run_id}")
+    assert run_resp.json()["config_snapshot"]["options"]["stop_after"] == "outline"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_staged_participates_in_request_hash(
+    agent_api: AsyncClient, async_client: AsyncClient, planner_llm: FakeLLM
+) -> None:
+    """staged 参与幂等：同 key 不同 staged → 409。"""
+    planner_llm.register("agent_command_planner", _plan_output())
+    project_id = await _create_project(async_client)
+    first = await agent_api.post(
+        f"/api/v1/projects/{project_id}/agent/turns",
+        json=_turn_body("写一个短剧", "staged-hash"),
+    )
+    assert first.status_code == 200
+    second = await agent_api.post(
+        f"/api/v1/projects/{project_id}/agent/turns",
+        json={**_turn_body("写一个短剧", "staged-hash"), "staged": True},
+    )
+    assert second.status_code == 409
+    assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"

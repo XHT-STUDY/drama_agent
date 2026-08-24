@@ -127,6 +127,10 @@ class CreateScriptCommand(BaseModel):
     user_input: str = Field(..., min_length=1)
     outline_count: int = Field(default=10, ge=1, le=50)
     script_count: int = Field(default=3, ge=1, le=50)
+    stop_after: Literal["outline"] | None = Field(
+        default=None,
+        description="分段创作门（L-2）：outline = SB+大纲后暂停等确认，不写剧本",
+    )
 
 
 class ExplainCommand(BaseModel):

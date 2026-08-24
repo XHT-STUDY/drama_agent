@@ -701,6 +701,8 @@ export interface AgentTurnCreate {
   idempotency_key: string;
   /** 用户选择的目标集数（L-1）：创作计划按此集数生成，缺省用系统默认 */
   target_episode_count?: number | null;
+  /** 分阶段创作（L-2）：SB+大纲生成后暂停等确认，不写剧本 */
+  staged?: boolean;
 }
 
 // ============================================================

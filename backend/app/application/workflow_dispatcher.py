@@ -480,6 +480,8 @@ async def _execute_workflow(
                     "revision_plan_artifact_id": None,
                     "needs_manual_review": False,
                     "needs_manual_review_reason": None,
+                    "stop_after": options.get("stop_after") or "",
+                    "stage_gate": "",
                     "current_episode": 1,
                     "status": "running",
                     "needs_user_input": False,
@@ -743,6 +745,22 @@ async def _execute_workflow(
                     run_id=run_id,
                     event_type="run.needs_review",
                     payload={"reason": "用户输入不完整，需要补充信息"},
+                    autocommit=True,
+                )
+            elif final_state.get("stage_gate") == "outline":
+                # L-2 分段创作门：SB+大纲就绪，等待确认（L-3 续跑/聊天修改）
+                await run_svc.transition_status(db, run_id, "needs_review", lease_owner=lease_owner)
+                await publisher.publish(
+                    db,
+                    run_id=run_id,
+                    event_type="run.needs_review",
+                    payload={
+                        "reason": "stage_gate:outline",
+                        "stage_gate": "outline",
+                        "message": "StoryBible 与分集大纲已生成，等待确认后继续创作剧本",
+                        "outline_set_artifact_id": final_state.get("outline_set_artifact_id"),
+                        "story_bible_artifact_id": final_state.get("story_bible_artifact_id"),
+                    },
                     autocommit=True,
                 )
             elif final_state.get("needs_manual_review"):

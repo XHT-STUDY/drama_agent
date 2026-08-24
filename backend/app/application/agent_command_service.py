@@ -281,6 +281,7 @@ class AgentCommandService:
         active_context: Any | None,
         idempotency_key: str,
         target_episode_count: int | None = None,
+        staged: bool = False,
     ) -> tuple[AgentTurnResponse, int]:
         """执行一次对话 Turn,返回 (响应快照, HTTP 状态码)。
 
@@ -295,6 +296,7 @@ class AgentCommandService:
                     active_context.model_dump(mode="json") if active_context else None
                 ),
                 "target_episode_count": target_episode_count,
+                "staged": staged,
             }
         )
         turn_repo = AgentTurnRepository(db)
@@ -404,6 +406,7 @@ class AgentCommandService:
             final_turn = await self._finalize_turn(
                 db, turn_id, conversation.id, lease_owner, output, project, content,
                 target_episode_count=target_episode_count,
+                staged=staged,
             )
         except AgentStateTransitionError:
             # 租约被接管(超期后他人完成):放弃本次结果,返回持久化胜者。
@@ -646,6 +649,7 @@ class AgentCommandService:
         project: Project,
         user_request: str,
         target_episode_count: int | None = None,
+        staged: bool = False,
     ) -> AgentTurn:
         """事务 B:按 Planner 输出写入 clarification/answer/plan 并终结 Turn。"""
         turn_repo = AgentTurnRepository(db)
@@ -691,6 +695,7 @@ class AgentCommandService:
             plan, snapshots = await self._build_action_plan(
                 db, project, output, user_request,
                 target_episode_count=target_episode_count,
+                staged=staged,
             )
             action = AgentAction(
                 project_id=project.id,
@@ -769,6 +774,7 @@ class AgentCommandService:
         output: AgentPlannerOutput,
         user_request: str,
         target_episode_count: int | None = None,
+        staged: bool = False,
     ) -> tuple[AgentActionPlan, list[ArtifactSnapshot]]:
         """把 Planner 输出转换为服务端模板化的非执行计划与来源快照。"""
         constraints = list(output.constraints)
@@ -789,6 +795,7 @@ class AgentCommandService:
                 user_input=user_request,
                 outline_count=outline_count,
                 script_count=script_count,
+                stop_after="outline" if staged else None,
             )
             target = ActionTarget(target_type="project")
             goal = f"根据用户输入创建短剧剧本:{user_request}"[:2000]
@@ -819,6 +826,14 @@ class AgentCommandService:
                     description="对生成剧本执行评估,低分集进入自动修订或人工复核",
                 ),
             ]
+            if staged:
+                steps = steps[:3] + [
+                    ActionStep(
+                        step_id="stage_gate",
+                        title="大纲确认门",
+                        description="StoryBible 与大纲生成后暂停，等你确认（可聊天修改）再继续写剧本",
+                    ),
+                ]
             snapshots: list[ArtifactSnapshot] = []
         elif output.intent == "evaluate":
             episode = output.target.episode_number if output.target else None
@@ -917,16 +932,18 @@ class AgentCommandService:
         """按 intent 生成与 Dispatcher 读取格式对齐的 Run config。"""
         command = plan.command
         if isinstance(command, CreateScriptCommand):
-            return {
-                "options": {
-                    "user_input": command.user_input,
-                    "source_type": "idea",
-                    "outline_count": command.outline_count,
-                    "script_count": command.script_count,
-                }
+            options: dict[str, Any] = {
+                "user_input": command.user_input,
+                "source_type": "idea",
+                "outline_count": command.outline_count,
+                "script_count": command.script_count,
             }
+            if command.stop_after:
+                options["stop_after"] = command.stop_after
+            return {"options": options}
         if isinstance(command, EvaluateCommand):
-            options: dict[str, Any] = {"scope": command.scope}
+            eval_options: dict[str, Any] = {"scope": command.scope}
+            options = eval_options
             if command.episode_number is not None:
                 options["episode_number"] = command.episode_number
             return {"options": options}

@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added（Phase L 进行中）
+- **L-2**：分段创作确认门——Turn 请求 `staged=true` 时创作计划带 `stop_after=outline`，Run 在 StoryBible 与大纲就绪后转 `needs_review`（事件携带 `stage_gate` 与 Artifact ID），不写剧本；创作图 outline 节点后新增条件边；前端 Composer「创作设置」新增分阶段开关。
 - **L-1**：目标集数端到端生效——Turn 请求新增结构化 `target_episode_count`（1-50），create_script 计划的大纲与剧本集数按用户选择生成，替代此前「文本提示被系统默认覆盖」的行为；集数参与幂等 request_hash；前端 Composer「创作设置」改为结构化传递，仅显式调整时携带。
 
 ### Added（Phase K 进行中）

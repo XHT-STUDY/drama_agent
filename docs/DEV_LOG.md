@@ -3814,3 +3814,34 @@ Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修�
 ### 下一步
 
 - L-2：分段创作 Run（`create_outline` 停在确认门，SB/大纲就绪后 Run 转 needs_review，不写剧本）。
+
+
+## L-2 分段创作 Run（停在确认门）（2026-08-24）
+
+### 做了什么
+
+- 后端通路：Turn 请求 `staged`（默认 false，参与幂等 request_hash）→ 计划模板 `CreateScriptCommand.stop_after="outline"`（domain 判别联合新增可选字段）→ `_build_run_config` 把 `stop_after` 放进 Run options；计划步骤在 staged 时替换为"大纲确认门"步骤（文案说明暂停等确认、可聊天修改）。
+- 创作图：`outline → write_episodes` 直边改为条件边 `_should_route_after_outline`——`stop_after=outline` 时 outline 节点置 `state.stage_gate="outline"` 并 END；未设置时全流程照旧（回归测试保护）。
+- Dispatcher：create_script initial_state 携带 `stop_after`（checkpoint 友好）；后处理新增 stage_gate 分支（优先于 needs_manual_review）：Run → needs_review + `run.needs_review` 事件 payload 携带 `stage_gate=outline` 与 SB/大纲 Artifact ID（L-3 续跑与前端展示的输入）。
+- 前端：Composer"创作设置"面板新增"分阶段创作"开关（checkbox）→ `onSend(content, {staged})` 结构化 → Hook 请求体 `staged`；类型契约同步。
+- 测试：workflow 2 例（分段停在门口：SB/大纲产出、零剧本、stage_gate 置位；未设置时全流程回归）+ API 2 例（staged 计划与 Run options、幂等 409）+ 前端 2 例（开关开/关的 options 携带）。
+
+### 为什么这么做
+
+- `stop_after` 放 command（而非独立 intent）：分段是执行参数不是新意图——不动 intent 白名单、DB 枚举约束与 Planner 语义，改动面最小且向后兼容（缺省 None = 全流程）。
+- stage_gate 走 state + 条件边而非节点内直接置 needs_review：确认门是图结构决策，checkpoint/state_summary 天然记录，L-3 续跑能从 state 精确恢复。
+- 事件 payload 带 SB/大纲 Artifact ID：前端确认门卡片与 L-3 续跑不再回查。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/integration/workflow/test_staged_creation.py | 2 passed |
+| uv run pytest tests/integration/api/test_agent_turns.py | 17 passed（新增 2） |
+| uv run pytest --disable-warnings | **1114 passed / 8 deselected**（1110→1114） |
+| cd frontend && pnpm test | **189 passed**（187→189） |
+| Ruff / mypy / ESLint / tsc | 全部通过（327 files） |
+
+### 下一步
+
+- L-3：`continue_creation` 续跑动作——确认门后的"继续"按钮/指令，从 state 恢复（checkpoint）进入剧本阶段；聊天改稿复用 revise_outline/revise_script。

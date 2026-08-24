@@ -52,6 +52,10 @@ class AgentTurnCreateRequest(BaseModel):
         default=None, ge=1, le=50,
         description="用户选择的目标集数（L-1）；提供时创作计划按此集数生成，缺省用系统默认",
     )
+    staged: bool = Field(
+        default=False,
+        description="分阶段创作（L-2）：SB+大纲生成后 Run 停在确认门，不写剧本",
+    )
 
 
 class AgentRunSnapshot(BaseModel):
@@ -119,6 +123,7 @@ async def create_agent_turn(
         active_context=body.active_context,
         idempotency_key=body.idempotency_key,
         target_episode_count=body.target_episode_count,
+        staged=body.staged,
     )
     response.status_code = status_code
     return result

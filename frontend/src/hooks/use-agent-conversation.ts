@@ -48,7 +48,7 @@ export interface UseAgentConversationResult {
   sendTurn: (
     content: string,
     activeContext?: ActiveArtifactContext | null,
-    options?: { episodeCount?: number },
+    options?: { episodeCount?: number; staged?: boolean },
   ) => Promise<AgentTurnResponse | null>;
   sending: boolean;
   sendError: string | null;
@@ -141,10 +141,12 @@ export function useAgentConversation(
       content,
       activeContext,
       episodeCount,
+      staged,
     }: {
       content: string;
       activeContext?: ActiveArtifactContext | null;
       episodeCount?: number;
+      staged?: boolean;
     }) => {
       // 失败重发相同内容时复用原 key → 服务端返回原 Turn（幂等收据）
       const pending = pendingKeyRef.current;
@@ -169,6 +171,7 @@ export function useAgentConversation(
         active_context: activeContext ?? null,
         idempotency_key: key,
         target_episode_count: episodeCount ?? null,
+        staged: staged ?? false,
       });
       if (status === 202 && !TERMINAL_TURN_STATUSES.has(data.status)) {
         return pollTurnUntilTerminal(data.id);
@@ -205,7 +208,7 @@ export function useAgentConversation(
     async (
       content: string,
       activeContext?: ActiveArtifactContext | null,
-      options?: { episodeCount?: number },
+      options?: { episodeCount?: number; staged?: boolean },
     ) => {
       if (sendInFlightRef.current) return null;
       sendInFlightRef.current = true;
@@ -214,6 +217,7 @@ export function useAgentConversation(
           content,
           activeContext,
           episodeCount: options?.episodeCount,
+          staged: options?.staged,
         });
       } finally {
         sendInFlightRef.current = false;

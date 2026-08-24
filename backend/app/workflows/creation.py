@@ -96,6 +96,23 @@ def _should_evaluate(state: CreationState) -> Literal["evaluate_episodes", "__en
     return "evaluate_episodes"
 
 
+def _should_route_after_outline(
+    state: CreationState,
+) -> Literal["write_episodes", "__end__"]:
+    """outline 后的路由（L-2 分段创作门）。
+
+    - stop_after=outline → END：SB 与大纲已就绪，state.stage_gate="outline"，
+      由 Dispatcher 把 Run 转 needs_review（等待用户确认/聊天修改，L-3 续跑）；
+    - 其余 → write_episodes（全流程）。
+    """
+    if state.get("status") == "failed":
+        return "__end__"
+    if state.get("stop_after") == "outline":
+        logger.info("分段创作：大纲确认门，SB+大纲就绪后暂停（不写剧本）")
+        return "__end__"
+    return "write_episodes"
+
+
 def _should_route_after_eval(state: CreationState) -> Literal["select_revision", "finalize", "__end__"]:
     """evaluate_episodes 后的路由决策 (E-04, F-05)。
 
@@ -160,7 +177,11 @@ def build_creation_workflow(*, checkpointer: Any | None = None) -> CompiledState
     )
     builder.add_edge("retrieve", "story_bible")
     builder.add_edge("story_bible", "outline")
-    builder.add_edge("outline", "write_episodes")
+    builder.add_conditional_edges(
+        "outline",
+        _should_route_after_outline,
+        {"write_episodes": "write_episodes", "__end__": END},
+    )
     builder.add_conditional_edges(
         "write_episodes",
         _should_evaluate,

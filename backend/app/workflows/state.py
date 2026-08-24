@@ -62,6 +62,12 @@ class CreationState(TypedDict, total=False):
     user_constraints: list[str]
     """用户约束（来自确认的 ActionPlan），拼接后写入 RevisionPlan 的 user_instruction。"""
 
+    # ---- 分段创作（L-2）----
+    stop_after: str
+    """分段创作门（"outline" = SB+大纲后暂停等确认；空 = 全流程）。"""
+    stage_gate: str
+    """已到达的确认门（outline）；dispatcher 据此把 Run 转 needs_review。"""
+
     # ---- 对话式大纲修订（J-08）----
     source_outline_artifact_id: str | None
     """服务端解析的修订目标大纲 Artifact UUID（对话式大纲修订入口）。"""
