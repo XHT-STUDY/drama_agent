@@ -350,7 +350,8 @@ async def test_plan_creates_proposed_action_and_action_plan_message(
     assert action["intent"] == "create_script"
     assert action["plan"]["command"]["outline_count"] == 10
     assert action["plan"]["command"]["script_count"] == 3
-    assert len(action["plan"]["steps"]) == 5  # 服务端固定 5 步模板
+    assert len(action["plan"]["steps"]) == 4  # 分阶段默认：4 步（末步大纲确认门）
+    assert action["plan"]["steps"][-1]["step_id"] == "stage_gate"
     assert action["source_artifact_ids"] == []
 
     msgs = await agent_api.get(
@@ -572,7 +573,7 @@ async def test_staged_participates_in_request_hash(
     project_id = await _create_project(async_client)
     first = await agent_api.post(
         f"/api/v1/projects/{project_id}/agent/turns",
-        json=_turn_body("写一个短剧", "staged-hash"),
+        json={**_turn_body("写一个短剧", "staged-hash"), "staged": False},
     )
     assert first.status_code == 200
     second = await agent_api.post(

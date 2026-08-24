@@ -94,7 +94,7 @@ export async function startCreation(page: Page): Promise<string> {
   await page.waitForURL(/\/projects\/[0-9a-f-]{36}$/);
   await expect(page.getByText("对话", { exact: true }).first()).toBeVisible();
 
-  // Agent 流程：发送 Idea → Planner 产出计划 → 确认执行
+  // Agent 流程：发送 Idea → Planner 产出计划 → 确认执行（分阶段为默认）
   await page.getByLabel("输入创作指令").fill(IDEA_TEXT);
   await page.getByTestId("composer-send").click();
 
@@ -102,10 +102,14 @@ export async function startCreation(page: Page): Promise<string> {
   await expect(confirm).toBeVisible({ timeout: 30_000 });
   await confirm.click();
 
-  // SSE 进度面板出现（已连接）
-  await expect(page.getByText("创作进度").first()).toBeVisible({
-    timeout: 30_000,
-  });
+  // 分阶段默认：大纲门出现 → 点"写全部"一口气完成
+  const continueAll = page.getByTestId("continue-all");
+  await expect(continueAll).toBeVisible({ timeout: 90_000 });
+  await continueAll.click();
+
+  // 续跑启动的确定信号：门按钮消失（Run 离开门态；FakeLLM 下执行窗口极短，
+  // 瞬时进度面板不可作为断言）
+  await expect(continueAll).toBeHidden({ timeout: 30_000 });
   return name;
 }
 

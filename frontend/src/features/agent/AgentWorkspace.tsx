@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { conversationsApi } from "@/lib/api-client";
+import { conversationsApi, runsApi } from "@/lib/api-client";
 import { useAgentConversation } from "@/hooks/use-agent-conversation";
 import { useRunEvents } from "@/hooks/use-run-events";
 import { ActionPlanCard } from "./ActionPlanCard";
@@ -63,7 +63,7 @@ export function AgentWorkspace({ projectId, project }: Props) {
   }, []);
 
   const handleSend = useCallback(
-    (content: string, options?: { episodeCount?: number; staged?: boolean }) => {
+    (content: string, options?: { episodeCount?: number }) => {
       void conversation.sendTurn(content, activeContext, options);
     },
     [conversation, activeContext],
@@ -97,10 +97,21 @@ export function AgentWorkspace({ projectId, project }: Props) {
       return status === "queued" || status === "running" ? 2000 : false;
     },
   });
+  // L-3/L-4：Action 在门后停在 needs_review 不再变——执行中判定改由 Run 驱动
+  //（gated-run 查询与 ActionPlanCard 共享缓存；续跑后 RunProgress 随之出现）。
+  const gatedRunId = actionForRun.data?.run_id ?? null;
+  const gatedRun = useQuery({
+    queryKey: ["gated-run", gatedRunId],
+    enabled: gatedRunId !== null,
+    queryFn: () => runsApi.get(gatedRunId!),
+    refetchInterval: (query) =>
+      query.state.data?.status === "queued" || query.state.data?.status === "running"
+        ? 2000
+        : false,
+  });
   const activeRunId =
-    actionForRun.data?.run_id != null &&
-    (actionForRun.data.status === "queued" || actionForRun.data.status === "running")
-      ? actionForRun.data.run_id
+    gatedRun.data && (gatedRun.data.status === "queued" || gatedRun.data.status === "running")
+      ? gatedRunId
       : null;
   const runEvents = useRunEvents(activeRunId);
 

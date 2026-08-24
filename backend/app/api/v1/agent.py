@@ -53,8 +53,9 @@ class AgentTurnCreateRequest(BaseModel):
         description="用户选择的目标集数（L-1）；提供时创作计划按此集数生成，缺省用系统默认",
     )
     staged: bool = Field(
-        default=False,
-        description="分阶段创作（L-2）：SB+大纲生成后 Run 停在确认门，不写剧本",
+        default=True,
+        description="分阶段创作（默认开启）：SB+大纲生成后 Run 停在确认门，"
+        "用户在门上选择写 1 集/5 集/全部；false = 确认计划后一口气写完",
     )
 
 

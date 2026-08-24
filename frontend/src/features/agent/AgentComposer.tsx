@@ -22,10 +22,7 @@ interface Props {
   sending: boolean;
   sendError: string | null;
   failedContent: string | null;
-  onSend: (
-    content: string,
-    options?: { episodeCount?: number; staged?: boolean },
-  ) => void;
+  onSend: (content: string, options?: { episodeCount?: number }) => void;
   /** 空会话示例（点击填入输入框） */
   examples?: readonly string[];
   /** 首次创作保留的目标集数设置 */
@@ -45,7 +42,6 @@ export function AgentComposer({
 }: Props) {
   const [draft, setDraft] = useState("");
   const [episodeCount, setEpisodeCount] = useState(defaultEpisodeCount);
-  const [staged, setStaged] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   // 用户显式调整过集数 → 发送时把目标集数附加为提示（Planner/服务端解析）
   const [settingsTouched, setSettingsTouched] = useState(false);
@@ -64,15 +60,8 @@ export function AgentComposer({
   function submit() {
     const content = draft.trim();
     if (!content || sending) return;
-    // 集数（L-1，显式调整时携带）与分阶段开关（L-2）结构化传给服务端
-    const options =
-      settingsTouched || staged
-        ? {
-            ...(settingsTouched ? { episodeCount } : {}),
-            ...(staged ? { staged: true } : {}),
-          }
-        : undefined;
-    onSend(content, options);
+    // 集数（L-1，显式调整时携带）结构化传给服务端；分阶段已为默认流程
+    onSend(content, settingsTouched ? { episodeCount } : undefined);
     setDraft("");
   }
 
@@ -141,17 +130,7 @@ export function AgentComposer({
       </div>
 
       {showSettings && (
-        <div className="mt-2 space-y-2 border-t border-[var(--border)] pt-2 text-xs text-[var(--text-muted)]">
-          <label className="flex cursor-pointer items-center gap-2" data-testid="staged-toggle">
-            <input
-              type="checkbox"
-              checked={staged}
-              onChange={(e) => setStaged(e.target.checked)}
-              className="h-4 w-4"
-            />
-            <span>分阶段创作：先生成大纲等确认（可聊天修改），再继续写剧本</span>
-          </label>
-          <div className="flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2 border-t border-[var(--border)] pt-2 text-xs text-[var(--text-muted)]">
           <span>目标集数：</span>
           <input
             type="number"
@@ -169,7 +148,6 @@ export function AgentComposer({
             className="w-20 rounded border border-[var(--border)] px-2 py-1 text-xs"
           />
           <span>集（首次创作按此集数生成大纲与剧本；未调整时用系统默认）</span>
-          </div>
         </div>
       )}
     </div>

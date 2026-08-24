@@ -131,12 +131,12 @@ prompts:
 
   # ---- 对话命令 Planner ----
   - name: agent_command_planner
-    version: "1.0.0"
+    version: "1.1.0"
     input_schema: AgentPlannerInput
     output_schema: AgentPlannerOutput
     owner: planner
     template: agent_command_planner.md
-    changelog: "初始版本：自然语言请求的白名单意图规划与安全澄清"
+    changelog: "v1.1：典型创作请求直接判 create_script；分阶段默认流程说明。v1.0：初始版本"
     user_content_vars: [user_request, project_context, active_context]
 
 

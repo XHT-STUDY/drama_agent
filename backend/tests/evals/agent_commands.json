@@ -1063,6 +1063,101 @@
       },
       "preflight_deterministic": false,
       "note": "范围外产物，模型应澄清"
+    },
+    {
+      "id": "cmd-056",
+      "user_request": "我想写一个被青训队抛弃的足球少年逆袭故事",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "愿望式创作请求直接判 create_script（prompt v1.1 规则 8）"
+    },
+    {
+      "id": "cmd-057",
+      "user_request": "我想创作一个都市美食治愈的短剧",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-058",
+      "user_request": "帮我写个奇幻短剧吧",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": ""
+    },
+    {
+      "id": "cmd-059",
+      "user_request": "先搭建故事设定和大纲",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": "分阶段是默认流程（prompt v1.1 规则 9），非新意图不澄清"
+    },
+    {
+      "id": "cmd-060",
+      "user_request": "先出大纲我看看再决定",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "create_script"
+      },
+      "preflight_deterministic": false,
+      "note": ""
     }
   ]
 }

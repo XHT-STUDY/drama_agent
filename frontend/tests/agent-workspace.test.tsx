@@ -411,36 +411,6 @@ describe("AgentComposer 集数结构化传递（L-1）", () => {
 });
 
 
-describe("AgentComposer 分阶段开关（L-2）", () => {
-  function setup(onSend: (c: string, o?: { episodeCount?: number; staged?: boolean }) => void) {
-    return render(
-      React.createElement(AgentComposer, {
-        sending: false, sendError: null, failedContent: null, onSend,
-      }),
-    );
-  }
-
-  it("开启分阶段后结构化携带 staged", () => {
-    const onSend = vi.fn();
-    setup(onSend);
-    fireEvent.click(screen.getByText("创作设置"));
-    const toggle = screen.getByTestId("staged-toggle").querySelector("input")!;
-    fireEvent.click(toggle);
-    const textarea = screen.getByLabelText("输入创作指令");
-    fireEvent.change(textarea, { target: { value: "写个剧本" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledWith("写个剧本", { staged: true });
-  });
-
-  it("未开启时不携带 staged", () => {
-    const onSend = vi.fn();
-    setup(onSend);
-    const textarea = screen.getByLabelText("输入创作指令");
-    fireEvent.change(textarea, { target: { value: "写个剧本" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledWith("写个剧本", undefined);
-  });
-});
 
 
 describe("ActionPlanCard 确认门继续按钮（L-3）", () => {

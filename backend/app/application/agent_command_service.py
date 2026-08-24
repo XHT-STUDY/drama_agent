@@ -281,7 +281,7 @@ class AgentCommandService:
         active_context: Any | None,
         idempotency_key: str,
         target_episode_count: int | None = None,
-        staged: bool = False,
+        staged: bool = True,
     ) -> tuple[AgentTurnResponse, int]:
         """执行一次对话 Turn,返回 (响应快照, HTTP 状态码)。
 
@@ -649,7 +649,7 @@ class AgentCommandService:
         project: Project,
         user_request: str,
         target_episode_count: int | None = None,
-        staged: bool = False,
+        staged: bool = True,
     ) -> AgentTurn:
         """事务 B:按 Planner 输出写入 clarification/answer/plan 并终结 Turn。"""
         turn_repo = AgentTurnRepository(db)
@@ -774,7 +774,7 @@ class AgentCommandService:
         output: AgentPlannerOutput,
         user_request: str,
         target_episode_count: int | None = None,
-        staged: bool = False,
+        staged: bool = True,
     ) -> tuple[AgentActionPlan, list[ArtifactSnapshot]]:
         """把 Planner 输出转换为服务端模板化的非执行计划与来源快照。"""
         constraints = list(output.constraints)

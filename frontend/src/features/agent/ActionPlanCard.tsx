@@ -14,7 +14,7 @@
 
 import Link from "next/link";
 import type { AgentOutcome } from "@/types/api";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { runsApi } from "@/lib/api-client";
 import { useAgentAction } from "@/hooks/use-agent-action";
@@ -114,11 +114,17 @@ export function ActionPlanCard({
     rejecting,
   } = useAgentAction(actionId);
 
+  const queryClient = useQueryClient();
   // L-3/L-4 确认门：needs_review 且 Run 停在门上 → 查 run.stage_gate 提供续跑选项
   const runQuery = useQuery({
     queryKey: ["gated-run", action?.run_id],
     enabled: action?.status === "needs_review" && !!action?.run_id,
     queryFn: () => runsApi.get(action!.run_id!),
+    // 续跑后 Run 回到 queued/running → 轮询至下一门/终态（门按钮随 stage_gate 消失/复现）
+    refetchInterval: (query) =>
+      query.state.data?.status === "queued" || query.state.data?.status === "running"
+        ? 2000
+        : false,
   });
   const stageGate =
     action?.status === "needs_review" ? runQuery.data?.stage_gate ?? null : null;
@@ -129,7 +135,16 @@ export function ActionPlanCard({
         action!.run_id!,
         batchSize ? { batch_size: batchSize } : undefined,
       ),
-    onSuccess: () => onContinued?.(),
+    onSuccess: () => {
+      // Action 停在 needs_review 不再变——门 UI 由 Run 驱动，立即失效以切走按钮
+      void queryClient.invalidateQueries({
+        queryKey: ["gated-run", action?.run_id],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["agent-action", actionId],
+      });
+      onContinued?.();
+    },
   });
 
   if (isLoading || !action) {

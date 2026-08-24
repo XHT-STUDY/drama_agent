@@ -63,12 +63,12 @@ test.describe("J-12 Agent Workspace", () => {
     await expect(page.getByTestId("confirm-action")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("confirm-action").click();
 
-    // Run 进行中：刷新页面 → 消息恢复 + 计划卡轮询恢复进度
-    await expect(
-      page.getByText("排队中", { exact: true }).or(
-        page.getByText("执行中", { exact: true }),
-      ),
-    ).toBeVisible({ timeout: 30_000 });
+    // 分阶段默认：大纲门 → "写全部"后进入执行
+    const continueAll = page.getByTestId("continue-all");
+    await expect(continueAll).toBeVisible({ timeout: 90_000 });
+    await continueAll.click();
+    // 续跑启动信号：门按钮消失（FakeLLM 执行窗口极短，不断言瞬时进度）
+    await expect(continueAll).toBeHidden({ timeout: 30_000 });
     await page.reload();
     await expect(page.getByLabel("输入创作指令")).toBeVisible();
     // 用户消息与计划消息在刷新后仍可见（服务端是事实源）

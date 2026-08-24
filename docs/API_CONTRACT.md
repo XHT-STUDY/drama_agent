@@ -214,7 +214,9 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **`target_episode_count`（L-1，可选 1-50）**：用户选择的目标集数。提供时 create_script 计划的大纲与剧本集数均按此值生成（「我选多少就制作多少」）；缺省回退 `mvp_outline_count`/`mvp_script_count` 系统默认。该字段参与幂等 request_hash——同一 key 携带不同集数返回 409 `IDEMPOTENCY_KEY_REUSED`。
 
-**`staged`（L-2，默认 false）**：分阶段创作。true 时 create_script 计划带 `stop_after=outline`——Run 在 StoryBible 与分集大纲产出后转 `needs_review`（`run.needs_review` 事件 payload 含 `stage_gate=outline` 与新旧 Artifact ID），不写剧本；等待确认后由续跑动作（L-3）继续。同样参与幂等 request_hash。
+**`staged`（L-2，**默认 true**）**：分阶段创作是默认体验——create_script 计划带 `stop_after=outline`，Run 在 StoryBible 与分集大纲产出后转 `needs_review`（`run.needs_review` 事件 payload 含 `stage_gate=outline` 与 Artifact ID），不写剧本；用户在门上选择写 1 集 / 5 集 / 全部（L-4）。`staged=false` 为确认计划后一口气写完（legacy 直连 API 行为不变）。参与幂等 request_hash。
+
+**Planner v1.1**：典型创作请求（"我想写/帮我写一个 XX 故事"）直接判 `create_script` 不澄清；"先搭建设定和大纲""分阶段来"与默认流程一致，同样判 `create_script`（不是新意图）。
 
 **续跑（L-3）**：`POST /runs/{id}/continue`——仅 `needs_review` 且 `stage_gate=outline` 的 Run 可续（否则 409 `RUN_NOT_RETRYABLE`；活跃中重复续跑 409 `RUN_ALREADY_ACTIVE`）。续跑时剥离 `stop_after`/`stage_gate`，并把大纲刷新为项目**最新 valid 版本**（暂停期间通过聊天修改大纲的成果生效）；Run 回 `queued`，从 checkpoint 恢复——SB/大纲不重算，直接进入剧本阶段。事件 `run.queued` payload 含 `stage_gate_cleared=outline`。
 

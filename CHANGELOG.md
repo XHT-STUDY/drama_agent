@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added（Phase L 进行中）
+- **L-5**：分阶段成为默认创作体验 + Planner v1.1——`staged` 默认 true（对话工作台默认"先 SB+大纲确认再写剧本"，一口气生成 = 门上点"写全部"；legacy 直连 API 行为不变）；Composer 移除分阶段开关；Planner prompt v1.1：典型创作请求（"我想写 XX 故事"）直接判 create_script 不澄清、"先搭大纲/分阶段"与默认一致（修复用户实测暴露的两轮连环澄清）；门 UI 与 RunProgress 改由 Run 查询驱动（`gated-run` 共享缓存，续跑后按钮消失/批门复现）；评测集增至 60 条（补愿望式创作与分阶段表达用例）。
 - **L-4**：剧本分批生成——continue 请求支持 `batch_size`（1 集 / 5 集 / 剩余全部）；批模式本批写完并评估后停在 `scripts` 门（事件含已写/目标集数），可逐批推进或先聊天改稿；`RunResponse` 暴露 `stage_gate`；计划卡按门类型显示批次按钮组（大纲门同样提供"先写第 1 集 / 前 5 集 / 写全部"起批方式）；write_episodes 复用已有集跳过续写、Artifact 幂等不重算。
 - **L-3**：确认门续跑——`POST /runs/{id}/continue`（仅 stage_gate=outline 可续；剥离门字段；大纲刷新为最新 valid 版本，暂停期间聊天改版生效；从 checkpoint 恢复不重算）；前端分段门 needs_review 计划卡显示「继续创作剧本」主按钮。
 - **L-2**：分段创作确认门——Turn 请求 `staged=true` 时创作计划带 `stop_after=outline`，Run 在 StoryBible 与大纲就绪后转 `needs_review`（事件携带 `stage_gate` 与 Artifact ID），不写剧本；创作图 outline 节点后新增条件边；前端 Composer「创作设置」新增分阶段开关。

@@ -89,7 +89,11 @@ async def test_e2e_path_creation_then_episode3_revision(
 
     turn = await client.post(
         f"/api/v1/projects/{project_id}/agent/turns",
-        json={"content": "写一个被青训队抛弃的足球少年逆袭的短剧", "idempotency_key": "e2e-1"},
+        json={
+            "content": "写一个被青训队抛弃的足球少年逆袭的短剧",
+            "idempotency_key": "e2e-1",
+            "staged": False,  # 本测试验证一口气跑完的路径
+        },
     )
     assert turn.status_code == 200, turn.text
     action_id = turn.json()["action_id"]
