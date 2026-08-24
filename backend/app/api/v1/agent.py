@@ -48,6 +48,10 @@ class AgentTurnCreateRequest(BaseModel):
     idempotency_key: str = Field(
         ..., min_length=1, max_length=128, description="客户端生成的请求幂等键"
     )
+    target_episode_count: int | None = Field(
+        default=None, ge=1, le=50,
+        description="用户选择的目标集数（L-1）；提供时创作计划按此集数生成，缺省用系统默认",
+    )
 
 
 class AgentRunSnapshot(BaseModel):
@@ -114,6 +118,7 @@ async def create_agent_turn(
         conversation_id=body.conversation_id,
         active_context=body.active_context,
         idempotency_key=body.idempotency_key,
+        target_episode_count=body.target_episode_count,
     )
     response.status_code = status_code
     return result

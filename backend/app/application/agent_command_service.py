@@ -280,6 +280,7 @@ class AgentCommandService:
         conversation_id: uuid.UUID | None,
         active_context: Any | None,
         idempotency_key: str,
+        target_episode_count: int | None = None,
     ) -> tuple[AgentTurnResponse, int]:
         """执行一次对话 Turn,返回 (响应快照, HTTP 状态码)。
 
@@ -293,6 +294,7 @@ class AgentCommandService:
                 "active_context": (
                     active_context.model_dump(mode="json") if active_context else None
                 ),
+                "target_episode_count": target_episode_count,
             }
         )
         turn_repo = AgentTurnRepository(db)
@@ -400,7 +402,8 @@ class AgentCommandService:
         # ---- 事务 B:写入终态并终结 Turn ----
         try:
             final_turn = await self._finalize_turn(
-                db, turn_id, conversation.id, lease_owner, output, project, content
+                db, turn_id, conversation.id, lease_owner, output, project, content,
+                target_episode_count=target_episode_count,
             )
         except AgentStateTransitionError:
             # 租约被接管(超期后他人完成):放弃本次结果,返回持久化胜者。
@@ -642,6 +645,7 @@ class AgentCommandService:
         output: AgentPlannerOutput,
         project: Project,
         user_request: str,
+        target_episode_count: int | None = None,
     ) -> AgentTurn:
         """事务 B:按 Planner 输出写入 clarification/answer/plan 并终结 Turn。"""
         turn_repo = AgentTurnRepository(db)
@@ -684,7 +688,10 @@ class AgentCommandService:
                 response_message_id=msg.id,
             )
         else:
-            plan, snapshots = await self._build_action_plan(db, project, output, user_request)
+            plan, snapshots = await self._build_action_plan(
+                db, project, output, user_request,
+                target_episode_count=target_episode_count,
+            )
             action = AgentAction(
                 project_id=project.id,
                 conversation_id=conversation_id,
@@ -761,6 +768,7 @@ class AgentCommandService:
         project: Project,
         output: AgentPlannerOutput,
         user_request: str,
+        target_episode_count: int | None = None,
     ) -> tuple[AgentActionPlan, list[ArtifactSnapshot]]:
         """把 Planner 输出转换为服务端模板化的非执行计划与来源快照。"""
         constraints = list(output.constraints)
@@ -769,8 +777,14 @@ class AgentCommandService:
         command: AgentCommand  # 分支内按 intent 赋对应命令
 
         if output.intent == "create_script":
-            outline_count = self._settings.mvp_outline_count
-            script_count = self._settings.mvp_script_count
+            # L-1：用户显式选择的目标集数优先（大纲与剧本同数——
+            # "我选多少就制作多少"）；未提供时回退系统默认。
+            outline_count = (
+                target_episode_count or self._settings.mvp_outline_count
+            )
+            script_count = (
+                target_episode_count or self._settings.mvp_script_count
+            )
             command = CreateScriptCommand(
                 user_input=user_request,
                 outline_count=outline_count,

@@ -63,8 +63,8 @@ export function AgentWorkspace({ projectId, project }: Props) {
   }, []);
 
   const handleSend = useCallback(
-    (content: string) => {
-      void conversation.sendTurn(content, activeContext);
+    (content: string, options?: { episodeCount?: number }) => {
+      void conversation.sendTurn(content, activeContext, options);
     },
     [conversation, activeContext],
   );

@@ -103,10 +103,18 @@ async def _create_project(async_client: AsyncClient, title: str = "Agent 测试"
     return str(resp.json()["id"])
 
 
-def _turn_body(content: str, key: str, conversation_id: str | None = None) -> dict[str, Any]:
+def _turn_body(
+    content: str,
+    key: str,
+    conversation_id: str | None = None,
+    *,
+    target_episode_count: int | None = None,
+) -> dict[str, Any]:
     body: dict[str, Any] = {"content": content, "idempotency_key": key}
     if conversation_id is not None:
         body["conversation_id"] = conversation_id
+    if target_episode_count is not None:
+        body["target_episode_count"] = target_episode_count
     return body
 
 
@@ -442,3 +450,86 @@ async def test_repeated_clarifications_offer_legal_examples_after_three_turns(
         question = [m["content"] for m in msgs.json()["items"] if m["kind"] == "clarification"][-1]
     assert "创建剧本" in question
     assert "评估项目" in question
+
+
+# ========================================================================
+# L-1：目标集数端到端生效
+# ========================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_target_episode_count_flows_into_plan_and_run(
+    agent_api: AsyncClient, async_client: AsyncClient, planner_llm: FakeLLM
+) -> None:
+    """Turn 携带 target_episode_count=5 → 计划命令与确认后 Run options 均为 5 集。"""
+    planner_llm.register("agent_command_planner", _plan_output())
+    project_id = await _create_project(async_client)
+    resp = await agent_api.post(
+        f"/api/v1/projects/{project_id}/agent/turns",
+        json=_turn_body("写一个足球少年逆袭短剧", "eps-1", target_episode_count=5),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "action_proposed"
+    action_id = body["action_id"]
+
+    detail = await agent_api.get(f"/api/v1/agent/actions/{action_id}")
+    command = detail.json()["plan"]["command"]
+    assert command["outline_count"] == 5
+    assert command["script_count"] == 5
+    # 计划步骤文案使用用户集数
+    steps_text = " ".join(s["title"] for s in detail.json()["plan"]["steps"])
+    assert "5 集" in steps_text
+
+    confirm = await agent_api.post(f"/api/v1/agent/actions/{action_id}/confirm")
+    assert confirm.status_code == 202
+    run_id = confirm.json()["run"]["run_id"]
+    run_resp = await agent_api.get(f"/api/v1/runs/{run_id}")
+    options = run_resp.json()["config_snapshot"]["options"]
+    assert options["outline_count"] == 5
+    assert options["script_count"] == 5
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_default_turn_keeps_system_counts(
+    agent_api: AsyncClient, async_client: AsyncClient, planner_llm: FakeLLM
+) -> None:
+    """未携带集数 → 计划沿用系统默认（mvp_outline_count / mvp_script_count）。"""
+    planner_llm.register("agent_command_planner", _plan_output())
+    project_id = await _create_project(async_client)
+    from app.core.config import load_settings
+
+    settings = load_settings()
+    resp = await agent_api.post(
+        f"/api/v1/projects/{project_id}/agent/turns",
+        json=_turn_body("写一个足球少年逆袭短剧", "eps-default"),
+    )
+    assert resp.status_code == 200
+    action_id = resp.json()["action_id"]
+    detail = await agent_api.get(f"/api/v1/agent/actions/{action_id}")
+    command = detail.json()["plan"]["command"]
+    assert command["outline_count"] == settings.mvp_outline_count
+    assert command["script_count"] == settings.mvp_script_count
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_same_key_different_episode_count_rejected(
+    agent_api: AsyncClient, async_client: AsyncClient, planner_llm: FakeLLM
+) -> None:
+    """集数参与 request_hash：同 key 不同集数 → 409 IDEMPOTENCY_KEY_REUSED。"""
+    planner_llm.register("agent_command_planner", _plan_output())
+    project_id = await _create_project(async_client)
+    first = await agent_api.post(
+        f"/api/v1/projects/{project_id}/agent/turns",
+        json=_turn_body("写一个足球少年逆袭短剧", "eps-hash", target_episode_count=5),
+    )
+    assert first.status_code == 200
+    second = await agent_api.post(
+        f"/api/v1/projects/{project_id}/agent/turns",
+        json=_turn_body("写一个足球少年逆袭短剧", "eps-hash", target_episode_count=8),
+    )
+    assert second.status_code == 409
+    assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"

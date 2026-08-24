@@ -313,7 +313,7 @@ describe("AgentComposer 键盘", () => {
 
     fireEvent.keyDown(textarea, { key: "Enter" });
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(onSend).toHaveBeenCalledWith("评估第 1 集");
+    expect(onSend).toHaveBeenCalledWith("评估第 1 集", undefined);
     expect(textarea.value).toBe(""); // 发送后清空
   });
 
@@ -373,5 +373,38 @@ describe("回滚开关", () => {
     await waitFor(() => expect(screen.getByText("开始创作")).toBeTruthy());
     expect(screen.queryByTestId("empty-conversation")).toBeNull();
     expect(screen.queryByTestId("command-examples")).toBeNull();
+  });
+});
+
+
+describe("AgentComposer 集数结构化传递（L-1）", () => {
+  function setup(onSend: (c: string, o?: { episodeCount?: number }) => void) {
+    return render(
+      React.createElement(AgentComposer, {
+        sending: false, sendError: null, failedContent: null, onSend,
+      }),
+    );
+  }
+
+  it("未调整设置：不携带集数选项", () => {
+    const onSend = vi.fn();
+    setup(onSend);
+    const textarea = screen.getByLabelText("输入创作指令");
+    fireEvent.change(textarea, { target: { value: "写个剧本" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledWith("写个剧本", undefined);
+  });
+
+  it("调整过设置：集数结构化携带，不拼进消息文本", () => {
+    const onSend = vi.fn();
+    setup(onSend);
+    fireEvent.click(screen.getByText("创作设置"));
+    const input = screen.getByLabelText("目标集数") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "6" } });
+    const textarea = screen.getByLabelText("输入创作指令");
+    fireEvent.change(textarea, { target: { value: "写个剧本" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledWith("写个剧本", { episodeCount: 6 });
+    expect(onSend.mock.calls[0][0]).not.toContain("目标");
   });
 });

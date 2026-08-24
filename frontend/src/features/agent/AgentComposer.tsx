@@ -22,7 +22,7 @@ interface Props {
   sending: boolean;
   sendError: string | null;
   failedContent: string | null;
-  onSend: (content: string) => void;
+  onSend: (content: string, options?: { episodeCount?: number }) => void;
   /** 空会话示例（点击填入输入框） */
   examples?: readonly string[];
   /** 首次创作保留的目标集数设置 */
@@ -60,7 +60,11 @@ export function AgentComposer({
   function submit() {
     const content = draft.trim();
     if (!content || sending) return;
-    onSend(settingsTouched ? `${content}（目标 ${episodeCount} 集）` : content);
+    // 集数结构化传给服务端（L-1）；仅在用户显式调整过设置时携带
+    onSend(
+      content,
+      settingsTouched ? { episodeCount: episodeCount } : undefined,
+    );
     setDraft("");
   }
 
@@ -146,7 +150,7 @@ export function AgentComposer({
             aria-label="目标集数"
             className="w-20 rounded border border-[var(--border)] px-2 py-1 text-xs"
           />
-          <span>集（首次创建剧本时作为提示随消息发送）</span>
+          <span>集（首次创作按此集数生成大纲与剧本；未调整时用系统默认）</span>
         </div>
       )}
     </div>

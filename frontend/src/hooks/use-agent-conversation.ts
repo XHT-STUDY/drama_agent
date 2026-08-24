@@ -45,7 +45,11 @@ export interface UseAgentConversationResult {
   hasMore: boolean;
   loadMore: () => void;
   isLoading: boolean;
-  sendTurn: (content: string, activeContext?: ActiveArtifactContext | null) => Promise<AgentTurnResponse | null>;
+  sendTurn: (
+    content: string,
+    activeContext?: ActiveArtifactContext | null,
+    options?: { episodeCount?: number },
+  ) => Promise<AgentTurnResponse | null>;
   sending: boolean;
   sendError: string | null;
   /** 发送失败时保留的用户输入（调用方用于恢复输入框草稿） */
@@ -136,9 +140,11 @@ export function useAgentConversation(
     mutationFn: async ({
       content,
       activeContext,
+      episodeCount,
     }: {
       content: string;
       activeContext?: ActiveArtifactContext | null;
+      episodeCount?: number;
     }) => {
       // 失败重发相同内容时复用原 key → 服务端返回原 Turn（幂等收据）
       const pending = pendingKeyRef.current;
@@ -162,6 +168,7 @@ export function useAgentConversation(
         content,
         active_context: activeContext ?? null,
         idempotency_key: key,
+        target_episode_count: episodeCount ?? null,
       });
       if (status === 202 && !TERMINAL_TURN_STATUSES.has(data.status)) {
         return pollTurnUntilTerminal(data.id);
@@ -195,11 +202,19 @@ export function useAgentConversation(
   // 与 useAgentAction.confirm 的防重复策略一致。
   const sendInFlightRef = useRef(false);
   const sendTurn = useCallback(
-    async (content: string, activeContext?: ActiveArtifactContext | null) => {
+    async (
+      content: string,
+      activeContext?: ActiveArtifactContext | null,
+      options?: { episodeCount?: number },
+    ) => {
       if (sendInFlightRef.current) return null;
       sendInFlightRef.current = true;
       try {
-        return await sendMutation.mutateAsync({ content, activeContext });
+        return await sendMutation.mutateAsync({
+          content,
+          activeContext,
+          episodeCount: options?.episodeCount,
+        });
       } finally {
         sendInFlightRef.current = false;
       }

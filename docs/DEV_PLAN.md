@@ -3417,6 +3417,22 @@ Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋�
 
 ---
 
+## 20.6 Phase L 规划（分阶段创作与集数自由，2026-08-23 登记）
+
+> 用户诉求：目标集数完全由用户选择；创作流程改为"逐阶段生成 + 确认门 +
+> 聊天改稿"——SB/大纲每阶段停下等确认（对话修订），剧本分批生成
+> （1 集 / 5 集 / 剩余全部）。顺序经确认保持 **需求 → SB → 大纲 → 剧本**
+> （大纲生成依赖 SB 人物与锁定事实）。
+
+| # | 任务 | 依赖 | 估算 | 要点 |
+|---:|---|---|---:|---|
+| L-1 | 集数端到端生效 | K-4 | 0.5d | Turn 请求结构化 `target_episode_count`（替代 Composer 文本提示）→ 计划模板 CreateScriptCommand/options 使用用户集数；幂等 request_hash 纳入该字段 |
+| L-2 | 分段创作 Run（停在确认门） | L-1 | 1d | `create_outline` 阶段参数：需求 → SB → 大纲后 Run 转 needs_review，不写剧本；计划卡展示"下一步：确认后继续" |
+| L-3 | 续跑动作 continue_creation | L-2 | 1.5d | 确认 SB/大纲后从 checkpoint 恢复进入下一阶段；聊天改稿复用 revise_outline/revise_script（J-08/J-06） |
+| L-4 | 剧本分批生成 | L-3 | 1d | 计划卡提供 1 集 / 5 集 / 剩余全部选项；write_episodes 从已有集数续写（Artifact 幂等不重算） |
+
+---
+
 ## 21. MVP 后续 Backlog
 
 只有 Release Gate 通过后再考虑：

@@ -3787,3 +3787,30 @@ Phase J（J-01～J-12）全部完成：M1 持久化、M2 对话计划、M3 修�
 ### 下一步
 
 - Phase K 候选后续（§20.5）：成本可视化（~2d）→ 多用户认证（~4d）。
+
+
+## L-1 目标集数端到端生效（2026-08-23）
+
+### 做了什么
+
+- 后端：`AgentTurnCreateRequest` 新增 `target_episode_count`（1-50 可选）→ `create_turn` 参数与幂等 request_hash 纳入该字段 → `_build_action_plan` create_script 分支用用户集数替代 `settings.mvp_outline_count/mvp_script_count`（大纲与剧本同数——"我选多少就制作多少"），计划步骤文案同步使用实际集数；确认后的 Run options 由计划命令自然携带（既有通路）。
+- 前端：Composer"创作设置"去掉"（目标 X 集）"文本拼接，改为 `onSend(content, {episodeCount})` 结构化传出（仅显式调整过时携带）；`useAgentConversation.sendTurn` → 请求体 `target_episode_count`；类型契约同步。
+- 测试：后端 3 例（集数进计划与 Run options、缺省回退系统默认、同 key 不同集数 409）；前端 Composer 2 例（未调整不携带 / 调整后结构化携带且不污染消息文本）+ 轮询用例断言请求体。
+
+### 为什么这么做
+
+- 集数是执行参数而非对话内容：结构化字段让服务端权威解析，避免依赖 Planner 从文本里"读出"集数（提示词可被忽略/误读）；参与 request_hash 保证幂等收据语义完整（同 key 换集数是不同请求）。
+- 仅在用户显式调整时携带：默认路径行为不变（系统默认 10/3），避免所有 Turn 都带冗余字段。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/integration/api/test_agent_turns.py | 15 passed（新增 3 例） |
+| uv run pytest --disable-warnings | **1110 passed / 8 deselected**（1107→1110） |
+| cd frontend && pnpm test | **187 passed**（185→187） |
+| Ruff / mypy / ESLint / tsc | 全部通过（326 files） |
+
+### 下一步
+
+- L-2：分段创作 Run（`create_outline` 停在确认门，SB/大纲就绪后 Run 转 needs_review，不写剧本）。

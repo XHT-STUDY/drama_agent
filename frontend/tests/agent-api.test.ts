@@ -247,7 +247,7 @@ describe("useAgentConversation", () => {
       { id: "c1", project_id: "p1", title: "帮我修第3集", created_at: NOW, updated_at: NOW },
       201,
     ]);
-    route("POST", /\/projects\/p1\/agent\/turns$/, () => [
+    route("POST", /\/projects\/p1\/agent\/turns$/, (_body) => [
       turn({ status: "planning", action_id: null }),
       202,
     ]);
@@ -289,6 +289,10 @@ describe("useAgentConversation", () => {
 
     expect(result.current.conversationId).toBe("c1");
     expect(result.current.activeActionId).toBe("a1");
+    // 结构化集数随请求携带（L-1），不再拼进消息文本
+    const posts = calls.filter((c) => c.url.includes("/agent/turns"));
+    expect(String(posts[0].body.content)).not.toContain("目标");
+    expect(posts[0].body.target_episode_count ?? undefined).toBeUndefined();
     expect(result.current.lastTurn?.status).toBe("action_proposed");
     await waitFor(() => expect(result.current.messages.length).toBe(1));
     expect(turnPolls).toBeGreaterThanOrEqual(2);

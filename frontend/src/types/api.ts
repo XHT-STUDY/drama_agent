@@ -699,6 +699,8 @@ export interface AgentTurnCreate {
   content: string;
   active_context?: ActiveArtifactContext | null;
   idempotency_key: string;
+  /** 用户选择的目标集数（L-1）：创作计划按此集数生成，缺省用系统默认 */
+  target_episode_count?: number | null;
 }
 
 // ============================================================
