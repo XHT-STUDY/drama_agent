@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Fixed（用户实测反馈）
+- **目标集数未传入需求归一化**：normalize 节点构造 `RequirementInput` 时未传集数，吃领域模型默认 10——用户选 3 集时需求/StoryBible 仍按 10 集规划（Planner 随后正确地发现矛盾并澄清"3 还是 10"）。修复：从 Run config 的 `outline_count`/`script_count` 透传。
 - **LLM 超时配置未生效**（真实 bug）：`generate_structured` 的 `timeout_seconds` 硬编码默认 180s，逐请求覆盖了 `.env` 的 `LLM_TIMEOUT_SECONDS`——改为未传参时回退 Settings 值（显式传参仍优先）；outline skill `max_tokens` 4096→8192（10 集大纲 JSON ≈3.5-5k tokens，默认值有截断→重试→更慢的恶性循环）。
 
 ### Added（Phase L 进行中）

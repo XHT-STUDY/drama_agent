@@ -3977,3 +3977,30 @@ Phase L（分阶段创作与集数自由）全部完成。用户完整旅程：�
 ### 用户侧操作建议
 
 `.env` 的 `LLM_TIMEOUT_SECONDS` 现在真正生效——大 JSON 输出（outline）建议 300～600。
+
+
+## 修复：目标集数未传入需求归一化（2026-08-25，用户实测反馈）
+
+### 做了什么
+
+- 根因：`normalize_node` 构造 `RequirementInput(user_input, source_type)` 时未传 `target_episode_count` → 吃 `domain/requirement.py` 的 `default=10`（注释还写着"MVP 固定 10"）→ 需求 Prompt 渲染"目标集数固定为 10 集" → NormalizedRequirement/StoryBible 均按 10 集规划；项目 `target_episode_count=3` 与上下文中"10 集"矛盾 → Planner 正确澄清"按 3 还是 10"。L-1 只修了 options 链路，漏了这条。
+- 修复：normalize 节点从 workflow config 取 `outline_count`（回退 `script_count`）传入 RequirementInput；缺省仍回退 10 兼容旧路径。
+- 测试：`tests/unit/workflows/test_normalize_episode_count.py` 2 例——spy 拦截 LLM 调用断言 Prompt 渲染"固定为 3 集"/缺省"固定为 10 集"。测试基建：`tests/unit/workflows/conftest.py`（engine + project fixture，project 需 commit 否则跨会话不可见）。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/unit/workflows/test_normalize_episode_count.py | 2 passed |
+| uv run pytest --disable-warnings | **1126 passed / 8 deselected**（1124→1126） |
+| Ruff / mypy | 全部通过（332 files） |
+
+### 学到了什么
+
+1. LangGraph 节点配置经 `get_config()` 读取——单测必须经图 `ainvoke`（直接调节点函数签名都不对）；事件表 FK 要求先种 workflow_runs 行。
+2. spy 捕获共享 LLM 的多节点调用要按 `prompt_name` 过滤，否则被后续节点（story_bible）覆盖。
+3. 参数默认值散落多处（config 10 / domain default=10 / prompt 模板"固定为 N"）时，任何一条通路漏传都会静默回到旧默认——L-1 修了 options→plan→outline 链，漏了 options→normalize→requirement→story_bible 链。
+
+### 用户侧操作
+
+已有项目的 StoryBible 已写死 10 集（Artifact 不可变且 input_hash 幂等复用）——修复后请**新建项目**重测；旧项目可走"修订大纲"改回目标集数结构。

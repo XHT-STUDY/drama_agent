@@ -76,9 +76,13 @@ async def normalize_node(state: CreationState) -> dict[str, Any]:
         user_input = ctx.get("user_input", "")
         source_type = ctx.get("source_type", "idea")
 
+        # 目标集数从 Run options 透传（L-1：用户选择优先）——此前吃领域模型
+        # 默认 10，导致用户选 3 集时需求/StoryBible 仍按 10 集规划（实测反馈）。
+        outline_count = ctx.get("outline_count") or ctx.get("script_count")
         req_input = RequirementInput(
             user_input=user_input,
             source_type=source_type,
+            **({"target_episode_count": int(outline_count)} if outline_count else {}),
         )
 
         skill = RequirementSkill()
