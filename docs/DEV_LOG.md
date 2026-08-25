@@ -3952,3 +3952,28 @@ Phase L（分阶段创作与集数自由）全部完成。用户完整旅程：�
 ### 下一步
 
 用户实测路径已通：说"我想写 XX 故事"→ 直接出分阶段计划 → 确认 → 大纲门 → 写全部/分批。待用户本地重测验证真实模型下 Planner v1.1 的意图命中。
+
+
+## 修复：LLM 超时配置未生效 + outline max_tokens（2026-08-25，用户实测反馈）
+
+### 做了什么
+
+- **根因**：`OpenAICompatibleLLM.generate_structured` 的参数 `timeout_seconds: int = 180`（硬编码默认），每次请求用 `httpx.Timeout(read=timeout_seconds)` 覆盖了构造客户端时读取的 `settings.llm_timeout_seconds`——所有 Skill 都不传该参数，`.env` 的 `LLM_TIMEOUT_SECONDS=360` 从未生效（用户实测 outline 超时 180s 报错，改配置换模型均无效）。
+- **修复**：参数默认改 0，`effective_timeout = timeout_seconds or settings.llm_timeout_seconds`；请求 Timeout 与错误信息统一用 effective 值；显式传参仍优先。outline skill 补 `max_tokens=8192`（10 集 JSON ≈3.5-5k tokens，4096 截断→非法 JSON→带反馈重试→prompt 更长更慢的恶性循环）。
+- 测试：`tests/unit/llm/test_timeout_fallback.py` 2 例——mock httpx post 捕获 per-request Timeout.read，断言 settings 值（360）与显式传参（60）各自生效。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/unit/llm/test_timeout_fallback.py | 2 passed |
+| uv run pytest --disable-warnings | **1124 passed / 8 deselected**（1122→1124） |
+| Ruff / mypy | 全部通过（329 files） |
+
+### 学到了什么
+
+1. "构造时读配置 + 逐请求覆盖"的双层设计里，默认值必须与配置源回退一致，否则配置静默失效——逐请求 Timeout 覆盖了客户端默认，且所有调用方都不传参，等于 .env 形同虚设。
+
+### 用户侧操作建议
+
+`.env` 的 `LLM_TIMEOUT_SECONDS` 现在真正生效——大 JSON 输出（outline）建议 300～600。

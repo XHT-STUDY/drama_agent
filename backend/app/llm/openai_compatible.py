@@ -112,7 +112,7 @@ class OpenAICompatibleLLM(LLMClient):
         model: str = "",
         temperature: float = 0.7,
         max_tokens: int = 4096,
-        timeout_seconds: int = 180,
+        timeout_seconds: int = 0,
         **kwargs: Any,
     ) -> LLMCallResult:
         """调用 OpenAI 兼容 API 并返回结构化结果。
@@ -126,6 +126,10 @@ class OpenAICompatibleLLM(LLMClient):
         - 每次真实尝试前检查 per-run 预算，超硬上限抛 BudgetExceededError。
         协议契约保持：不抛普通异常，错误写 result.error_code。
         """
+        # 超时解析：未显式传参（0）时回退 Settings.llm_timeout_seconds——
+        # 此前硬编码 180s 覆盖了 .env 配置（用户实测 outline 超时根因）
+        effective_timeout = timeout_seconds or self.settings.llm_timeout_seconds
+
         # 解析模型名
         resolved_model = model or self._resolve_model(kwargs.get("prompt_name", ""))
         if not resolved_model:
@@ -166,7 +170,7 @@ class OpenAICompatibleLLM(LLMClient):
                     json=payload,
                     timeout=httpx.Timeout(
                         connect=30.0,
-                        read=timeout_seconds,
+                        read=effective_timeout,
                         write=30.0,
                         pool=10.0,
                     ),
@@ -192,7 +196,7 @@ class OpenAICompatibleLLM(LLMClient):
                     model=resolved_model,
                     duration_ms=duration_ms,
                     error_code=LLMErrorCode.LLM_TIMEOUT,
-                    error_detail=f"请求超时（{timeout_seconds}s）",
+                    error_detail=f"请求超时（{effective_timeout}s）",
                 )
                 self._call_history.append(result)
 

@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Fixed（用户实测反馈）
+- **LLM 超时配置未生效**（真实 bug）：`generate_structured` 的 `timeout_seconds` 硬编码默认 180s，逐请求覆盖了 `.env` 的 `LLM_TIMEOUT_SECONDS`——改为未传参时回退 Settings 值（显式传参仍优先）；outline skill `max_tokens` 4096→8192（10 集大纲 JSON ≈3.5-5k tokens，默认值有截断→重试→更慢的恶性循环）。
+
 ### Added（Phase L 进行中）
 - **L-5**：分阶段成为默认创作体验 + Planner v1.1——`staged` 默认 true（对话工作台默认"先 SB+大纲确认再写剧本"，一口气生成 = 门上点"写全部"；legacy 直连 API 行为不变）；Composer 移除分阶段开关；Planner prompt v1.1：典型创作请求（"我想写 XX 故事"）直接判 create_script 不澄清、"先搭大纲/分阶段"与默认一致（修复用户实测暴露的两轮连环澄清）；门 UI 与 RunProgress 改由 Run 查询驱动（`gated-run` 共享缓存，续跑后按钮消失/批门复现）；评测集增至 60 条（补愿望式创作与分阶段表达用例）。
 - **L-4**：剧本分批生成——continue 请求支持 `batch_size`（1 集 / 5 集 / 剩余全部）；批模式本批写完并评估后停在 `scripts` 门（事件含已写/目标集数），可逐批推进或先聊天改稿；`RunResponse` 暴露 `stage_gate`；计划卡按门类型显示批次按钮组（大纲门同样提供"先写第 1 集 / 前 5 集 / 写全部"起批方式）；write_episodes 复用已有集跳过续写、Artifact 幂等不重算。
