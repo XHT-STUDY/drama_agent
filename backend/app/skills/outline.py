@@ -103,6 +103,7 @@ class OutlineSkill(Skill):
                 messages,
                 prompt_name="outline",
                 temperature=0.7,
+                max_tokens=8192,  # N 集 JSON 可达 3.5-5k tokens，默认 4096 有截断风险
             )
 
             if result.error_code or result.parsed is None:

@@ -783,14 +783,17 @@ class AgentCommandService:
         command: AgentCommand  # 分支内按 intent 赋对应命令
 
         if output.intent == "create_script":
-            # L-1：用户显式选择的目标集数优先（大纲与剧本同数——
-            # "我选多少就制作多少"）；未提供时回退系统默认。
-            outline_count = (
-                target_episode_count or self._settings.mvp_outline_count
+            # L-1：集数回退链——本次请求显式选择（Composer 设置）>
+            # 项目目标集数（建项目时填的"目标 X 集"）> 系统默认。
+            # 此前漏了项目层：用户建项目填 2 集、没动 Composer 设置时
+            # 直接掉到系统默认 10（用户实测 outline 仍 10 集的根因之二）。
+            effective_count = (
+                target_episode_count
+                or project.target_episode_count
+                or self._settings.mvp_outline_count
             )
-            script_count = (
-                target_episode_count or self._settings.mvp_script_count
-            )
+            outline_count = effective_count
+            script_count = effective_count
             command = CreateScriptCommand(
                 user_input=user_request,
                 outline_count=outline_count,

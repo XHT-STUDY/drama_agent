@@ -78,6 +78,10 @@ async def test_e2e_path_creation_then_episode3_revision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("FAKE_LLM_SCENARIO", "agent_e2e")
+    # 项目目标 10 集 → 一次性创作 10 写 + 10 评 + 自动修订超默认预算(24)，
+    # 本测试聚焦链路而非预算保护，临时放宽
+    monkeypatch.setenv("RUN_MAX_LLM_CALLS", "60")
+    monkeypatch.setenv("RUN_MAX_LLM_CALLS_HARD", "80")
     # 重置进程级服务单例，使新场景生效
     import app.api.dependencies as deps
 

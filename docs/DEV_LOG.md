@@ -4004,3 +4004,59 @@ Phase L（分阶段创作与集数自由）全部完成。用户完整旅程：�
 ### 用户侧操作
 
 已有项目的 StoryBible 已写死 10 集（Artifact 不可变且 input_hash 幂等复用）——修复后请**新建项目**重测；旧项目可走"修订大纲"改回目标集数结构。
+
+
+## 增强：后端全链路详细日志（2026-08-26，用户反馈"日志过于简陋"）
+
+### 做了什么
+
+打通关联标识 + 补全空白层日志，全链路可观测：
+
+1. **打通 span → 日志**（根因修复）：`tracing.py` 的 `push_request`/`push_run` 此前全项目零调用，run_id/node_name 从未进入日志。现在 `RequestIDMiddleware` push_request、`WorkflowDispatcher.run_once` push_run；Console/JSON Formatter 从 span 统一读取 rid/run/node（非空才输出，JSON 契约增量兼容 ELK）。
+2. **节点统一日志**：新建 `app/workflows/node_timing.py`（timed_node：节点开始/完成含耗时/异常日志 + push_node + 耗时指标），6 个工作流（creation/revision/evaluation/import_file/outline_revision/conversational_revision）全部接入——后 5 个此前连 push_node 都没有，LLM 埋点无法定位节点。
+3. **LLM 调用链黑盒透明**：openai_compatible 成功调用日志（model/prompt/attempt/耗时/tokens/Schema 校验结果，此前成功路径零日志）、超时/连接失败 warning；structured_output 校验失败重试 warning/耗尽 error；budget 软/硬上限日志。
+4. **Run 生命周期**：dispatcher 领取/开始/checkpoint 恢复/执行完毕（最终 status、剧本 x/y 集、总耗时）/恢复耗尽/租约丢失。
+5. **API 路由层**（此前零日志）：8 个路由文件的写操作各 1 条 INFO（创建 Run/项目/会话/上传/导出/修订/Agent Turn 确认拒绝/续跑/重试/知识删除检索），user_input 截断 60 字。
+6. **异常处理器**（此前兜底用 print）：AppError/422 warning、HTTP 异常按码分级、未处理异常 logger.exception。
+7. **其他**：ArtifactStore 保存/幂等命中/版本冲突日志、EventPublisher DEBUG、lifespan 启动日志 extra 并入消息（extra 不进 JSON 输出的隐性 bug）。
+
+### 为什么这么做
+
+- 用户要"每个功能、核心节点都可见"：INFO 覆盖功能里程碑，WARNING 可恢复异常，ERROR 最终失败；更细内容（messages 概览、事件发布）放 DEBUG，`LOG_LEVEL=DEBUG` 可开。
+- 不引入 structlog/loguru、不加文件 handler：现有标准 logging + 自研 Formatter 足够，stdout 交给 docker logs/采集器。
+- 不给 DB repository CRUD 加日志：噪音大价值低，重要写路径由 ArtifactStore 层覆盖。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run ruff check app/ tests/ | 通过 |
+| uv run mypy app/ | Success: no issues found in 184 source files |
+| uv run pytest | 1131 passed, 8 deselected（新增 7 例 span 字段测试） |
+
+### 学到了什么
+
+1. 全量 pytest 存在**既有偶发死锁**（基线复现 4 跑 2 错）：`clean_db` autouse fixture 的 `DELETE FROM workflow_runs` 与上一个测试遗留的后台 dispatcher `FOR UPDATE` 事务竞争，错误在 setup 阶段且漂移——与本次改动无关，后续可用"dispatcher 优雅停机等待"或"清理前取消后台任务"修复。
+2. LangGraph `add_node` 的 mypy 重载对包装函数极严：装饰器要用 `TypeVar("_F", bound=Callable)` 原样透传函数类型，否则 TypedDict 状态类型推断失败（旧代码靠 type: ignore 绕过）。
+3. formatter 里 extra={...} 传字段与自研 JsonFormatter 不兼容（extra 不进 JSON）——结构化字段要么进消息文本，要么扩展 formatter 显式读取。
+
+
+## 修复：项目目标集数未进入回退链 + outline max_tokens 丢失重补（2026-08-26，用户实测反馈）
+
+### 做了什么
+
+- **集数回退链补项目层**（根因之二）：`_build_action_plan` 的集数回退此前是"Turn 显式选择 > 系统默认 10"——用户**建项目时填的目标集数（如 2）从未被使用**，没动 Composer 设置就直接掉到默认 10。修复为三纔回退：Turn 显式选择 > `project.target_episode_count` > 系统默认。新增 API 测试：项目建 2 集 → 计划 2 集；请求显式 5 集 → 仍优先 5。
+- **重补 outline `max_tokens=8192`**：50edcd9 提交信息写了此项但 diff 实际只含 client 超时修复（多补丁脚本中途断言失败导致 outline 文件未进提交），本次补上并核实入库。
+- **e2e_agent_path 适配**：回退链生效后默认项目（目标 10）一次性创作 10 写+10 评+修订 > 默认预算 24 → RUN_BUDGET_EXCEEDED。该测试聚焦链路而非预算保护，临时放宽 RUN_MAX_LLM_CALLS(60)/HARD(80)。
+- 顺手清掉用户 WIP 文件里 3 个 unused type: ignore（mypy 门禁）。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest --disable-warnings | **1133 passed / 8 deselected** |
+| Ruff / mypy | 全部通过（334 files） |
+
+### 给用户的重要提醒（本轮日志证据）
+
+用户日志 `prompt=outline max_tokens=4096 timeout=180s` 两个值都是修复前的旧值——**运行中的后端是旧代码进程**（且工作区还有一批未提交的 observability WIP 改动）。必须重启后端，否则所有已修复项（超时 360s、outline 8192、集数回退链）都不生效。

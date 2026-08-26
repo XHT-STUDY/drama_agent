@@ -349,7 +349,7 @@ async def test_plan_creates_proposed_action_and_action_plan_message(
     assert action["status"] == "proposed"
     assert action["intent"] == "create_script"
     assert action["plan"]["command"]["outline_count"] == 10
-    assert action["plan"]["command"]["script_count"] == 3
+    assert action["plan"]["command"]["script_count"] == 10  # 项目目标 10 优先于系统默认 3
     assert len(action["plan"]["steps"]) == 4  # 分阶段默认：4 步（末步大纲确认门）
     assert action["plan"]["steps"][-1]["step_id"] == "stage_gate"
     assert action["source_artifact_ids"] == []
@@ -511,8 +511,9 @@ async def test_default_turn_keeps_system_counts(
     action_id = resp.json()["action_id"]
     detail = await agent_api.get(f"/api/v1/agent/actions/{action_id}")
     command = detail.json()["plan"]["command"]
+    # 回退链含项目目标集数（测试项目默认建为 10）→ 与系统默认一致
     assert command["outline_count"] == settings.mvp_outline_count
-    assert command["script_count"] == settings.mvp_script_count
+    assert command["script_count"] == settings.mvp_outline_count
 
 
 @pytest.mark.integration
@@ -582,3 +583,40 @@ async def test_staged_participates_in_request_hash(
     )
     assert second.status_code == 409
     assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_project_target_episode_count_used_as_fallback(
+    agent_api: AsyncClient, async_client: AsyncClient, planner_llm: FakeLLM
+) -> None:
+    """建项目填 2 集 + Turn 不带集数 → 计划按项目目标 2 集（不再掉到默认 10）。"""
+    planner_llm.register("agent_command_planner", _plan_output())
+    created = await async_client.post(
+        "/api/v1/projects", json={"title": "项目集数回退", "target_episode_count": 2}
+    )
+    project_id = created.json()["id"]
+
+    resp = await agent_api.post(
+        f"/api/v1/projects/{project_id}/agent/turns",
+        json=_turn_body("写一个足球少年逆袭短剧", "proj-eps-1"),
+    )
+    assert resp.status_code == 200
+    action_id = resp.json()["action_id"]
+    detail = await agent_api.get(f"/api/v1/agent/actions/{action_id}")
+    command = detail.json()["plan"]["command"]
+    assert command["outline_count"] == 2
+    assert command["script_count"] == 2
+
+    # 请求级显式集数仍优先于项目目标
+    override = await agent_api.post(
+        f"/api/v1/projects/{project_id}/agent/turns",
+        json=_turn_body("写一个足球少年逆袭短剧", "proj-eps-2", target_episode_count=5),
+    )
+    assert override.status_code == 200
+    command2 = (
+        (await agent_api.get(
+            f"/api/v1/agent/actions/{override.json()['action_id']}"
+        )).json()["plan"]["command"]
+    )
+    assert command2["outline_count"] == 5
