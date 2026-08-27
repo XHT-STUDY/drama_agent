@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-import traceback
+import logging
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
@@ -21,6 +21,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+logger = logging.getLogger(__name__)
 
 # ---- contextvars：跨 middleware / handler 传递 request_id ----
 
@@ -308,6 +310,14 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 
     AppError 是可控的业务异常，直接使用其 status_code 和 code。
     """
+    logger.warning(
+        "业务异常: %s %s %s → %d %s",
+        request.method,
+        request.url.path,
+        exc.code,
+        exc.status_code,
+        exc.detail or str(exc),
+    )
     return _build_error_response(
         request,
         status_code=exc.status_code,
@@ -332,6 +342,12 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
             )
         )
 
+    logger.warning(
+        "请求参数校验失败(422): %s %s 字段错误=%s",
+        request.method,
+        request.url.path,
+        "; ".join(f"{e.field}: {e.message}" for e in field_errors)[:300],
+    )
     return _build_error_response(
         request,
         status_code=422,
@@ -354,6 +370,15 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         409: "CONFLICT",
         429: "TOO_MANY_REQUESTS",
     }
+    # 404/405 属常规路由情况，info 即可；其余（401/403/429…）值得 warning
+    log = logger.info if exc.status_code in (404, 405) else logger.warning
+    log(
+        "HTTP 异常: %s %s → %d %s",
+        request.method,
+        request.url.path,
+        exc.status_code,
+        exc.detail or "",
+    )
     return _build_error_response(
         request,
         status_code=exc.status_code,
@@ -368,8 +393,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     内部异常不向外暴露堆栈细节，仅记录日志；
     返回通用 500 错误，内部 traceback 通过日志模块输出。
     """
-    # 使用 print 兜底 — 正式日志在 logging 模块配置后由 structlog 接管
-    traceback.print_exc()
+    logger.exception("未处理异常: %s %s", request.method, request.url.path)
     return _build_error_response(
         request,
         status_code=500,

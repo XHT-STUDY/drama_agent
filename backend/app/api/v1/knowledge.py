@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import Annotated, Any, Literal
@@ -21,6 +22,8 @@ from app.core.errors import NotFoundError
 from app.db.repositories.knowledge import KnowledgeRepository
 from app.rag.embedder import Embedder, load_embedder
 from app.rag.models import load_corpus_version
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["knowledge"])
 
@@ -164,6 +167,7 @@ async def delete_knowledge_document(
             code="KNOWLEDGE_DOC_NOT_FOUND",
         )
     await db.commit()
+    logger.info("删除知识文档: document=%s project=%s", document_id, project_id)
     return {"deleted": True, "document_id": str(document_id)}
 
 
@@ -199,6 +203,14 @@ async def search_knowledge(
     finally:
         await embedder.close()
     elapsed_ms = int((time.monotonic() - start) * 1000)
+    logger.info(
+        "知识检索: project=%s query=%.60s top_k=%d 命中=%d 耗时=%dms",
+        project_id,
+        body.query,
+        body.top_k,
+        len(hits),
+        elapsed_ms,
+    )
 
     def _hit_scope(source_project_id: uuid.UUID | None) -> str:
         return "project" if source_project_id is not None else "global"

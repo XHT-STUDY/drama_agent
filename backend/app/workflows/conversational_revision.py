@@ -22,6 +22,7 @@ from typing import Any, Literal
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from app.workflows.node_timing import timed_node
 from app.workflows.nodes import (
     continuity_check_node,
     re_evaluate_node,
@@ -52,11 +53,11 @@ def build_conversational_revision_workflow(
     """构建对话式剧本修订子图（action=revise_script）。"""
     builder = StateGraph(CreationState)
 
-    builder.add_node("prepare_target", prepare_target_node)
-    builder.add_node("ensure_evaluation", ensure_evaluation_node)
-    builder.add_node("revise", revise_node)
-    builder.add_node("continuity_check", continuity_check_node)
-    builder.add_node("re_evaluate", re_evaluate_node)
+    builder.add_node("prepare_target", timed_node("prepare_target", prepare_target_node))
+    builder.add_node("ensure_evaluation", timed_node("ensure_evaluation", ensure_evaluation_node))
+    builder.add_node("revise", timed_node("revise", revise_node))
+    builder.add_node("continuity_check", timed_node("continuity_check", continuity_check_node))
+    builder.add_node("re_evaluate", timed_node("re_evaluate", re_evaluate_node))
 
     builder.set_entry_point("prepare_target")
     builder.add_edge("prepare_target", "ensure_evaluation")

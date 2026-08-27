@@ -14,6 +14,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from app.workflows.node_timing import timed_node
 from app.workflows.nodes.revise_outline import revise_outline_node
 from app.workflows.state import CreationState
 
@@ -23,7 +24,7 @@ def build_outline_revision_workflow(
 ) -> CompiledStateGraph[CreationState, None, CreationState, CreationState]:
     """构建大纲修订工作流（单节点）。"""
     builder = StateGraph(CreationState)
-    builder.add_node("revise_outline", revise_outline_node)
+    builder.add_node("revise_outline", timed_node("revise_outline", revise_outline_node))
     builder.set_entry_point("revise_outline")
     builder.add_edge("revise_outline", END)
     return builder.compile(checkpointer=checkpointer)

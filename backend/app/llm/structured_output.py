@@ -10,12 +10,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
 from app.llm.models import LLMCallResult, LLMErrorCode
 from app.llm.protocol import LLMClient
+
+logger = logging.getLogger(__name__)
 
 # DEV_PLAN §2.3：结构化输出最多重试 2 次
 MAX_RETRIES = 2
@@ -92,13 +95,32 @@ class StructuredOutputParser:
             try:
                 parsed = schema.model_validate_json(result.content)
                 result.parsed = parsed
+                if attempt > 1:
+                    logger.info(
+                        "Schema 校验重试后通过: schema=%s attempt=%d/%d",
+                        schema.__name__,
+                        attempt,
+                        self.max_retries + 1,
+                    )
                 return result
             except (ValidationError, ValueError) as e:
                 if attempt > self.max_retries:
+                    logger.error(
+                        "Schema 校验重试耗尽: schema=%s 尝试 %d 次 输出前 200 字=%.200s",
+                        schema.__name__,
+                        attempt,
+                        result.content,
+                    )
                     result.error_code = LLMErrorCode.INVALID_OUTPUT
                     result.error_detail = f"校验失败（已重试 {self.max_retries} 次）: {e}"
                     return result
-                # 继续重试
+                logger.warning(
+                    "Schema 校验失败，将带错误反馈重试: schema=%s attempt=%d/%d 错误=%.300s",
+                    schema.__name__,
+                    attempt,
+                    self.max_retries + 1,
+                    e,
+                )
 
         # 不应到达这里（循环覆盖了所有情况）
         return result

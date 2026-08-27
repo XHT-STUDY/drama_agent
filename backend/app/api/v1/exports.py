@@ -19,6 +19,7 @@ POST 返回 Run（action="export"），Worker 异步执行 G-05 ExportService：
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from typing import Annotated, Any
@@ -40,6 +41,8 @@ from app.domain.enums import ExportFormat
 from app.domain.export import ExportContentKind, ExportFileContent
 from app.storage.local import LocalFileStore
 from app.storage.protocol import FileStore
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["exports"])
 _project_svc = ProjectService()
@@ -127,6 +130,13 @@ async def create_export(
     # 异步启动后台 Worker（best effort，不阻塞响应）
     schedule_worker(run.id, "export", config_snapshot)
 
+    logger.info(
+        "发起导出: run=%s project=%s kinds=%s format=%s",
+        run.id,
+        project_id,
+        body.kinds,
+        body.format,
+    )
     return RunResponse.from_orm(run)
 
 

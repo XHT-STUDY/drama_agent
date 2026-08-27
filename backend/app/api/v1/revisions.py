@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -35,6 +36,8 @@ from app.application.run_service import RunService
 from app.application.workflow_dispatcher import schedule_worker
 from app.core.errors import AppError, NotFoundError
 from app.domain.revision import RevisionPlan
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["revisions"])
 _service = RevisionService()
@@ -143,6 +146,14 @@ async def create_revision(
     # 异步启动后台 Worker（best effort，不阻塞响应）
     schedule_worker(run.id, "revise", config_snapshot)
 
+    logger.info(
+        "发起修订: run=%s project=%s episode=%s script=%s 指令=%.60s",
+        run.id,
+        project_id,
+        options.get("episode_number") or "自动选择",
+        options.get("script_artifact_id") or "-",
+        body.user_instruction or "",
+    )
     return RunResponse.from_orm(run)
 
 

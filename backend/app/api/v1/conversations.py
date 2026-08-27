@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -25,6 +26,8 @@ from app.domain.conversation import (
     MessageListResponse,
     MessageResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["conversations"])
 _conv_service = ConversationService()
@@ -105,7 +108,9 @@ async def create_conversation(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ConversationResponse:
     """在指定项目下创建会话。"""
-    return await _conv_service.create(db, project_id, body)
+    conversation = await _conv_service.create(db, project_id, body)
+    logger.info("创建会话: conversation=%s project=%s", conversation.id, project_id)
+    return conversation
 
 
 @router.get(
@@ -136,7 +141,15 @@ async def append_message(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
     """向会话追加一条消息（含短期记忆写入与会话摘要触发）。"""
-    return await _get_msg_service().append(db, conversation_id, body)
+    message = await _get_msg_service().append(db, conversation_id, body)
+    logger.info(
+        "追加消息: conversation=%s role=%s message=%s 内容=%.60s",
+        conversation_id,
+        body.role,
+        message.id,
+        body.content,
+    )
+    return message
 
 
 @router.get(

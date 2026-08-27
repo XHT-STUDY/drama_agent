@@ -23,6 +23,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.core.config import Settings
+from app.workflows.node_timing import timed_node
 from app.workflows.nodes import (
     continuity_check_node,
     re_evaluate_node,
@@ -116,10 +117,10 @@ def build_revision_workflow(
     """
     builder = StateGraph(CreationState)
 
-    builder.add_node("select_revision", select_revision_node)
-    builder.add_node("revise", revise_node)
-    builder.add_node("continuity_check", continuity_check_node)
-    builder.add_node("re_evaluate", re_evaluate_node)
+    builder.add_node("select_revision", timed_node("select_revision", select_revision_node))
+    builder.add_node("revise", timed_node("revise", revise_node))
+    builder.add_node("continuity_check", timed_node("continuity_check", continuity_check_node))
+    builder.add_node("re_evaluate", timed_node("re_evaluate", re_evaluate_node))
 
     builder.set_entry_point("select_revision")
 

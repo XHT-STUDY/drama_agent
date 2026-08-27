@@ -14,16 +14,12 @@ normalize → retrieve → story_bible → outline → write_episodes
 from __future__ import annotations
 
 import logging
-import time
-from collections.abc import Awaitable, Callable
-from functools import wraps
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from app.observability.metrics import workflow_node_duration_seconds
-from app.observability.tracing import push_node
+from app.workflows.node_timing import timed_node
 from app.workflows.nodes import (
     continuity_check_node,
     evaluate_episodes_node,
@@ -42,29 +38,6 @@ from app.workflows.revision import (
     _should_route_after_revision,
 )
 from app.workflows.state import CreationState
-
-_NodeFn = TypeVar("_NodeFn", bound=Callable[[CreationState], Awaitable[dict[str, Any]]])
-
-
-def _timed_node(node_name: str, fn: _NodeFn) -> _NodeFn:
-    """节点计时包装（I-02）：记录 workflow_node_duration_seconds{node}。
-
-    只包计时不改变语义；节点异常（如 RunCancelledError）在 finally 中
-    计时后原样向上抛。
-    """
-
-    @wraps(fn)
-    async def _wrapped(state: CreationState) -> dict[str, Any]:
-        start = time.monotonic()
-        # I-02：节点执行期间压入 tracing 上下文，LLM 埋点可读当前节点名
-        with push_node(node_name):
-            try:
-                return await fn(state)
-            finally:
-                workflow_node_duration_seconds.observe(time.monotonic() - start, node=node_name)
-
-    return _wrapped  # type: ignore[return-value]
-
 
 logger = logging.getLogger(__name__)
 
@@ -158,17 +131,17 @@ def build_creation_workflow(*, checkpointer: Any | None = None) -> CompiledState
     builder = StateGraph(CreationState)
 
     # 添加节点（I-02：统一计时包装，产出 workflow_node_duration_seconds）
-    builder.add_node("normalize", _timed_node("normalize", normalize_node))
-    builder.add_node("retrieve", _timed_node("retrieve", retrieve_node))
-    builder.add_node("story_bible", _timed_node("story_bible", story_bible_node))
-    builder.add_node("outline", _timed_node("outline", outline_node))
-    builder.add_node("write_episodes", _timed_node("write_episodes", write_episodes_node))
-    builder.add_node("evaluate_episodes", _timed_node("evaluate_episodes", evaluate_episodes_node))
-    builder.add_node("select_revision", _timed_node("select_revision", select_revision_node))
-    builder.add_node("revise", _timed_node("revise", revise_node))
-    builder.add_node("continuity_check", _timed_node("continuity_check", continuity_check_node))
-    builder.add_node("re_evaluate", _timed_node("re_evaluate", re_evaluate_node))
-    builder.add_node("finalize", _timed_node("finalize", finalize_node))
+    builder.add_node("normalize", timed_node("normalize", normalize_node))
+    builder.add_node("retrieve", timed_node("retrieve", retrieve_node))
+    builder.add_node("story_bible", timed_node("story_bible", story_bible_node))
+    builder.add_node("outline", timed_node("outline", outline_node))
+    builder.add_node("write_episodes", timed_node("write_episodes", write_episodes_node))
+    builder.add_node("evaluate_episodes", timed_node("evaluate_episodes", evaluate_episodes_node))
+    builder.add_node("select_revision", timed_node("select_revision", select_revision_node))
+    builder.add_node("revise", timed_node("revise", revise_node))
+    builder.add_node("continuity_check", timed_node("continuity_check", continuity_check_node))
+    builder.add_node("re_evaluate", timed_node("re_evaluate", re_evaluate_node))
+    builder.add_node("finalize", timed_node("finalize", finalize_node))
 
     # 设置入口
     builder.set_entry_point("normalize")

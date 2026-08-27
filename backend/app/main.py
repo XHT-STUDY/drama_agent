@@ -34,6 +34,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     - 优先复用客户端传入的 X-Request-ID 头；
     - 若未传入则生成 UUID4；
     - 将 request_id 写入 contextvar 供日志/错误模块获取；
+    - 通过 push_request 写入 tracing span，请求内所有日志自动带 rid；
     - 在响应头 X-Request-ID 中返回。
     """
 
@@ -42,7 +43,10 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
         _request_id_ctx.set(request_id)
-        response = await call_next(request)
+        from app.observability.tracing import push_request
+
+        with push_request(request_id):
+            response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         return response
 
@@ -97,12 +101,12 @@ async def lifespan(app: FastAPI) -> Any:
     await startup_dispatcher()
 
     logger.info(
-        "应用启动",
-        extra={
-            "app_env": settings.app_env,
-            "host": settings.app_host,
-            "port": settings.app_port,
-        },
+        "应用启动: env=%s host=%s port=%s log=%s/%s",
+        settings.app_env,
+        settings.app_host,
+        settings.app_port,
+        settings.log_level,
+        log_fmt,
     )
     yield
 

@@ -190,6 +190,17 @@ async def create_run(
         config=config_snapshot,
         idempotency_key=body.idempotency_key,
     )
+    logger.info(
+        "创建 Run: run=%s action=%s project=%s outline_count=%s script_count=%s "
+        "source_type=%s user_input=%.60s",
+        run.id,
+        body.action,
+        project_id,
+        body.options.outline_count if body.options else "-",
+        body.options.script_count if body.options else "-",
+        body.options.source_type if body.options else "-",
+        body.options.user_input if body.options else "",
+    )
 
     # 先提交 durable Run，再做 best-effort 唤醒；未知 action 也会被领取后明确失败。
     await db.commit()
@@ -254,6 +265,7 @@ async def cancel_run(
     处中断（cancel 后不再创建新 Artifact），Run 由 Worker 转为 cancelled。
     """
     run = await _service.cancel_run(db, run_id)
+    logger.info("取消 Run: run=%s → 状态=%s", run_id, run.status)
     return RunResponse.from_orm(run)
 
 
@@ -344,6 +356,13 @@ async def continue_run(
         payload={"message": "确认门已确认，继续创作剧本", "stage_gate_cleared": "outline"},
         autocommit=True,
     )
+    logger.info(
+        "续跑 Run: run=%s gate=%s batch_size=%s 已写集数=%d",
+        run_id,
+        gate,
+        body.batch_size if body else None,
+        len(resumed.get("script_artifact_ids") or {}),
+    )
     schedule_worker(run.id, run.action, run.config_snapshot or {})
     return RunResponse.from_orm(run)
 
@@ -374,5 +393,11 @@ async def retry_run(
 
     await db.commit()
 
+    logger.info(
+        "重试 Run: run=%s action=%s（第 %d 次尝试）",
+        run_id,
+        run.action,
+        run.attempt_count + 1,
+    )
     schedule_worker(run.id, run.action, run.config_snapshot or {})
     return RunResponse.from_orm(run)

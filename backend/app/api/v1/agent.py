@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -26,6 +27,8 @@ from app.domain.agent_command import (
     AgentActionResponse,
     AgentTurnResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["agent"])
 
@@ -127,6 +130,14 @@ async def create_agent_turn(
         staged=body.staged,
     )
     response.status_code = status_code
+    logger.info(
+        "Agent 对话轮完成: turn=%s conversation=%s status=%s type=%s 消息=%.60s",
+        result.id,
+        result.conversation_id,
+        result.status,
+        result.turn_type or "-",
+        body.content,
+    )
     return result
 
 
@@ -180,6 +191,13 @@ async def confirm_agent_action(
     来源 Artifact 已更新时 Action→stale 并返回 409 ACTION_STALE。
     """
     action, run = await service.confirm_action(db, action_id)
+    logger.info(
+        "Agent Action 已确认: action=%s intent=%s → run=%s status=%s",
+        action_id,
+        action.intent,
+        run.id,
+        run.status,
+    )
     return AgentConfirmResponse(
         action=action,
         run=AgentRunSnapshot.from_orm(run),
@@ -201,4 +219,6 @@ async def reject_agent_action(
     service: Annotated[AgentCommandService, Depends(get_agent_command_service)],
 ) -> AgentActionResponse:
     """拒绝 proposed Action(仅 proposed → rejected)。"""
-    return await service.reject_action(db, action_id)
+    action = await service.reject_action(db, action_id)
+    logger.info("Agent Action 已拒绝: action=%s", action_id)
+    return action

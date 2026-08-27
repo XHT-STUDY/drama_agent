@@ -159,6 +159,22 @@ class OpenAICompatibleLLM(LLMClient):
         # 最近一次响应的 Retry-After（闭包捕获，重试时读取）
         retry_after: float | None = None
 
+        prompt_name = str(kwargs.get("prompt_name") or "-")
+        logger.info(
+            "LLM 调用开始: model=%s schema=%s prompt=%s max_tokens=%d timeout=%ds",
+            resolved_model,
+            schema.__name__,
+            prompt_name,
+            max_tokens,
+            effective_timeout,
+        )
+        logger.debug(
+            "LLM 请求 messages: %d 条 (system=%d) temperature=%.2f",
+            len(augmented_messages),
+            sum(1 for m in augmented_messages if m.get("role") == "system"),
+            temperature,
+        )
+
         async def _attempt(_attempt_no: int) -> LLMCallResult:
             nonlocal retry_after
             # 预算硬上限检查（BudgetExceededError 不被下方 except 吞掉）
@@ -192,6 +208,14 @@ class OpenAICompatibleLLM(LLMClient):
 
             except httpx.TimeoutException:
                 duration_ms = int((time.monotonic() - start) * 1000)
+                logger.warning(
+                    "LLM 调用超时: model=%s prompt=%s attempt=%d timeout=%ds 耗时=%dms",
+                    resolved_model,
+                    prompt_name,
+                    _attempt_no,
+                    effective_timeout,
+                    duration_ms,
+                )
                 result = LLMCallResult(
                     model=resolved_model,
                     duration_ms=duration_ms,
@@ -202,6 +226,14 @@ class OpenAICompatibleLLM(LLMClient):
 
             except httpx.ConnectError as e:
                 duration_ms = int((time.monotonic() - start) * 1000)
+                logger.warning(
+                    "LLM 连接失败: model=%s prompt=%s attempt=%d api_base=%s 耗时=%dms",
+                    resolved_model,
+                    prompt_name,
+                    _attempt_no,
+                    self.settings.llm_api_base,
+                    duration_ms,
+                )
                 result = LLMCallResult(
                     model=resolved_model,
                     duration_ms=duration_ms,
@@ -212,6 +244,15 @@ class OpenAICompatibleLLM(LLMClient):
 
             except Exception as e:
                 duration_ms = int((time.monotonic() - start) * 1000)
+                logger.error(
+                    "LLM 调用未知异常: model=%s prompt=%s attempt=%d 耗时=%dms: %s: %s",
+                    resolved_model,
+                    prompt_name,
+                    _attempt_no,
+                    duration_ms,
+                    type(e).__name__,
+                    e,
+                )
                 result = LLMCallResult(
                     model=resolved_model,
                     duration_ms=duration_ms,
@@ -219,6 +260,21 @@ class OpenAICompatibleLLM(LLMClient):
                     error_detail=f"未知错误: {type(e).__name__}: {e}",
                 )
                 self._call_history.append(result)
+
+            # 每次真实尝试的统一结果日志（成功与失败均记录耗时与用量）
+            logger.info(
+                "LLM 调用结束: model=%s prompt=%s attempt=%d 结果=%s 耗时=%dms "
+                "tokens=p%d+c%d(t%d) schema校验=%s",
+                resolved_model,
+                prompt_name,
+                _attempt_no,
+                error_code_label(result.error_code) if result.error_code else "ok",
+                result.duration_ms,
+                result.usage.prompt_tokens,
+                result.usage.completion_tokens,
+                result.usage.total_tokens,
+                "通过" if result.parsed is not None else "未通过",
+            )
 
             # I-02：LLM 调用结果计数（node 取自 tracing 上下文；run_id 不入标签）
             llm_calls_total.inc(
@@ -337,7 +393,8 @@ class OpenAICompatibleLLM(LLMClient):
             error_msg = f"服务端错误 (HTTP {status})"
 
         logger.error(
-            "LLM API 错误: status=%d code=%s detail=%s", status, error_code, error_detail
+            "LLM API 错误: status=%d code=%s model=%s 耗时=%dms detail=%.500s",
+            status, error_code, model, duration_ms, error_detail,
         )
 
         result = LLMCallResult(

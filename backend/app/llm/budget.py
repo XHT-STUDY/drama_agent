@@ -16,10 +16,13 @@ MVP 进程内实现（KNOWN_LIMITATIONS：多进程部署时预算不共享）�
 
 from __future__ import annotations
 
+import logging
 import threading
 from contextvars import ContextVar
 
 from app.core.errors import BudgetExceededError  # noqa: F401  # 重导出供调用方使用
+
+logger = logging.getLogger(__name__)
 
 # 当前 run 上下文（由 Worker 在 workflow.ainvoke 前 enter_run 设置）
 _run_id_ctx: ContextVar[str | None] = ContextVar("budget_run_id", default=None)
@@ -56,16 +59,38 @@ class RunBudget:
         self.calls += 1
         self.prompt_tokens += max(0, prompt_tokens)
         self.completion_tokens += max(0, completion_tokens)
-        if self.soft_calls and self.calls > self.soft_calls:
+        if self.soft_calls and self.calls > self.soft_calls and not self.soft_warned:
             self.soft_warned = True
+            logger.warning(
+                "LLM 调用接近预算上限（软限制）: run=%s calls=%d/软%d (硬%d) tokens=%d/硬%d",
+                _run_id_ctx.get(),
+                self.calls,
+                self.soft_calls,
+                self.hard_calls,
+                self.total_tokens,
+                self.hard_tokens,
+            )
 
     def check_hard(self) -> None:
         """硬上限检查；超限抛 BudgetExceededError。"""
         if self.hard_calls and self.calls >= self.hard_calls:
+            logger.error(
+                "LLM 调用数超预算（硬限制）: run=%s calls=%d/%d",
+                _run_id_ctx.get(),
+                self.calls,
+                self.hard_calls,
+            )
             raise BudgetExceededError(
                 detail=f"Run LLM 调用数超预算（{self.calls}/{self.hard_calls}）"
             )
         if self.hard_tokens and self.total_tokens >= self.hard_tokens:
+            logger.error(
+                "LLM token 超预算（硬限制）: run=%s tokens=%d/%d calls=%d",
+                _run_id_ctx.get(),
+                self.total_tokens,
+                self.hard_tokens,
+                self.calls,
+            )
             raise BudgetExceededError(
                 detail=f"Run LLM token 超预算（{self.total_tokens}/{self.hard_tokens}）"
             )

@@ -10,7 +10,13 @@
 - logger: logger 名称简写
 - message: 日志消息
 - rid: 当前请求 ID（截取前 8 位）
+- run: 当前 Run ID（截取前 8 位，Worker 执行工作流时非空）
+- node: 当前工作流节点名（节点执行期间非空）
 - exception: 异常信息（仅异常日志）
+
+rid/run/node 来自 observability.tracing 的 span 上下文（contextvar）：
+HTTP 中间件 push_request、Worker push_run、节点计时器 push_node，
+使同一请求 / 同一 Run 的日志可聚合检索。
 
 I-02 新增 RedactFilter 与 mask_secret：对日志消息做密钥/令牌脱敏
 （sk-*、api_key、Bearer、Authorization）与超长截断，避免敏感信息
@@ -96,14 +102,21 @@ def _logger_short(name: str) -> str:
     return result
 
 
-def _request_id_short() -> str:
-    """获取当前请求 ID 的前 8 位。"""
+def _span_ids() -> tuple[str, str, str]:
+    """读取当前 span 上下文的 (request_id, run_id, node_name)，各截取前 8 位/原名。
+
+    span 由中间件（push_request）、Worker（push_run）、节点计时器（push_node）
+    在调用链上设置；无上下文时返回空串。
+    """
     try:
-        from app.core.errors import _request_id_ctx
-        rid = _request_id_ctx.get()
-        return rid[:8] if rid else ""
-    except (LookupError, ValueError):
-        return ""
+        from app.observability.tracing import get_span
+
+        span = get_span()
+        rid = span.request_id[:8] if span.request_id else ""
+        run = span.run_id[:8] if span.run_id else ""
+        return rid, run, span.node_name or ""
+    except Exception:
+        return "", "", ""
 
 
 class ConsoleFormatter(logging.Formatter):
@@ -116,7 +129,7 @@ class ConsoleFormatter(logging.Formatter):
         lvl_short = _LEVEL_SHORT.get(level, level)
         logger_short = _logger_short(record.name)
         msg = record.getMessage()
-        req_id = _request_id_short()
+        rid, run, node = _span_ids()
 
         parts: list[str] = []
         # 时间
@@ -125,9 +138,13 @@ class ConsoleFormatter(logging.Formatter):
         parts.append(f"{color}{_BOLD}{lvl_short}{_RESET}")
         # logger
         parts.append(f"{_DIM}{logger_short:<20}{_RESET}")
-        # request_id
-        if req_id:
-            parts.append(f"{_DIM}{req_id}{_RESET}")
+        # 关联标识：请求 / Run / 节点
+        if rid:
+            parts.append(f"{_DIM}{rid}{_RESET}")
+        if run:
+            parts.append(f"{_DIM}run={run}{_RESET}")
+        if node:
+            parts.append(f"{_DIM}[{node}]{_RESET}")
         # 消息
         parts.append(msg)
 
@@ -161,7 +178,8 @@ class RedactFilter(logging.Filter):
 class JsonFormatter(logging.Formatter):
     """结构化 JSON 格式，适合生产环境 / 日志采集系统。
 
-    输出契约：timestamp / level / logger / message [+ rid / exception]。
+    输出契约：timestamp / level / logger / message
+    [+ rid / run / node / exception]（均为非空才输出）。
     该键名即 ELK/Loki 解析字段名，与 TestStructuredLogging 断言保持一致。
     """
 
@@ -172,9 +190,13 @@ class JsonFormatter(logging.Formatter):
             "logger": _logger_short(record.name),
             "message": record.getMessage(),
         }
-        req_id = _request_id_short()
-        if req_id:
-            log_entry["rid"] = req_id
+        rid, run, node = _span_ids()
+        if rid:
+            log_entry["rid"] = rid
+        if run:
+            log_entry["run"] = run
+        if node:
+            log_entry["node"] = node
         exc_text = _exc_text(record)
         if exc_text:
             log_entry["exception"] = exc_text

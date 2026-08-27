@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -24,6 +25,8 @@ from app.domain.project import (
     ProjectUpdate,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["projects"])
 _service = ProjectService()
 
@@ -34,7 +37,9 @@ async def create_project(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProjectResponse:
     """创建新项目。"""
-    return await _service.create(db, body)
+    project = await _service.create(db, body)
+    logger.info("创建项目: project=%s title=%.60s", project.id, project.title)
+    return project
 
 
 @router.get("/projects", response_model=ProjectListResponse)
@@ -63,4 +68,6 @@ async def update_project(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProjectResponse:
     """部分更新项目字段。"""
-    return await _service.update(db, project_id, body)
+    project = await _service.update(db, project_id, body)
+    logger.info("更新项目: project=%s 字段=%s", project_id, list(body.model_dump(exclude_unset=True)))
+    return project

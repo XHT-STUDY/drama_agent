@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import logging
 import socket
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -23,6 +24,7 @@ from app.core.errors import AppError
 from app.db.models.workflow_run import WorkflowRun
 from app.events.publisher import EventPublisher
 from app.llm.budget import enter_run, exit_run, get_budget
+from app.observability.tracing import push_run
 from app.workflows.checkpoint import (
     RunCancelledError,
     classify_error_code,
@@ -81,6 +83,12 @@ class WorkflowDispatcher:
                 exhausted.error_detail = f"Workflow 恢复次数已达到上限 {self._max_attempts}"
                 exhausted.lease_owner = None
                 exhausted.lease_expires_at = None
+                logger.warning(
+                    "Run 恢复次数耗尽，标记失败: run=%s action=%s attempts=%d",
+                    exhausted.id,
+                    exhausted.action,
+                    exhausted.attempt_count,
+                )
                 await EventPublisher().publish(
                     db,
                     run_id=exhausted.id,
@@ -100,10 +108,20 @@ class WorkflowDispatcher:
                 return None
 
             was_queued = run.status == "queued"
+            previous_status = run.status
             run.status = "running"
             run.lease_owner = self.owner
             run.lease_expires_at = now + timedelta(seconds=self._lease_seconds)
             run.attempt_count += 1
+            logger.info(
+                "Dispatcher 领取 Run: run=%s action=%s %s→running attempt=%d/%d owner=%s",
+                run.id,
+                run.action,
+                previous_status,
+                run.attempt_count,
+                self._max_attempts,
+                self.owner,
+            )
             if was_queued:
                 await EventPublisher().publish(
                     db,
@@ -127,6 +145,11 @@ class WorkflowDispatcher:
             )
             run = result.scalar_one_or_none()
             if run is None:
+                logger.warning(
+                    "租约续租失败（Run 已非 running 或被其他实例接管）: run=%s owner=%s",
+                    run_id,
+                    self.owner,
+                )
                 return False
             run.lease_expires_at = datetime.now(UTC) + timedelta(seconds=self._lease_seconds)
             return True
@@ -146,12 +169,14 @@ class WorkflowDispatcher:
 
         heartbeat = asyncio.create_task(self._heartbeat(run.id))
         try:
-            await self._executor(
-                run.id,
-                run.action,
-                run.config_snapshot or {},
-                self.owner,
-            )
+            # push_run：本 Run 执行期内的所有日志/埋点自动携带 run_id
+            with push_run(str(run.id)):
+                await self._executor(
+                    run.id,
+                    run.action,
+                    run.config_snapshot or {},
+                    self.owner,
+                )
         except Exception as exc:
             logger.exception("Workflow executor 未处理异常: run=%s", run.id)
             await self._mark_failed(run.id, "WORKFLOW_EXECUTOR_ERROR", str(exc))
@@ -342,9 +367,22 @@ async def _execute_workflow(
             # 验证 Run 存在且状态正确
             run = await run_svc.get_run(db, run_id)
             if run.status != "running" or run.lease_owner != lease_owner:
+                logger.info(
+                    "Run 状态已变化，跳过执行: run=%s status=%s lease_owner=%s",
+                    run_id,
+                    run.status,
+                    run.lease_owner,
+                )
                 return
             action = run.action
             config_snapshot = run.config_snapshot or {}
+            logger.info(
+                "Run 开始执行: run=%s action=%s project=%s attempt=%d",
+                run_id,
+                action,
+                run.project_id,
+                run.attempt_count,
+            )
 
             # J-09：Agent Run 启动时同步 Action queued→running
             agent_action_id_cfg = config_snapshot.get("agent_action_id")
@@ -696,8 +734,33 @@ async def _execute_workflow(
                     if k not in ("status", "error_node", "error_code", "error_detail")
                 }
                 initial_state = {**initial_state, **_resume}
+                logger.info(
+                    "Run 恢复 checkpoint: run=%s 已完成节点=%s 已写剧本集=%s",
+                    run_id,
+                    checkpoint.get("completed_nodes") or [],
+                    sorted((checkpoint.get("script_artifact_ids") or {}).keys()),
+                )
 
+            logger.info(
+                "Workflow 开始执行: run=%s action=%s 首节点状态=%s",
+                run_id,
+                action,
+                initial_state.get("status"),
+            )
+            _workflow_start = time.monotonic()
             final_state = await workflow.ainvoke(initial_state, workflow_config)
+            logger.info(
+                "Workflow 执行完毕: run=%s action=%s status=%s stage_gate=%s "
+                "剧本=%d/%d 集 修订轮=%s 耗时=%.1fs",
+                run_id,
+                action,
+                final_state.get("status"),
+                final_state.get("stage_gate") or "无",
+                len(final_state.get("script_artifact_ids") or {}),
+                final_state.get("target_episode_count") or 0,
+                final_state.get("revision_round"),
+                time.monotonic() - _workflow_start,
+            )
 
             # 快照完整轻量状态（completed_nodes / script_artifact_ids 等全为 ID 与
             # 小字段，符合 §2.2），供失败后 retry 恢复；即使本轮 failed 也保留部分产物。

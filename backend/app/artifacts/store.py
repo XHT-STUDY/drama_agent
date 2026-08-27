@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -20,6 +21,8 @@ from app.core.errors import NotFoundError
 from app.db.models.artifact import Artifact
 from app.db.repositories.artifacts import ArtifactRepository
 from app.observability.metrics import artifact_created_total
+
+logger = logging.getLogger(__name__)
 
 
 class ArtifactStore:
@@ -87,6 +90,14 @@ class ArtifactStore:
         if input_hash is not None:
             existing = await repo.find_by_input_hash(input_hash)
             if existing is not None:
+                logger.info(
+                    "Artifact 幂等命中（input_hash 相同，复用已有版本）: "
+                    "type=%s ep=%d version=%s id=%s",
+                    existing.type,
+                    existing.episode_number,
+                    existing.version,
+                    existing.id,
+                )
                 return existing
 
         # 事务内分配版本号
@@ -122,11 +133,25 @@ class ArtifactStore:
                     )
         except IntegrityError:
             # 并发冲突：重新读取版本号并重试
+            logger.warning(
+                "Artifact 版本号并发冲突，重试分配: type=%s ep=%d",
+                artifact_type,
+                episode_number,
+            )
             await db.rollback()
             current_max = await repo.get_max_version(project_id, artifact_type, episode_number)
             artifact.version = compute_next_version(current_max)
             await repo.add(artifact)
 
+        logger.info(
+            "Artifact 已保存: type=%s ep=%d version=%s status=%s id=%s 来源数=%d",
+            artifact.type,
+            artifact.episode_number,
+            artifact.version,
+            artifact.status,
+            artifact.id,
+            len(source_artifact_ids or []),
+        )
         # I-02：新建 Artifact 计数（幂等命中已在上方 early-return，不计）
         artifact_created_total.inc(artifact_type=artifact_type)
         return artifact

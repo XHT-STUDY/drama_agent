@@ -13,6 +13,7 @@ from typing import Any, Literal
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from app.workflows.node_timing import timed_node
 from app.workflows.nodes.evaluate_episode import evaluate_episodes_node
 from app.workflows.state import CreationState
 
@@ -43,7 +44,7 @@ def build_evaluation_workflow(
     """
     builder = StateGraph(CreationState)
 
-    builder.add_node("evaluate_episodes", evaluate_episodes_node)
+    builder.add_node("evaluate_episodes", timed_node("evaluate_episodes", evaluate_episodes_node))
     builder.set_entry_point("evaluate_episodes")
     builder.add_conditional_edges(
         "evaluate_episodes",

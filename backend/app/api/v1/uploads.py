@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from datetime import datetime
 from typing import Annotated, Any
@@ -32,6 +33,8 @@ from app.db.repositories.uploads import UploadRepository
 from app.storage.local import LocalFileStore
 from app.storage.protocol import FileStore
 from app.tools.file_parser import FileParserTool
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["uploads"])
 _project_svc = ProjectService()
@@ -158,6 +161,16 @@ async def create_upload(
             char_count=parsed.char_count,
             warnings=parsed.warnings,
         )
+    )
+    logger.info(
+        "文件上传完成: upload=%s project=%s filename=%s 格式=%s 大小=%dB 字数=%d 警告=%d",
+        row.id,
+        project_id,
+        filename,
+        parsed.detected_format,
+        len(data),
+        parsed.char_count,
+        len(parsed.warnings or []),
     )
     return _to_response(row)
 

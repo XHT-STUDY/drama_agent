@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -14,6 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.workflow_event import WorkflowEvent
+
+logger = logging.getLogger(__name__)
 
 
 class EventPublisher:
@@ -98,6 +101,9 @@ class EventPublisher:
                 ***遗漏 autocommit=True 会导致工作流节点的所有数据在会话关闭时丢失！***
         """
         event = await self._insert_event(db, run_id, event_type, payload)
+        logger.debug(
+            "事件发布: type=%s run=%s seq=%d", event_type, run_id, event.sequence
+        )
 
         if autocommit:
             from app.db.session import _async_session_factory

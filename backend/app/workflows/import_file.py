@@ -34,6 +34,7 @@ from app.storage.local import LocalFileStore
 from app.tools.file_parser import FileParserTool
 from app.tools.script_text import full_script_to_script_draft
 from app.workflows.checkpoint import node_failure, raise_if_cancelled
+from app.workflows.node_timing import timed_node
 from app.workflows.router import route_import
 
 logger = logging.getLogger(__name__)
@@ -258,7 +259,7 @@ def build_import_workflow(
 ) -> CompiledStateGraph[ImportState, Any, Any, Any]:
     """构建 ImportFileWorkflow 的 LangGraph 状态图。"""
     builder = StateGraph(ImportState)
-    builder.add_node("import_file", import_file_node)
+    builder.add_node("import_file", timed_node("import_file", import_file_node))
     builder.set_entry_point("import_file")
     builder.add_edge("import_file", END)
     return builder.compile(checkpointer=checkpointer)
