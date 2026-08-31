@@ -5,6 +5,7 @@
 - GET    /projects         分页查询项目列表
 - GET    /projects/{id}    查询单个项目
 - PATCH  /projects/{id}    更新项目
+- DELETE /projects/{id}    删除项目（软删除，幂等）
 """
 
 from __future__ import annotations
@@ -71,3 +72,15 @@ async def update_project(
     project = await _service.update(db, project_id, body)
     logger.info("更新项目: project=%s 字段=%s", project_id, list(body.model_dump(exclude_unset=True)))
     return project
+
+
+@router.delete("/projects/{project_id}", response_model=dict[str, bool | str])
+async def delete_project(
+    project_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, bool | str]:
+    """软删除项目（幂等；已删除的项目再次删除仍返回 200）。"""
+    deleted = await _service.delete(db, project_id)
+    await db.commit()
+    logger.info("删除项目: project=%s deleted=%s", project_id, deleted)
+    return {"deleted": True, "project_id": str(project_id)}

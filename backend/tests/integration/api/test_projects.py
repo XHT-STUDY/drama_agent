@@ -1,7 +1,7 @@
 """B-03 Project API 集成测试。
 
 验证项目 CRUD 端点：
-- 创建、查询、列表、更新
+- 创建、查询、列表、更新、删除
 - 404 处理
 - 参数校验
 """
@@ -146,6 +146,87 @@ class TestUpdateProject:
         response = await async_client.patch(
             "/api/v1/projects/00000000-0000-0000-0000-000000000000",
             json={"title": "不存在"},
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "PROJECT_NOT_FOUND"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestDeleteProject:
+    """删除项目（软删除）。"""
+
+    async def test_delete_returns_200(self, async_client: AsyncClient) -> None:
+        """删除已存在的项目返回 200 + deleted 标记。"""
+        create_resp = await async_client.post(
+            "/api/v1/projects",
+            json={"title": "待删除项目"},
+        )
+        project_id = create_resp.json()["id"]
+
+        response = await async_client.delete(f"/api/v1/projects/{project_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["deleted"] is True
+        assert data["project_id"] == project_id
+
+    async def test_delete_is_idempotent(self, async_client: AsyncClient) -> None:
+        """重复删除同一项目仍返回 200（幂等）。"""
+        create_resp = await async_client.post(
+            "/api/v1/projects",
+            json={"title": "幂等删除"},
+        )
+        project_id = create_resp.json()["id"]
+
+        first = await async_client.delete(f"/api/v1/projects/{project_id}")
+        assert first.status_code == 200
+        second = await async_client.delete(f"/api/v1/projects/{project_id}")
+        assert second.status_code == 200
+        assert second.json()["deleted"] is True
+
+    async def test_delete_nonexistent_returns_404(self, async_client: AsyncClient) -> None:
+        """删除不存在的项目返回 404 + PROJECT_NOT_FOUND。"""
+        response = await async_client.delete(
+            "/api/v1/projects/00000000-0000-0000-0000-000000000000"
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "PROJECT_NOT_FOUND"
+
+    async def test_deleted_project_hidden_from_get_and_list(self, async_client: AsyncClient) -> None:
+        """删除后 get 返回 404，列表中不再出现且 total 不再计入。"""
+        create_resp = await async_client.post(
+            "/api/v1/projects",
+            json={"title": "删除后不可见"},
+        )
+        project_id = create_resp.json()["id"]
+
+        list_before = await async_client.get("/api/v1/projects")
+        total_before = list_before.json()["total"]
+
+        await async_client.delete(f"/api/v1/projects/{project_id}")
+
+        get_resp = await async_client.get(f"/api/v1/projects/{project_id}")
+        assert get_resp.status_code == 404
+        assert get_resp.json()["code"] == "PROJECT_NOT_FOUND"
+
+        list_resp = await async_client.get("/api/v1/projects?limit=100")
+        assert list_resp.status_code == 200
+        data = list_resp.json()
+        assert all(item["id"] != project_id for item in data["items"])
+        assert data["total"] == total_before - 1
+
+    async def test_deleted_project_cannot_be_updated(self, async_client: AsyncClient) -> None:
+        """删除后更新项目返回 404。"""
+        create_resp = await async_client.post(
+            "/api/v1/projects",
+            json={"title": "删除后更新"},
+        )
+        project_id = create_resp.json()["id"]
+        await async_client.delete(f"/api/v1/projects/{project_id}")
+
+        response = await async_client.patch(
+            f"/api/v1/projects/{project_id}",
+            json={"title": "不应成功"},
         )
         assert response.status_code == 404
         assert response.json()["code"] == "PROJECT_NOT_FOUND"

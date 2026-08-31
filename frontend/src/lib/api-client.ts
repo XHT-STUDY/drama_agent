@@ -117,6 +117,12 @@ export const projectsApi = {
       body: JSON.stringify(data),
     });
   },
+
+  remove(id: string): Promise<{ deleted: boolean; project_id: string }> {
+    return request(`/projects/${id}`, {
+      method: "DELETE",
+    });
+  },
 };
 
 // ============================================================

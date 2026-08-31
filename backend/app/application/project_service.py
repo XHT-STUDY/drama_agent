@@ -141,3 +141,24 @@ class ProjectService:
 
         saved = await repo.update(project)
         return _to_response(saved)
+
+    async def delete(self, db: AsyncSession, project_id: uuid.UUID) -> bool:
+        """软删除项目（设置 deleted_at）。
+
+        关联表对 projects.id 均为 RESTRICT 外键，故只能软删除。
+        项目不存在抛出 NotFoundError；已删除则幂等返回 False。
+
+        Returns:
+            本次执行了删除返回 True；项目本已处于删除状态返回 False。
+
+        Raises:
+            NotFoundError: 项目不存在
+        """
+        repo = self._get_repo(db)
+        project = await repo.get(project_id)
+        if project is None:
+            raise NotFoundError(detail=f"项目不存在: {project_id}", code="PROJECT_NOT_FOUND")
+        if project.deleted_at is not None:
+            return False
+        await repo.soft_delete(project_id)
+        return True

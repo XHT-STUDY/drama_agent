@@ -2,9 +2,9 @@
  *
  * 验证 ApiError 错误类和 API URL 构造。
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
-import { ApiError } from "@/lib/api-client";
+import { ApiError, projectsApi } from "@/lib/api-client";
 
 describe("ApiError", () => {
   it("包含所有错误字段", () => {
@@ -48,5 +48,28 @@ describe("API URL 构造", () => {
     const base = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1";
     const url = `${base}/projects/abc-123`;
     expect(url).toContain("/api/v1/projects/abc-123");
+  });
+});
+
+describe("projectsApi.remove", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("发送 DELETE 请求并解析响应", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ deleted: true, project_id: "proj-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await projectsApi.remove("proj-1");
+
+    expect(result).toEqual({ deleted: true, project_id: "proj-1" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/v1/projects/proj-1");
+    expect(init.method).toBe("DELETE");
   });
 });

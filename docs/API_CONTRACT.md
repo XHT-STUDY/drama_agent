@@ -74,6 +74,7 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 | GET | `/projects/{id}` | 查询项目 |
 | PATCH | `/projects/{id}` | 更新项目 |
 | GET | `/projects` | 列出项目 |
+| DELETE | `/projects/{id}` | 删除项目（软删除、幂等；404 错误码 `PROJECT_NOT_FOUND`，返回 `{deleted: true, project_id}`） |
 
 ### 会话与消息
 
