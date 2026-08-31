@@ -17,6 +17,7 @@
 
 import { ScoreBar } from "./ScoreBar";
 import { IssueCard } from "./IssueCard";
+import { EvaluationMatrix } from "./EvaluationMatrix";
 import { DEFAULT_EVALUATION_WEIGHTS } from "@/types/api";
 import type { EvaluationReportContent, EvaluationDimension } from "@/types/api";
 
@@ -193,19 +194,24 @@ export function EvaluationPanel({
         </div>
       )}
 
-      {/* 9 维评分 */}
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <h4 className="mb-3 text-xs font-semibold text-gray-700">📊 维度评分</h4>
-        <div className="space-y-2">
-          {Object.entries(DEFAULT_EVALUATION_WEIGHTS).map(([dim]) => {
-            const dimension = dim as EvaluationDimension;
-            const score = report.dimension_scores[dimension] ?? 0;
-            return (
-              <ScoreBar key={dimension} dimension={dimension} score={score} />
-            );
-          })}
+      {/* 9 维评分 —— 有评估明细时渲染评分矩阵，旧报告降级为 ScoreBar */}
+      {report.dimension_assessments &&
+      Object.keys(report.dimension_assessments).length > 0 ? (
+        <EvaluationMatrix report={report} onLocateScene={onLocateScene} />
+      ) : (
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+          <h4 className="mb-3 text-xs font-semibold text-gray-700">📊 维度评分</h4>
+          <div className="space-y-2">
+            {Object.entries(DEFAULT_EVALUATION_WEIGHTS).map(([dim]) => {
+              const dimension = dim as EvaluationDimension;
+              const score = report.dimension_scores[dimension] ?? 0;
+              return (
+                <ScoreBar key={dimension} dimension={dimension} score={score} />
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 亮点 */}
       <div className="rounded-lg border border-gray-200 bg-white p-4">

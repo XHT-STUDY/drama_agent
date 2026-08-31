@@ -1,10 +1,14 @@
-"""EvaluationSkill — 单集剧本评估技能 (E-02).
+"""EvaluationSkill — 单集剧本评估技能 (E-02; v2 可解释性升级).
 
 职责:
 - 接收单集剧本、本集大纲、StoryBible、Rubric 与客观辅助特征
-- 调用 LLM 生成 EvaluationReport（9 维评分 + 问题诊断 + 建议）
+- 调用 LLM 生成 EvaluationReport（9 维评分 + 评估明细 + 问题诊断 + 建议）
+- 评估明细（dimension_assessments）：先定位 5 档锚点档位，再给档内分数，
+  附原文证据引用——"评分矩阵"的数据层
 - 服务端回填 overall_score / need_revision（不信任 LLM 自报总分）
-- 后校验:低于 70 的维度必有对应 issue、evidence 限长、scene_number 有效
+- 后校验:分数-档位分带 clamp、matched_anchor 按 Rubric 回填、
+  evidence 逐条溯源校验、低于 70 的维度必有对应 issue、evidence 限长、
+  scene_number 有效
 - 不注入其他集的评估结论
 
 模块边界:
@@ -16,6 +20,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re
 from typing import Any, cast
 from uuid import UUID
 
@@ -25,6 +30,7 @@ from app.domain.evaluation import (
     EvaluationInput,
     EvaluationIssue,
     EvaluationReport,
+    clamp_score_to_band,
     compute_need_revision,
     compute_overall_score,
 )
@@ -39,6 +45,17 @@ logger = logging.getLogger(__name__)
 _EVIDENCE_MAX_LENGTH = 200
 # 低分维度自动补 issue 的阈值
 _LOW_DIMENSION_THRESHOLD = 70
+# 归一化时移除的字符：所有空白 + 中英文标点（引用漂移最常见的差异来源）
+_NORMALIZE_STRIP_RE = re.compile(r"[\s，。！？；：、“”‘’（）《》〈〉【】—…·,.\!?;:\"'()\[\]<>{}]")
+
+
+def _normalize_text(text: str) -> str:
+    """归一化文本用于引用匹配：去空白与标点、转小写。
+
+    LLM 摘抄常伴随标点改写或换行差异，归一化后做子串匹配
+    可以容忍这类无关差异，只惩罚实质性的内容改写。
+    """
+    return _NORMALIZE_STRIP_RE.sub("", text).lower()
 
 
 class EvaluationSkillValidationError(Exception):
@@ -85,7 +102,7 @@ class EvaluationSkill(Skill):
         prompt_loader: PromptLoader = context["prompt_loader"]
         script_artifact_id: UUID = context["script_artifact_id"]
 
-        # 1. 加载 Rubric（权威配置 knowledge/rubric/mvp_v1.yaml）
+        # 1. 加载 Rubric（权威配置 knowledge/rubric/mvp_v2.yaml）
         rubric = load_rubric()
 
         # 2. 计算客观辅助特征（未预传时才计算）
@@ -132,13 +149,17 @@ class EvaluationSkill(Skill):
 
         report = cast(EvaluationReport, result.parsed)
 
-        # 5. 服务端回填确定性指标（覆盖 LLM 自报）
+        # 5. 评估明细归一化（分带 clamp / 锚点回填 / 引用溯源）——
+        #    必须先于总分计算，clamp 后的维度分才是总分输入
+        self._normalize_assessments(report, rubric, ev_input)
+
+        # 6. 服务端回填确定性指标（覆盖 LLM 自报）
         self._service_override(report, rubric)
 
-        # 6. 后校验与规范化
+        # 7. 后校验与规范化
         self._normalize_issues(report, ev_input)
 
-        # 7. 绑定 Artifact 与 Rubric 版本
+        # 8. 绑定 Artifact 与 Rubric 版本
         report.script_artifact_id = script_artifact_id
         report.rubric_version = rubric.version
 
@@ -157,6 +178,123 @@ class EvaluationSkill(Skill):
         """
         script = ev_input.script_draft.model_dump(mode="json")
         return await self._structure_tool.execute(script=script)
+
+    # ---- 评估明细归一化（可解释性 v2）----
+
+    def _normalize_assessments(
+        self,
+        report: EvaluationReport,
+        rubric: Rubric,
+        ev_input: EvaluationInput,
+    ) -> None:
+        """归一化评估明细，满足评分矩阵质量门禁。
+
+        - 分带 clamp：维度分必须落在所定位档位的分带内（以档位为准）；
+        - matched_anchor 权威回填：以 Rubric 原文为准，不采信模型转述；
+        - evidence 溯源校验：归一化匹配所引场次原文，跨场自动纠正，
+          全文找不到时标记 verified=False（不阻断工作流）。
+
+        空 dimension_assessments（旧版 LLM 输出 / 旧 fixture）直接跳过，
+        保持向后兼容。
+        """
+        if not report.dimension_assessments:
+            return
+
+        scene_texts = self._scene_texts(ev_input)
+        full_text = _normalize_text("".join(scene_texts.values()))
+
+        for dim, assessment in report.dimension_assessments.items():
+            spec = rubric.dimension_spec(dim)
+
+            # 1. 分带 clamp：分数以档位为准，越界拉回分带内
+            lo, hi = rubric.score_band(assessment.level)
+            original = report.dimension_scores.get(dim)
+            clamped = clamp_score_to_band(int(original or 0), assessment.level, (lo, hi))
+            if original is not None and clamped != original:
+                logger.warning(
+                    "第 %d 集 %s 维度分数 %d 超出 %d 档分带 [%d, %d]，clamp 至 %d",
+                    report.episode_number, dim.value, original,
+                    assessment.level, lo, hi, clamped,
+                )
+                report.dimension_scores[dim] = clamped
+
+            # 2. matched_anchor 权威回填（模型转述不采信）
+            assessment.matched_anchor = spec.anchors[assessment.level]
+
+            # 3. evidence 溯源校验
+            self._verify_evidence(report, dim, assessment, scene_texts, full_text)
+
+    @staticmethod
+    def _scene_texts(ev_input: EvaluationInput) -> dict[int, str]:
+        """按场次汇总可检索文本（动作描写 + 对白）。"""
+        texts: dict[int, str] = {}
+        for scene in ev_input.script_draft.scenes:
+            parts = [scene.action or ""]
+            for line in scene.dialogue or []:
+                parts.append(line.text or "")
+            texts[scene.scene_number] = "".join(parts)
+        return texts
+
+    def _verify_evidence(
+        self,
+        report: EvaluationReport,
+        dim: EvaluationDimension,
+        assessment: Any,
+        scene_texts: dict[int, str],
+        full_text: str,
+    ) -> None:
+        """对单维度评估明细的 evidence 逐条溯源校验（原地修改）。
+
+        策略（软校验，不阻断）：
+        - 场次有效且引用能在该场匹配 → verified=True；
+        - 所引场次匹配失败但能在其他场找到 → 自动纠正场次号并记录日志；
+        - 全文都无法匹配 → verified=False（前端呈现"未验证引用"）。
+        """
+        for cite in assessment.evidence:
+            if len(cite.quote) > _EVIDENCE_MAX_LENGTH:
+                cite.quote = cite.quote[:_EVIDENCE_MAX_LENGTH]
+            norm_quote = _normalize_text(cite.quote)
+            if not norm_quote:
+                cite.verified = False
+                continue
+
+            if cite.scene_number is not None:
+                scene_text = _normalize_text(scene_texts.get(cite.scene_number, ""))
+                if norm_quote in scene_text:
+                    cite.verified = True
+                    continue
+                # 跨场漂移：全文检索，命中则纠正场次号
+                corrected = self._find_scene(norm_quote, scene_texts)
+                if corrected is not None:
+                    logger.warning(
+                        "第 %d 集 %s 维度 evidence 场次漂移: %s → %s，已纠正",
+                        report.episode_number, dim.value,
+                        cite.scene_number, corrected,
+                    )
+                    cite.scene_number = corrected
+                    cite.verified = True
+                    continue
+            else:
+                # 全集性证据：与全文匹配即可
+                if norm_quote in full_text:
+                    cite.verified = True
+                    continue
+
+            cite.verified = False
+            logger.warning(
+                "第 %d 集 %s 维度 evidence 无法在剧本原文中溯源，标记未验证",
+                report.episode_number, dim.value,
+            )
+
+    @staticmethod
+    def _find_scene(
+        norm_quote: str, scene_texts: dict[int, str]
+    ) -> int | None:
+        """在全部场次中检索引用，返回命中的场次号。"""
+        for scene_number, text in scene_texts.items():
+            if norm_quote in _normalize_text(text):
+                return scene_number
+        return None
 
     # ---- 服务端回填 ----
 

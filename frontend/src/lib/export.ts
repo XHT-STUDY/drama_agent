@@ -18,7 +18,7 @@ import type {
   ScriptDraftContent,
   StoryBibleContent,
 } from "@/types/api";
-import { EVAL_DIMENSION_LABELS } from "@/types/api";
+import { EVAL_DIMENSION_LABELS, EVAL_LEVEL_BANDS } from "@/types/api";
 
 // ============================================================
 // 类型
@@ -199,20 +199,30 @@ export function markdownFromOutline(c: EpisodeOutlineSetContent): string {
   return lines.join("\n");
 }
 
-/** 剧本 → Markdown */
+/** 剧本 → Markdown（中文短剧剧本格式，与后端 markdown_from_script 对齐） */
 export function markdownFromScript(c: ScriptDraftContent): string {
   const lines: string[] = [`# 第 ${c.episode_number} 集剧本：${c.title}`, ""];
 
-  const formatDialogue = (d: { speaker: string; text: string; parenthetical?: string }): string =>
-    d.parenthetical ? `${d.speaker}（${d.parenthetical}）：${d.text}` : `${d.speaker}：${d.text}`;
+  const lineTypeSuffix = (t?: string): string =>
+    t === "vo" ? "VO" : t === "os" ? "OS" : "";
 
   for (const scene of c.scenes) {
-    lines.push(`## 第 ${scene.scene_number} 场：${scene.location}（${scene.time_of_day}）`, "");
-    if (scene.action) lines.push(scene.action, "");
-    if (scene.dialogue.length > 0) {
-      for (const d of scene.dialogue) lines.push(`- ${formatDialogue(d)}`);
-      lines.push("");
+    lines.push(
+      `${c.episode_number}-${scene.scene_number} ${scene.time_of_day} ${scene.int_ext || "外"} ${scene.location}`,
+    );
+    if (scene.characters.length > 0) {
+      lines.push(`人物：${scene.characters.join("、")}`);
     }
+    for (const a of scene.action.split("\n")) {
+      const t = a.trim();
+      if (t) lines.push(`△${t}`);
+    }
+    for (const d of scene.dialogue) {
+      const suffix = lineTypeSuffix(d.line_type);
+      const parenthetical = d.parenthetical ? `（${d.parenthetical}）` : "";
+      lines.push(`${d.speaker}${suffix}${parenthetical}：${d.text}`);
+    }
+    lines.push("");
   }
 
   return lines.join("\n");
@@ -231,6 +241,31 @@ export function markdownFromEvaluation(c: EvaluationReportContent): string {
     lines.push(`- ${EVAL_DIMENSION_LABELS[dim]}：${score} 分`);
   }
   lines.push("");
+
+  lines.push("## 评分矩阵（档位定位与证据）", "");
+  const assessments = c.dimension_assessments ?? {};
+  if (Object.keys(assessments).length === 0) {
+    lines.push("（本报告为 v1 版本，无评分矩阵明细）", "");
+  } else {
+    for (const dim of EVAL_DIM_ORDER) {
+      const a = assessments[dim];
+      if (!a) continue;
+      const band = EVAL_LEVEL_BANDS[a.level];
+      lines.push(`### ${EVAL_DIMENSION_LABELS[dim]}：${c.dimension_scores[dim]} 分（${a.level} 档，${band[0]}-${band[1]} 分带）`, "");
+      if (a.matched_anchor) lines.push(`- 命中标准：${a.matched_anchor}`);
+      lines.push(`- 定位理由：${a.rationale}`);
+      const signals = Object.entries(a.signals ?? {});
+      if (signals.length > 0) {
+        lines.push(`- 观察信号：${signals.map(([k, v]) => `${k}=${String(v)}`).join("，")}`);
+      }
+      for (const cite of a.evidence) {
+        const scene = cite.scene_number !== null ? `第 ${cite.scene_number} 场` : "全集";
+        const mark = cite.verified ? "✓" : "⚠ 未验证";
+        lines.push(`- 证据[${mark}]（${scene}）：“${cite.quote}”`);
+      }
+      lines.push("");
+    }
+  }
 
   lines.push("## 优点", "");
   if (c.strengths.length === 0) lines.push("- 无");

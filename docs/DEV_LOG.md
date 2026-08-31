@@ -4244,3 +4244,36 @@ Phase L（分阶段创作与集数自由）全部完成。用户完整旅程：�
 
 1. **"进度面板显示别的任务"这类错乱，优先怀疑客户端跨实例状态残留**：单实例（一个 Run 的生命周期内）行为完全正确，切实例才炸——useEffect 依赖里换 id 时，ref 里的累积状态不会自动失效。
 2. 节点标签表是"新工作流接入清单"的一部分：后端加工作流节点时，前端 NODE_LABELS 是隐性耦合点，漏了不报错、只是静默无进度。
+
+## 剧本评估可解释性升级：证据锚定的评分矩阵 Rubric v2（2026-08-30，方案详见 docs/EVALUATION_MATRIX.md）
+
+### 做了什么
+
+评估从"LLM 给每维度一个 0-100 数 + 问题列表"升级为"5 档矩阵定位 + 可溯源证据 + 服务端一致性校验"：
+
+1. **Rubric v2**（knowledge/rubric/mvp_v2.yaml，v2.0.0）：锚点 1/3/5 三档扩为 1-5 五档；新增 score_bands（档位→分带：1档 0-44 / 2档 45-59 / 3档 60-74 / 4档 75-89 / 5档 90-100，修订阈值 75 与 4 档下界对齐）；每维度新增 signals（可观察信号）随锚点注入 Prompt。load_rubric 默认路径切到 v2，mvp_v1.yaml 保留为历史数据。
+2. **评分协议**：Prompt v1.2 + EvaluationReport 新增可选 dimension_assessments——每维度 level（定位档位）/ rationale（强制含相邻档对比）/ evidence（逐字原文引用+场次）/ signals；matched_anchor 由服务端按 Rubric 权威回填。
+3. **服务端校验**（EvaluationSkill._normalize_assessments，置于总分计算之前）：分带 clamp（维度分越界按档位拉回，clamp 后才进 compute_overall_score）；matched_anchor 不采信模型转述；evidence 归一化溯源三分支——命中/跨场自动纠正场次号/全文找不到标 verified=false（软校验不阻断）。空 assessments（存量报告与旧 fixture）跳过矩阵校验，完全向后兼容，不动 Artifact 不可变规则。
+4. **前端**：新增 EvaluationMatrix 组件（9 维×5 档矩阵、展开显示锚点/理由/信号/证据卡片含✓已溯源/⚠未验证与场次跳转、总分推导条+need_revision 触发规则逐条标出）；EvaluationPanel 有明细渲染矩阵、旧报告降级 ScoreBar；Markdown 导出新增矩阵一节；types/api.ts 补类型与 EVAL_LEVEL_BANDS/EVAL_SCORE_RULES 常量，并修正 DEFAULT_EVALUATION_WEIGHTS 与后端不一致（旧值 0.12/0.14/0.08 → 后端真实值 0.15/0.10/0.05）。
+
+### 为什么这么做
+
+- 可信度的关键不是"让 LLM 解释更多"，而是**服务端能机器验证的部分必须验证**：分带 clamp 使任何分数都能从公开规则（档位+分带）推出；引用溯源使"证据"从 LLM 自述变成可核对事实；两者都是确定性代码。
+- 档位优先于分数：分数是连续的、可以随意微调，档位是语义判断、必须对着锚点负责——两者冲突时以档位为准，才能回答"为什么不是 85"。
+- 软校验而非硬失败：LLM 引用改写是常态，整份报告因一条引用报废会杀死可用性；verified=false 让不可验证的部分如实显形，由读者自行降权。
+- 修订阈值 75 有意与 4 档分带下界对齐：标准叙事从"三个孤立阈值"变成"够不到 4 档就修"。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest（后端全量） | 978 passed / 0 failed |
+| pnpm test（前端全量） | 15 files / 219 passed |
+| npx tsc --noEmit / eslint / ruff | 通过 |
+| mypy（本次改动文件） | 通过（make typecheck 的 11 个错误均为既有问题，位于未触碰文件） |
+
+### 学到了什么
+
+1. **给 LLM 输出加"机器可验证的门禁"比加"更详细的指令"有效**：Prompt 里要求"逐字引用"只是软约束，归一化子串匹配 + verified 标记才是硬保证；指令与门禁缺一不可。
+2. **快照回归测试是 Prompt 版本纪律的保险丝**：test_hash_snapshot_regression 在模板变化时立即失败，按其自述规则同步 version + 快照 key 即可——这次 evaluate_episode 1.1.0 → 1.2.0 一次走通。
+3. **前端常量与后端权威值的漂移会被静默容忍**：DEFAULT_EVALUATION_WEIGHTS 前后端不一致长期无人发现（仅用于排序/展示，不参与计算）。凡是"镜像常量"都应在注释里标注权威源，或尽早改为接口下发。

@@ -46,12 +46,13 @@ def _sample_rubric_dict() -> dict[str, Any]:
                 "label": dim.value,
                 "weight": weight,
                 "description": f"{dim.value} 说明",
-                "anchors": {1: "一档", 3: "三档", 5: "五档"},
+                "anchors": {i: f"{i}档" for i in range(1, 6)},
             }
         )
     return {
         "version": "1.0.0",
         "description": "测试 rubric",
+        "score_bands": {1: [0, 44], 2: [45, 59], 3: [60, 74], 4: [75, 89], 5: [90, 100]},
         "dimensions": dims,
     }
 
@@ -60,7 +61,7 @@ class TestRubricLoad:
     """默认 rubric 配置的加载与完整性。"""
 
     def test_load_default_rubric(self) -> None:
-        """默认 mvp_v1.yaml 可加载并通过全部校验。"""
+        """默认 mvp_v2.yaml 可加载并通过全部校验。"""
         rubric = load_rubric()
         assert isinstance(rubric, Rubric)
         assert rubric.version  # 版本非空，进入 Artifact metadata
@@ -79,10 +80,10 @@ class TestRubricLoad:
         assert dims == set(EvaluationDimension)
 
     def test_anchors_complete(self) -> None:
-        """每个维度锚点包含 1/3/5 三档。"""
+        """每个维度锚点包含 1-5 五档。"""
         rubric = load_rubric()
         for spec in rubric.dimensions:
-            assert {1, 3, 5} <= set(spec.anchors.keys())
+            assert set(spec.anchors.keys()) == {1, 2, 3, 4, 5}
 
     def test_weights_align_with_enums(self) -> None:
         """Rubric 权重与 domain/enums.py 默认权重一致（必须同步）。"""
@@ -118,9 +119,9 @@ class TestRubricValidation:
         assert "重复" in str(exc.value)
 
     def test_missing_anchor_level(self) -> None:
-        """锚点缺少 1/3/5 档位时校验失败。"""
+        """锚点缺少档位时校验失败。"""
         data = _sample_rubric_dict()
-        data["dimensions"][0]["anchors"] = {1: "一档", 3: "三档"}  # 缺 5 档
+        data["dimensions"][0]["anchors"] = {1: "一档", 2: "二档", 3: "三档", 4: "四档"}  # 缺 5 档
         with pytest.raises(Exception) as exc:
             Rubric.model_validate(data)
         assert "锚点缺少档位" in str(exc.value)

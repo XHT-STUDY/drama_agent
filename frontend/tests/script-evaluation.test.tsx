@@ -225,9 +225,16 @@ describe("ScriptView", () => {
   it("渲染所有场景", () => {
     const scenes = [makeScene(1), makeScene(2), makeScene(3)];
     render(React.createElement(ScriptView, { content: makeScriptContent({ scenes }) }));
-    expect(screen.getByText("球场1")).toBeTruthy();
-    expect(screen.getByText("球场2")).toBeTruthy();
-    expect(screen.getByText("球场3")).toBeTruthy();
+    // 场景头为 `集号-场号 时间 内/外 地点` 格式
+    expect(screen.getByText(/1-1 白天 外 球场1/)).toBeTruthy();
+    expect(screen.getByText(/1-2 白天 外 球场2/)).toBeTruthy();
+    expect(screen.getByText(/1-3 白天 外 球场3/)).toBeTruthy();
+  });
+
+  it("场景头包含出场人物行", () => {
+    render(React.createElement(ScriptView, { content: makeScriptContent() }));
+    const charLines = screen.getAllByText(/人物：林风、教练/);
+    expect(charLines.length).toBeGreaterThanOrEqual(3);
   });
 
   it("每个场景有 scene-N 锚点", () => {
@@ -553,5 +560,117 @@ describe("EvaluationPanel", () => {
     }));
     fireEvent.click(screen.getByText(/定位到第 1 场/));
     expect(onLocate).toHaveBeenCalledWith(1);
+  });
+});
+
+// ============================================================
+// EvaluationMatrix — 评分矩阵（可解释性 v2）
+// ============================================================
+
+import { EvaluationMatrix } from "@/features/evaluations/EvaluationMatrix";
+import type { DimensionAssessment } from "@/types/api";
+
+function makeAssessment(overrides: Partial<DimensionAssessment> = {}): DimensionAssessment {
+  return {
+    level: 4,
+    matched_anchor: "开场在前 1/3 内建立明确冲突或悬念，观众有清晰观看动机",
+    rationale: "开场即有危机；但冲击力未到顶格，因此不是 5 档，也未弱到 3 档。",
+    evidence: [
+      { scene_number: 1, quote: "激烈的训练开始了，林风展现出惊人的速度。这是第1场。", verified: true },
+    ],
+    signals: { hook_position: "第1场即危机" },
+    ...overrides,
+  };
+}
+
+function makeAssessments(): Record<string, DimensionAssessment> {
+  const result: Record<string, DimensionAssessment> = {};
+  const dims = [
+    "opening_hook", "main_clarity", "character_appeal", "conflict_intensity",
+    "payoff_density", "ending_hook", "pacing", "visualizability", "compliance_safety",
+  ];
+  for (const dim of dims) {
+    result[dim] = makeAssessment();
+  }
+  return result;
+}
+
+describe("EvaluationMatrix", () => {
+  const nop = vi.fn();
+
+  function renderMatrix(overrides: Partial<EvaluationReportContent> = {}, onLocate?: (n: number) => void) {
+    const r = makeEvaluationReport({
+      rubric_version: "2.0.0",
+      dimension_assessments: makeAssessments(),
+      ...overrides,
+    });
+    return render(React.createElement(EvaluationMatrix, {
+      report: r, onLocateScene: onLocate,
+    }));
+  }
+
+  it("渲染矩阵标题与 rubric 版本", () => {
+    renderMatrix();
+    expect(screen.getByText(/评分矩阵/)).toBeTruthy();
+    expect(screen.getByText(/2\.0\.0/)).toBeTruthy();
+  });
+
+  it("渲染全部 9 个维度行与档位格", () => {
+    renderMatrix();
+    expect(screen.getAllByText("开头钩子").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("合规安全").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("展开维度行显示命中档、定位理由与信号", () => {
+    renderMatrix();
+    // 点击第一行（维度名所在按钮）
+    fireEvent.click(screen.getAllByText("开头钩子")[0]);
+    expect(screen.getByText(/命中标准|4 档/)).toBeTruthy();
+    expect(screen.getByText(/不是 5 档/)).toBeTruthy();
+    expect(screen.getByText(/hook_position/)).toBeTruthy();
+  });
+
+  it("展开行显示已溯源证据并支持跳转场次", () => {
+    const onLocate = vi.fn();
+    renderMatrix({}, onLocate);
+    fireEvent.click(screen.getAllByText("开头钩子")[0]);
+    expect(screen.getByText("✓ 已溯源")).toBeTruthy();
+    fireEvent.click(screen.getByText(/第 1 场 ↗/));
+    expect(onLocate).toHaveBeenCalledWith(1);
+  });
+
+  it("未通过溯源的证据显示未验证标记", () => {
+    renderMatrix({
+      dimension_assessments: {
+        ...makeAssessments(),
+        opening_hook: makeAssessment({
+          evidence: [{ scene_number: 1, quote: "剧本里不存在的话", verified: false }],
+        }),
+      },
+    });
+    fireEvent.click(screen.getAllByText("开头钩子")[0]);
+    expect(screen.getByText("⚠ 未验证引用")).toBeTruthy();
+  });
+
+  it("触发修订规则时展示触发原因", () => {
+    renderMatrix({
+      need_revision: true,
+      overall_score: 70,
+      issues: [makeIssue({ issue_id: "iss-1", severity: "high" })],
+    });
+    expect(screen.getByText(/触发修订规则/)).toBeTruthy();
+    expect(screen.getByText(/总分 70 < 75/)).toBeTruthy();
+    expect(screen.getByText(/severity=high/)).toBeTruthy();
+  });
+
+  it("旧报告（无 dimension_assessments）在 Panel 中降级为 ScoreBar", () => {
+    const r = makeEvaluationReport(); // 无 dimension_assessments
+    render(React.createElement(EvaluationPanel, {
+      report: r, isLoading: false, isError: false, onReEvaluate: nop,
+    }));
+    // 降级后不出现矩阵标题
+    expect(screen.queryByText(/评分矩阵/)).toBeNull();
+    // ScoreBar 的"维度评分"标题存在
+    expect(screen.getByText("📊 维度评分")).toBeTruthy();
   });
 });

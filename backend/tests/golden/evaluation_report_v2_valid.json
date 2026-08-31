@@ -1,0 +1,152 @@
+{
+  "episode_number": 1,
+  "script_artifact_id": "00000000-0000-0000-0000-000000000010",
+  "rubric_version": "1.0.0",
+  "dimension_scores": {
+    "opening_hook": 82,
+    "main_clarity": 71,
+    "character_appeal": 78,
+    "conflict_intensity": 52,
+    "payoff_density": 66,
+    "ending_hook": 85,
+    "pacing": 76,
+    "visualizability": 95,
+    "compliance_safety": 92
+  },
+  "dimension_assessments": {
+    "opening_hook": {
+      "level": 4,
+      "rationale": "开场第一场即抛出淘汰危机，观众有明确观看动机；但危机停留在言语层面、冲击力未到顶格，因此不是 5 档，也未弱到 3 档的铺垫过长。",
+      "evidence": [
+        {
+          "scene_number": 1,
+          "quote": "教练拍了拍他的肩膀，语气里带着公式化的遗憾"
+        }
+      ],
+      "signals": {
+        "hook_position": "第1场宣布淘汰名单即危机",
+        "background_dump": false
+      }
+    },
+    "main_clarity": {
+      "level": 3,
+      "rationale": "本集目标（被淘汰后寻找出路）可辨，但试训动机交代偏快、转折略生硬；不足以到 4 档的完整推进逻辑，也未模糊到 2 档的目标摇摆。",
+      "evidence": [
+        {
+          "scene_number": 1,
+          "quote": "这句话剧本原文里并没有出现过"
+        }
+      ],
+      "signals": {}
+    },
+    "character_appeal": {
+      "level": 4,
+      "rationale": "林峰的不甘与张德胜的慧眼都有记忆点、动机可信；但配角刻画偏功能化，人物弧光未到 5 档的立体程度，也强于 3 档的单薄性格。",
+      "evidence": [
+        {
+          "scene_number": 1,
+          "quote": "林峰，你知道的，职业足球很残酷"
+        }
+      ],
+      "signals": {
+        "protagonist_memory_point": "独自对墙传球的不甘"
+      }
+    },
+    "conflict_intensity": {
+      "level": 2,
+      "rationale": "冲突停留在言语摩擦（教练宣判、身体天赋否定），无直接对抗与升级，代价抽象；弱于 3 档的对抗张力，强于 1 档的完全无冲突。",
+      "evidence": [
+        {
+          "scene_number": 1,
+          "quote": "这不是加练的问题。有些事情，是天生的。"
+        }
+      ],
+      "signals": {
+        "confrontation_count": 1,
+        "escalation": false
+      }
+    },
+    "payoff_density": {
+      "level": 3,
+      "rationale": "张德胜登场指路是本集唯一释放点，密度偏低且爆发力不足；未到 4 档的分布合理，也强于 2 档的仅有弱爽点。",
+      "evidence": [
+        {
+          "scene_number": 1,
+          "quote": "当林峰踢出最后一个球后瘫坐在地时"
+        }
+      ],
+      "signals": {
+        "payoff_count": 1,
+        "payoff_gap_ratio": "约整集1/2无释放"
+      }
+    },
+    "ending_hook": {
+      "level": 4,
+      "rationale": "结尾抛出试训邀约与条件反差（场地破工资低对手狠），追看动力明确；但冲击力未到 5 档的身份反转级别，仍强于 3 档的轻量悬念。",
+      "evidence": [
+        {
+          "scene_number": 2,
+          "quote": "明天来我的球队试训"
+        }
+      ],
+      "signals": {
+        "unresolved_conflict": true
+      }
+    },
+    "pacing": {
+      "level": 4,
+      "rationale": "两场戏推进高效、无冗余过场；仅第二场情绪铺垫略长，未到 5 档的信息密度与情绪曲线完全匹配，也优于 3 档的若干冗余段落。",
+      "evidence": [
+        {
+          "scene_number": 2,
+          "quote": "夜已深，公园空无一人"
+        }
+      ],
+      "signals": {
+        "empty_scene_count": 0
+      }
+    },
+    "visualizability": {
+      "level": 3,
+      "rationale": "传球、瘫坐等动作具体可拍，但部分转折依赖对白交代；未到 4 档的多数场景动作具体，也强于 2 档的以叙述推进为主。",
+      "evidence": [
+        {
+          "scene_number": 2,
+          "quote": "独自对着墙壁反复传球"
+        }
+      ],
+      "signals": {
+        "abstract_narration_ratio": "低"
+      }
+    },
+    "compliance_safety": {
+      "level": 5,
+      "rationale": "内容为体育励志题材，无暴力色情违法描写，价值观导向积极；无任何合规疑虑，与 4 档的个别尺度注意也拉开距离。",
+      "evidence": [
+        {
+          "scene_number": null,
+          "quote": "职业足球很残酷"
+        }
+      ],
+      "signals": {
+        "red_line_hits": 0
+      }
+    }
+  },
+  "overall_score": 77.6,
+  "strengths": ["开头钩子设计巧妙，情感冲击力强", "集尾钩子悬念设置到位"],
+  "issues": [
+    {
+      "issue_id": "iss_001",
+      "dimension": "conflict_intensity",
+      "severity": "medium",
+      "scene_number": 1,
+      "evidence": "教练的语气里带着公式化的遗憾",
+      "diagnosis": "教练与林峰的对话冲突感偏弱，缺少更尖锐的对抗元素",
+      "suggestion": "可增加一位与主角对立的配角在淘汰现场表达更直接的质疑或嘲讽"
+    }
+  ],
+  "revision_suggestions": ["加强第一场戏的冲突张力"],
+  "need_revision": true,
+  "risk_flags": []
+}

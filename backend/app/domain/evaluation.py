@@ -42,6 +42,54 @@ class EvaluationInput(BaseModel):
     )
 
 
+class EvidenceCite(BaseModel):
+    """维度评估的原文证据引用（可溯源）。
+
+    quote 必须是剧本原文摘抄（≤200 字），服务端做归一化匹配校验，
+    校验失败的引用标记 verified=False，前端以"未验证引用"样式呈现。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    scene_number: int | None = Field(
+        default=None,
+        description="证据所在场次；null 表示全集性证据（引用须能与全文匹配）",
+        ge=1,
+    )
+    quote: str = Field(..., description="剧本原文摘抄（不超过 200 字）", min_length=1)
+    verified: bool = Field(
+        default=True,
+        description="服务端溯源校验结果（由服务端回填，模型输出被忽略）",
+    )
+
+
+class DimensionAssessment(BaseModel):
+    """单维度评估明细——评分矩阵的数据单元 (可解释性升级 v2)。
+
+    评估逻辑："先在 5 档锚点矩阵上定位档位，再给档内分数"。
+    - level 定位档位（1-5），服务端强制 score 落在该档分带内；
+    - matched_anchor 为命中的档位描述（服务端按 Rubric 回填权威文本）；
+    - rationale 必须包含与相邻档位的对比（为什么不是上一档/下一档）；
+    - evidence 引用剧本原文，服务端逐条溯源校验。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    level: int = Field(..., description="定位档位（1-5）", ge=1, le=5)
+    matched_anchor: str = Field(
+        default="", description="命中档位的锚点描述（服务端按 Rubric 回填）"
+    )
+    rationale: str = Field(
+        ..., description="档位定位理由，须包含与相邻档位的对比", min_length=1
+    )
+    evidence: list[EvidenceCite] = Field(
+        default_factory=list, description="原文证据引用（可溯源）"
+    )
+    signals: dict[str, Any] = Field(
+        default_factory=dict, description="观察到的可观察信号值（如 hook_position）"
+    )
+
+
 class EvaluationIssue(BaseModel):
     """评估中发现的问题。
 
@@ -99,6 +147,10 @@ class EvaluationReport(BaseModel):
         default=False,
         description="是否需要修订，由服务端规则确定",
     )
+    dimension_assessments: dict[EvaluationDimension, DimensionAssessment] = Field(
+        default_factory=dict,
+        description="各维度评估明细（评分矩阵数据）；空 dict 表示旧版报告（无矩阵数据）",
+    )
     risk_flags: list[str] = Field(
         default_factory=list, description="风险标记（合规、内容安全等）"
     )
@@ -122,6 +174,17 @@ class EvaluationReport(BaseModel):
                 raise ValueError(
                     f"维度 {dim.value} 评分为 {score}，超出 [0, 100] 范围"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _check_assessments_complete(self) -> "EvaluationReport":
+        """提供评估明细时必须覆盖全部九个维度（空 dict 表示旧版报告，跳过）。"""
+        if self.dimension_assessments and set(self.dimension_assessments) != set(
+            EvaluationDimension
+        ):
+            raise ValueError(
+                "dimension_assessments 提供时必须覆盖全部 9 个维度"
+            )
         return self
 
 
@@ -178,3 +241,26 @@ def compute_need_revision(
         if compliance is not None and compliance < 60:
             return True
     return False
+
+
+def clamp_score_to_band(
+    score: int,
+    level: int,
+    band: tuple[int, int],
+) -> int:
+    """将维度分 clamp 到所定位档位的分带内（分数-档位自洽，确定性规则）。
+
+    档位是模型的语义判断（"该维度匹配哪一档锚点"），
+    分数是数值表达；两者冲突时以档位为准——这是评估可解释性的
+    机器保证：任何分数都能从"档位 + 分带"公开规则推出。
+
+    Args:
+        score: 模型给出的维度分（0-100）。
+        level: 模型定位的档位（1-5）。
+        band: 该档位的分带 [min, max]（来自 Rubric）。
+
+    Returns:
+        clamp 后的分数（保留一位小数不需要——维度分为整数）。
+    """
+    lo, hi = band
+    return max(lo, min(hi, score))

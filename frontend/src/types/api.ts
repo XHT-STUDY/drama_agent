@@ -280,6 +280,26 @@ export interface EvaluationIssue {
   suggestion: string;
 }
 
+/** 评估证据引用（后端 app/domain/evaluation.py EvidenceCite） */
+export interface EvaluationEvidenceCite {
+  scene_number: number | null;
+  quote: string;
+  /** 服务端溯源校验结果；false 表示未能在剧本原文中匹配到 */
+  verified: boolean;
+}
+
+/** 单维度评估明细（后端 DimensionAssessment，评分矩阵数据单元） */
+export interface DimensionAssessment {
+  /** 定位档位 1-5 */
+  level: number;
+  /** 命中档位的锚点描述（服务端按 Rubric 回填） */
+  matched_anchor: string;
+  /** 档位定位理由（含相邻档位对比） */
+  rationale: string;
+  evidence: EvaluationEvidenceCite[];
+  signals: Record<string, string | number | boolean>;
+}
+
 /** 单集评估报告 */
 export interface EvaluationReportContent {
   episode_number: number;
@@ -292,19 +312,48 @@ export interface EvaluationReportContent {
   revision_suggestions: string[];
   need_revision: boolean;
   risk_flags: string[];
+  /** 各维度评估明细；v2 之前的旧报告无此字段（空/缺省 = 无矩阵数据） */
+  dimension_assessments?: Partial<Record<EvaluationDimension, DimensionAssessment>>;
 }
+
+/**
+ * 档位 → 分数区间（与 knowledge/rubric/mvp_v2.yaml score_bands 同步）。
+ * 后端对维度分做分带 clamp，前端仅用于展示。
+ */
+export const EVAL_LEVEL_BANDS: Record<number, [number, number]> = {
+  1: [0, 44],
+  2: [45, 59],
+  3: [60, 74],
+  4: [75, 89],
+  5: [90, 100],
+};
+
+/** 档位中文标签 */
+export const EVAL_LEVEL_LABELS: Record<number, string> = {
+  1: "明显不达标",
+  2: "低于预期",
+  3: "基本可用",
+  4: "表现良好",
+  5: "出色",
+};
+
+/** 修订触发阈值（与 knowledge/rubric/mvp_v2.yaml score_rules 同步） */
+export const EVAL_SCORE_RULES = {
+  revision_threshold: 75,
+  compliance_threshold: 60,
+} as const;
 
 /** 默认九个维度权重（与后端 DEFAULT_EVALUATION_WEIGHTS 一致） */
 export const DEFAULT_EVALUATION_WEIGHTS: Record<EvaluationDimension, number> = {
-  opening_hook: 0.12,
-  main_clarity: 0.14,
-  character_appeal: 0.14,
-  conflict_intensity: 0.14,
-  payoff_density: 0.12,
-  ending_hook: 0.10,
-  pacing: 0.08,
-  visualizability: 0.08,
-  compliance_safety: 0.08,
+  opening_hook: 0.15,
+  main_clarity: 0.10,
+  character_appeal: 0.10,
+  conflict_intensity: 0.15,
+  payoff_density: 0.15,
+  ending_hook: 0.15,
+  pacing: 0.10,
+  visualizability: 0.05,
+  compliance_safety: 0.05,
 };
 
 // ============================================================
@@ -628,7 +677,7 @@ export type AgentCommand =
   | { intent: "explain"; target: ActionTarget }
   | { intent: "revise_outline"; source_outline_id: string; constraints: string[] }
   | { intent: "revise_script"; source_script_id: string; episode_number: number; constraints: string[] }
-  | { intent: "evaluate"; scope: "project" | "episode"; episode_number?: number | null };
+  | { intent: "evaluate"; scope: "project" | "episode"; episode_number?: number | null }
   | { intent: "continue"; target_run_id: string; batch_size?: number | null };
 
 /** 服务端持久化的结构化计划 */
