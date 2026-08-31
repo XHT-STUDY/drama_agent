@@ -51,6 +51,8 @@ export interface UseAgentConversationResult {
     options?: { episodeCount?: number },
   ) => Promise<AgentTurnResponse | null>;
   sending: boolean;
+  /** 发送中尚未上屏的用户消息（乐观渲染，让消息流呈现聊天感） */
+  pendingContent: string | null;
   sendError: string | null;
   /** 发送失败时保留的用户输入（调用方用于恢复输入框草稿） */
   lastFailedContent: string | null;
@@ -82,6 +84,7 @@ export function useAgentConversation(
   );
   const [sendError, setSendError] = useState<string | null>(null);
   const [lastFailedContent, setLastFailedContent] = useState<string | null>(null);
+  const [pendingContent, setPendingContent] = useState<string | null>(null);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
   const [lastTurn, setLastTurn] = useState<AgentTurnResponse | null>(null);
   const [pageLimit, setPageLimit] = useState(50);
@@ -209,6 +212,8 @@ export function useAgentConversation(
     ) => {
       if (sendInFlightRef.current) return null;
       sendInFlightRef.current = true;
+      // 乐观上屏：消息流立即显示用户消息与"正在思考"气泡（聊天感）
+      setPendingContent(content);
       try {
         return await sendMutation.mutateAsync({
           content,
@@ -217,6 +222,7 @@ export function useAgentConversation(
         });
       } finally {
         sendInFlightRef.current = false;
+        setPendingContent(null);
       }
     },
     [sendMutation],
@@ -243,6 +249,7 @@ export function useAgentConversation(
     isLoading: messagesQuery.isLoading,
     sendTurn,
     sending: sendMutation.isPending,
+    pendingContent,
     sendError,
     lastFailedContent,
     activeActionId,

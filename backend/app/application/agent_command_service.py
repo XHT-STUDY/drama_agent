@@ -35,6 +35,7 @@ from app.core.errors import (
     NotFoundError,
     OutlineNotFoundForRevisionError,
     ProjectHasActiveRunError,
+    RunNotRetryableError,
     ScriptNotFoundForRevisionError,
     UnsupportedAgentIntentError,
 )
@@ -62,6 +63,7 @@ from app.domain.agent_command import (
     AgentTurnStatus,
     AgentTurnType,
     ArtifactSnapshot,
+    ContinueCommand,
     CreateScriptCommand,
     EvaluateCommand,
     ReviseOutlineCommand,
@@ -74,6 +76,13 @@ from app.prompts.loader import PromptLoader
 from app.skills.agent_command_planner import (
     DEFAULT_AVAILABLE_INTENTS,
     AgentCommandPlannerSkill,
+)
+from app.skills.agent_shortcut import (
+    detect_shortcut,
+    find_active_run,
+    find_gated_run,
+    find_latest_proposed_action,
+    render_continue_answer,
 )
 
 logger = get_logger(__name__)
@@ -320,6 +329,10 @@ class AgentCommandService:
             # 在持久化任何数据前拒绝非法活动上下文,避免留下无法完成的 Turn。
             await self._context_service.validate_active_context(db, project, active_context)
 
+        # 会话 ID 提前捕获为纯值:rollback 会无条件过期 ORM 属性,
+        # 异常路径再访问 conversation.id 会触发同步惰性加载(MissingGreenlet)。
+        conv_id = conversation.id
+
         message = await self._append_message(
             db,
             conversation.id,
@@ -365,24 +378,44 @@ class AgentCommandService:
         if claimed is None:
             return await self._duplicate_outcome(db, turn_id)
 
+        # ---- 确定性短路:确认/续跑短语直达动作,不经 Planner ----
+        # 未命中或无可执行目标(无 proposed Action / 无门上 Run)时返回 None,
+        # 行为与无短路时完全一致。
+        shortcut = detect_shortcut(content)
+        if shortcut is not None:
+            handled = await self._try_shortcut(db, project, conv_id, shortcut)
+            if handled is not None:
+                try:
+                    final_turn = await self._finalize_turn(
+                        db, turn_id, conv_id, lease_owner, handled, project, content,
+                    )
+                except AgentStateTransitionError:
+                    await db.rollback()
+                    return await self._duplicate_outcome(db, turn_id)
+                except Exception as exc:
+                    logger.exception("Turn 终态写入失败: turn=%s", turn_id)
+                    await db.rollback()
+                    return await self._fail_turn(db, turn_id, conv_id, lease_owner, exc)
+                return await self._turn_response(db, final_turn), 200
+
         # ---- 构建有界上下文 + 未解决轮数(读事务,读完关闭) ----
         try:
             context_text, _manifest = await self._context_service.build(
                 db, project, conversation, active_context, content
             )
             unresolved = await self._count_unresolved_turns(
-                db, conversation.id, exclude_turn_id=turn_id
+                db, conv_id, exclude_turn_id=turn_id
             )
             await db.commit()  # 关闭只读事务 → Planner 调用期间零事务
         except Exception as exc:
             logger.exception("Planner 上下文构建失败: turn=%s", turn_id)
-            return await self._fail_turn(db, turn_id, conversation.id, lease_owner, exc)
+            return await self._fail_turn(db, turn_id, conv_id, lease_owner, exc)
 
         planner_input = AgentPlannerInput(
             user_request=content,
             project_title=project.title or "",
             target_episode_count=max(1, project.target_episode_count),
-            available_intents=list(DEFAULT_AVAILABLE_INTENTS),
+            available_intents=await self._available_intents(db, project),
             active_context=active_context,
             project_context=context_text[:12000],
             unresolved_turn_count=unresolved,
@@ -399,12 +432,12 @@ class AgentCommandService:
             )
         except Exception as exc:
             logger.exception("Planner 执行失败: turn=%s", turn_id)
-            return await self._fail_turn(db, turn_id, conversation.id, lease_owner, exc)
+            return await self._fail_turn(db, turn_id, conv_id, lease_owner, exc)
 
         # ---- 事务 B:写入终态并终结 Turn ----
         try:
             final_turn = await self._finalize_turn(
-                db, turn_id, conversation.id, lease_owner, output, project, content,
+                db, turn_id, conv_id, lease_owner, output, project, content,
                 target_episode_count=target_episode_count,
                 staged=staged,
             )
@@ -417,7 +450,7 @@ class AgentCommandService:
             # Turn 不能停留在 planning,统一落 failed 终态。
             logger.exception("Turn 终态写入失败: turn=%s", turn_id)
             await db.rollback()
-            return await self._fail_turn(db, turn_id, conversation.id, lease_owner, exc)
+            return await self._fail_turn(db, turn_id, conv_id, lease_owner, exc)
         return await self._turn_response(db, final_turn), 200
 
     async def get_turn(self, db: AsyncSession, turn_id: uuid.UUID) -> AgentTurnResponse:
@@ -496,6 +529,41 @@ class AgentCommandService:
                 )
                 await db.commit()  # 先持久化 stale 再抛错,保证状态可见
                 raise AgentActionStaleError(detail="计划基于的 Artifact 已更新,请重新发起规划")
+
+        # continue 意图不创建新 Run，而是恢复停在确认门的既有 Run；
+        # 必须在 INTENT_RUN_ACTION 查找之前分流（continue 无对应 run action）。
+        if action.intent == "continue":
+            plan = AgentActionPlan.model_validate(action.plan)  # 只信服务端持久化 Plan
+            command = plan.command
+            if not isinstance(command, ContinueCommand):
+                await db.rollback()
+                raise UnsupportedAgentIntentError(detail="continue 计划缺少有效的续跑命令")
+            run = await self._run_service.get_run(db, command.target_run_id)
+            summary = run.state_summary or {}
+            if (
+                run.project_id != action.project_id
+                or run.status != "needs_review"
+                or summary.get("stage_gate") not in ("outline", "scripts")
+            ):
+                # 规划后 Run 状态已变化（已续跑/已取消/门已清）→ 计划作废
+                await action_repo.transition(
+                    action_id, "stale", expected_statuses={"proposed"}
+                )
+                await db.commit()
+                raise RunNotRetryableError(detail="计划对应的任务已不在确认门上，请重新发起")
+            resumed = await self._run_service.continue_gated_run(
+                db, run.id, batch_size=command.batch_size
+            )
+            # Run 终态回写（J-09 lifecycle）指向本 continue Action：
+            # 原 create_script Action 在停门时已写入终态与结果消息，不可复用。
+            resumed.config_snapshot = {
+                **(resumed.config_snapshot or {}),
+                "agent_action_id": str(action_id),
+            }
+            await action_repo.transition(action_id, "queued", run_id=resumed.id)
+            await db.commit()  # durable 后再做 best-effort 唤醒
+            schedule_worker(resumed.id, resumed.action, resumed.config_snapshot or {})
+            return self._action_response(action), resumed
 
         run_action = INTENT_RUN_ACTION.get(action.intent)
         if run_action is None:
@@ -613,6 +681,97 @@ class AgentCommandService:
             else:
                 break
         return count
+
+    async def _available_intents(self, db: AsyncSession, project: Project) -> list[str]:
+        """动态意图白名单：项目存在停在确认门的 Run 时开放 continue。
+
+        Planner 白名单校验以本列表为准——没有门上 Run 时"继续"这类请求
+        不会被判为 continue 意图，避免产出永远无法确认的计划。
+        """
+        intents = list(DEFAULT_AVAILABLE_INTENTS)
+        if await find_gated_run(db, project.id) is not None:
+            intents.append("continue")
+        return intents
+
+    async def _try_shortcut(
+        self,
+        db: AsyncSession,
+        project: Project,
+        conversation_id: uuid.UUID,
+        shortcut: tuple[str, int | None],
+    ) -> AgentPlannerOutput | None:
+        """执行确定性短路；返回 None 表示无可执行目标，回落 Planner。
+
+        最新 pending 优先：proposed Action 与门上 Run 同时存在时按
+        updated_at 取新者，避免把过期计划确认成第二个并行 Run。
+        执行失败的 AppError 转为可读答复而非静默回落——用户已明确
+        表达了意图，回落 Planner 只会得到一次无效澄清。
+        """
+        kind, batch = shortcut
+        try:
+            if kind == "confirm":
+                action = await find_latest_proposed_action(db, conversation_id)
+                gated = await find_gated_run(db, project.id)
+                if action is not None and (
+                    gated is None
+                    or gated.updated_at is None
+                    or (action.updated_at or action.created_at) >= gated.updated_at
+                ):
+                    await self.confirm_action(db, action.id)
+                    return AgentPlannerOutput(
+                        turn_type="answer", answer="已确认，计划开始执行。"
+                    )
+                if gated is not None:
+                    # 确认门上的"确认"即续跑（门消息承诺"等待确认后继续创作"）
+                    return await self._continue_gated(db, gated.id, batch=None)
+                # 任务执行中：如实回答，不误导也不白花一次 Planner 调用
+                if await find_active_run(db, project.id) is not None:
+                    return self._active_run_answer()
+                return None
+            gated = await find_gated_run(db, project.id)
+            if gated is None:
+                if await find_active_run(db, project.id) is not None:
+                    return self._active_run_answer()
+                return None
+            return await self._continue_gated(db, gated.id, batch=batch)
+        except AppError as exc:
+            logger.info("短路执行失败，转为可读答复: kind=%s error=%s", kind, exc)
+            return AgentPlannerOutput(
+                turn_type="answer", answer=f"未能执行：{exc.detail}"
+            )
+
+    @staticmethod
+    def _active_run_answer() -> AgentPlannerOutput:
+        """任务执行中的统一答复。"""
+        return AgentPlannerOutput(
+            turn_type="answer",
+            answer="创作任务正在执行中，完成后会在这里汇报，无需重复发送。",
+        )
+
+    async def _continue_gated(
+        self, db: AsyncSession, run_id: uuid.UUID, *, batch: int | None
+    ) -> AgentPlannerOutput:
+        """续跑停在确认门的 Run 并生成可读答复。"""
+        run = await self._run_service.get_run(db, run_id)
+        summary = run.state_summary or {}
+        gate = summary.get("stage_gate")
+        written = len(summary.get("script_artifact_ids") or {})
+        options = (run.config_snapshot or {}).get("options", {})
+        target_count = int(
+            options.get("outline_count") or options.get("script_count") or 0
+        )
+        await self._run_service.continue_gated_run(db, run_id, batch_size=batch)
+        schedule_worker(run.id, run.action, run.config_snapshot or {})
+        logger.info(
+            "对话短路续跑 Run: run=%s gate=%s batch=%s conversation 级确认",
+            run_id, gate, batch,
+        )
+        return AgentPlannerOutput(
+            turn_type="answer",
+            answer=render_continue_answer(
+                gate=gate, written=written, target=target_count, batch=batch
+            ),
+        )
 
     async def _append_message(
         self,
@@ -843,6 +1002,59 @@ class AgentCommandService:
             intent_str, command, target, goal, steps = build_evaluate_plan(episode=episode)
             intent = intent_str  # type: ignore[assignment]
             snapshots = await self._script_snapshots(db, project.id, episode)
+        elif output.intent == "continue":
+            # continue 意图（B）：目标由服务端解析为项目最新停在 stage_gate
+            # 的 Run，Planner 只提供批集数。白名单已保证仅在有门上 Run 时
+            # 开放该意图；到达这里却找不到属于白名单漂移，按可读错误拒绝。
+            gated = await find_gated_run(db, project.id)
+            if gated is None:
+                raise AppError(
+                    detail="当前没有停在确认门的任务可继续",
+                    status_code=409,
+                    code="GATED_RUN_NOT_FOUND",
+                )
+            summary = gated.state_summary or {}
+            gate = summary.get("stage_gate")
+            written = len(summary.get("script_artifact_ids") or {})
+            gated_options = (gated.config_snapshot or {}).get("options", {})
+            target_count = int(
+                gated_options.get("outline_count")
+                or gated_options.get("script_count")
+                or 0
+            )
+            command = ContinueCommand(
+                target_run_id=gated.id, batch_size=output.batch_size
+            )
+            intent = "continue"
+            target = ActionTarget(target_type="project")
+            goal = f"确认当前进度并继续创作剧本（已完成 {written}/{target_count} 集）"[:2000]
+            steps = [
+                ActionStep(
+                    step_id="continue",
+                    title="恢复执行",
+                    description="从确认门恢复创作流程，已完成部分不重算",
+                ),
+                ActionStep(
+                    step_id="write_episodes",
+                    title="继续写剧本",
+                    description=(
+                        "按确认后的大纲继续生成剧本"
+                        if gate == "outline"
+                        else (
+                            f"继续生成后续集数（本批 {output.batch_size} 集）"
+                            if output.batch_size is not None
+                            else "写完剩余全部集数"
+                        )
+                    ),
+                ),
+                ActionStep(
+                    step_id="evaluate",
+                    title="自动评估",
+                    description="新写集数完成后自动评估并决定是否修订",
+                ),
+            ]
+            expected_impact = ["从确认门恢复执行，继续生成剧本与评估"]
+            snapshots = []
         elif output.intent == "revise_script":
             # 目标由服务端解析：目标集的最新 valid 剧本，Planner 不提供 UUID。
             episode = output.target.episode_number if output.target else None

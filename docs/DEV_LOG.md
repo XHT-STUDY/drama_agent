@@ -4060,3 +4060,187 @@ Phase L（分阶段创作与集数自由）全部完成。用户完整旅程：�
 ### 给用户的重要提醒（本轮日志证据）
 
 用户日志 `prompt=outline max_tokens=4096 timeout=180s` 两个值都是修复前的旧值——**运行中的后端是旧代码进程**（且工作区还有一批未提交的 observability WIP 改动）。必须重启后端，否则所有已修复项（超时 360s、outline 8192、集数回退链）都不生效。
+
+
+## 对话丝滑化 A+B：确认/续跑短语短路 + continue 意图（2026-08-28，用户对话体验反馈）
+
+### 做了什么
+
+用户反馈对话修改僵硬：确认大纲后不知道怎么触发写剧本（只能点按钮），且计划消息承诺"回复「确认」后开始执行"但聊天里回复"确认"根本不生效。本轮落地两件事：
+
+- **A 确定性短路**：新增 `app/skills/agent_shortcut.py`。Turn 内容为整句确认/续跑短语时在 Planner 之前直达动作——确认类（"确认/好的/就按这个来"）命中会话最新 proposed Action 走 confirm，无 proposed 但有门上 Run 时直接续跑；续跑类（"继续/写5集/把剩下的写完"，数字与中文数字批集数均可）续跑 stage_gate Run。产出 answer 型 Turn（Planner 零调用）；未命中或无 pending 目标回落 Planner，行为不变。安全设计：整句锚定匹配（"好的，不过我想把主角改成女生"绝不短路）、proposed Action 与门上 Run 并存时按 updated_at 取新者、执行失败 AppError 转可读答复而非静默回落。
+- **B continue 意图**：`AgentIntent`/`AgentCommand` 新增 `continue` + `ContinueCommand(target_run_id, batch_size?)`；Planner 输出新增可选 `batch_size`（prompt v1.2，manifest 同步）。白名单改为动态生成：有门上 Run 时注入 `continue`，Planner 可把"大纲可以了，开始写吧"归一化为 continue 计划。`confirm_action` 对 continue 特判：不新建 Run，恢复既有 Run（二次校验仍在门上，已离开则 Action→stale + 409），并把 Run config 的 `agent_action_id` 改指 continue Action——否则该 Action 永远停在 queued（终态回写会指向原 create_script Action）。
+- **续跑逻辑去重**：runs.py 的 continue 端点内联逻辑（约 70 行）提取为 `RunService.continue_gated_run`，REST 端点/短路/continue 确认三处共用同一事实源。
+- **修复既有隐藏 bug**（新测试暴露）：`create_turn` 事务 B 异常分支在 `db.rollback()` 后访问 `conversation.id`——rollback 无条件过期 ORM 属性，触发同步惰性加载 → `MissingGreenlet`。修复为解析会话后立即捕获 `conv_id` 纯值。
+- **迁移 0009**：`ck_agent_actions_intent` CHECK 约束加入 'continue'（测试走 create_all，真实部署需迁移）。
+- 前端同步：`types/api.ts` 的 `AgentIntent` 联合与 `AgentCommand` 加 continue 分支（无需 UI 改动，卡片与轮询复用现有渲染）。
+
+### 为什么这么做
+
+- 短路层放在 Planner 之前而不是给 Planner 加"确认"意图：确认短语零歧义、零幻觉风险，走 LLM 反而引入不确定性且浪费一次调用；同时"整句匹配"比"意图判断"可控得多。
+- continue 的执行目标（Run ID）由服务端解析、Planner 只给 batch_size：延续 J-03 "Planner 不产生可执行内容"的安全边界。
+- 不把 planned-as-new-run：continue 复用既有 Run 是语义正确的（checkpoint 恢复、已完成产物不重算），新建 Run 会重算全部。
+- known tradeoff：会话 A 提的计划在会话 B 里说"确认"不生效（查找限定会话）——这是刻意的窄作用域，跨会话确认误伤面更大。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest | 全部通过（新增 unit 3 用例组 + integration 10 例） |
+| uv run ruff check app tests | 通过（45 个 E501 全部在旧迁移文件 0001/0002，与本次无关） |
+| uv run mypy app | Success: no issues in 185 source files |
+| pnpm exec tsc --noEmit / pnpm test | 通过（190 tests） |
+
+### 学到了什么
+
+1. **rollback 无条件过期 ORM 属性**（与 expire_on_commit=False 无关）：异常处理分支里再访问 ORM 对象属性会触发同步 IO → MissingGreenlet。正确姿势是在任何 commit/rollback 前把要用的标识捕获为纯值。
+2. **PostgreSQL CHECK 约束是意图白名单的"第二道闸"**：Pydantic 层加了 continue，DB 约束没加照样拒绝——模型域、约束、迁移三层必须同步。
+3. 测试里跨会话断言 ORM 状态时，identity map 会返回缓存旧值，`refresh` 后才可信（该模式在本仓库多个测试文件重复出现，值得抽公共 fixture）。
+
+
+## 对话丝滑化 C：聊天感交互 + 确认门单卡片 + 结果降噪（2026-08-28，用户 UX 反馈第二轮）
+
+### 做了什么
+
+三个用户可感知问题，根因与修复：
+
+1. **发送无聊天感**：消息只在 Turn 终态后才刷新，发送期间用户消息不上屏、按钮显示"发送中…"。修复：`useAgentConversation` 新增 `pendingContent`（发送即记录、finally 清除）；`MessageList` 在发送中乐观渲染用户消息气泡 + "正在思考…"打字气泡（`animate-pulse`）；Composer 按钮恒为"发送"（仅禁用），aria-live 改为"Agent 正在思考…"。
+2. **输入 Idea 后出现"需人工复核"+"等待确认"两个卡片**：大纲门上父 Action 转 needs_review（徽标"需人工复核"，把设计内的阶段暂停当异常渲染），且 Outcome 因 partially_achieved + evaluator 建议生成了 revise_outline 后续子 Action（第二张"等待确认"卡）。修复（后端）：`AgentOutcomeService` 检测 stage_gate —— 门上跳过语义 evaluator、清空 remaining_constraints、不产出 recommended_next_action（子 Action 依赖建议，随之消失）；`AgentActionLifecycle._append_result_message` 门感知——写干净的阶段文案（"StoryBible 与分集大纲已生成，等待确认后继续创作剧本"），metadata 带 `stage_gate` 且不再携带未完成约束/产物清单。修复（前端）：`ActionPlanCard` 门上徽标显示"等待确认"、隐藏 OutcomeView/恢复入口（门按钮是唯一动作面）。
+3. **结果消息噪音**（goal_status 术语、用户创作要求被列为"未完成"、产物 UUID 行、"建议的后续动作：revise_outline"）：前端 `ResultMessage`/`OutcomeView` 降噪——未完成约束仅 blocked 时展示（partially_achieved 的语义约束多为"未验证"而非失败）、产物链接移除（版本页查看）、删除"建议的后续动作"段落（后续计划卡本身即动作面）。
+
+测试同步：新增后端门上 lifecycle 集成测试（无子提案 + 干净消息）；前端新增门消息/打字气泡用例、改写结果消息降噪断言；e2e `partial_outcome` 用例改为断言降噪（remaining-constraints/evidence-links count=0）。
+
+### 为什么这么做
+
+- 确认门在 J-09 的 outcome 语义里落入 partially_achieved + evaluator 建议链路——这在"修订类单发计划"上合理，但在分阶段创作的门上产生流程外的干扰卡。用 `is_stage_gate` 在 outcome 层短路，比在前端逐处隐藏更根本：metadata 干净了，任何消费者都拿到正确语义。
+- 乐观上屏选 `pendingContent` prop 而非 queryClient optimistic insert：Turn 是同步三段式，消息以服务端为事实源（J-12），插入假消息 id 会与刷新后的真消息去重冲突；prop 方案在 finally 清除，零残留。
+- 保留 blocked 场景的约束列表：真受阻（如 Run 未完成）时"未完成：xxx"是关键恢复信息，不能一刀切砍掉。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest | 全部通过（新增 1 例门上 lifecycle 测试） |
+| uv run ruff / mypy app | 通过（185 files） |
+| pnpm test | 192 passed（新增 3 例、改写 1 例） |
+| pnpm exec tsc --noEmit / eslint | 通过 |
+
+### 学到了什么
+
+1. **Outcome 语义要区分"异常暂停"与"设计内暂停"**：同一 needs_review 状态，人工复核（连续性失败）和确认门（阶段完成）的用户预期完全不同，元数据层就该分流，而不是让 UI 猜。
+2. e2e 断言"某元素可见"在降噪后会翻转为"不可见"（`toHaveCount(0)`）——改 UI 前先 grep testid 的全部消费方（单元 + e2e）。
+
+
+## 对话丝滑化 D：首条消息气泡修复 + LLM 式思考指示 + 上下文自动刷新 + 门上内嵌预览（2026-08-28，用户 UX 反馈第三轮）
+
+### 做了什么
+
+1. **首条消息发送中看不到气泡（上轮遗留 bug）**：根因是 `AgentWorkspace` 的空会话分支——`messages.length === 0` 时渲染空状态占位而非 `MessageList`，乐观气泡永远不出现（恰好命中用户测试场景：新会话输入 Idea）。修复：`emptyConversation = messages.length === 0 && !pendingContent`。同时消息容器加自动滚底（监听最后一条消息 id 与 pendingContent；loadMore 前拼页不改变最后一条 id，不劫持滚动位置）。
+2. **"正在思考"改为 LLM 式 UI**：去掉气泡框，改为左侧内联的三点 bounce 动画 + "正在思考"灰字（ChatGPT/Claude 风格），`MessageList` 内 `agent-typing` testid 不变。
+3. **右侧"项目上下文"不随 Run 推进刷新**：`ArtifactContextPanel` 三个产物查询加 `refreshSignal` 入 queryKey；工作台在 gatedRun 状态变化与 activeActionId 变化时递增信号——门上生成 SB/大纲后右栏立即可见，无需手动刷新页面。
+4. **门上免跳页查看产物**：`ActionPlanCard` 门区新增内嵌预览（`gate-preview`）——大纲门展示 SB 摘要（标题/类型/logline/主角反派）+ 分集列表（集号/标题/目标），剧本门展示每集标题与字数，附完整页链接；10s 轻量轮询（门上聊天修订出新版本后预览自动更新）。配套交互：大纲门时工作台**自动把最新大纲设为活动上下文**，用户直接输入"把第 2 集冲突提前"即可发起大纲修订，不再需要先去右栏手动选中——门上提示文案已说明。
+
+### 为什么这么做
+
+- 自动选中活动上下文是本轮最关键的交互决策：修订 preflight 要求活动上下文，此前用户必须"右栏选中 → 回对话框"两步；门上用户的下一步几乎必然是"对大纲提意见"，自动选中符合唯一合理意图，且右栏"当前选中"可见可清除（透明、可撤销）。
+- 预览轮询而非事件驱动：门上产物变化来自另一个会话/渠道的修订 Run，SSE 事件流绑在活跃 Run 上拿不到；10s 间隔的两个小查询成本可忽略。
+- 滚动监听用 lastMessageId 而非 messages.length：loadMore 拼接历史也会改变 length，用 id 判断避免劫持用户回看位置。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| pnpm exec tsc --noEmit / eslint | 通过 |
+| pnpm test | 193 passed（新增门上预览用例） |
+
+### 学到了什么
+
+1. 乐观 UI 的经典陷阱：空状态占位分支会"吃掉"待渲染的乐观内容——凡条件渲染列表，空态判断必须把 pending 状态算进去。
+2. 跨渠道数据变化（另一会话发起的修订）不在当前 SSE 订阅范围内，轻量轮询是务实解，别为小数据量上事件总线。
+
+
+## 对话丝滑化 E：门上多轮修订后的"下一步"指引 + 结果消息彻底自然化（2026-08-28，用户反馈"卡住不知如何推进"）
+
+### 做了什么
+
+用户在大纲门上多轮修订大纲后，聊天底部只剩一张"已完成"的修订卡——主创作任务的门卡淹没在消息历史里，没有任何东西告诉用户主任务还在等确认。修复：
+
+- **收尾指引消息**（`AgentActionLifecycle._append_next_step_message`）：任务完成（非门上暂停）时，若项目仍停在确认门，追加幂等的 text 消息："上一轮任务已完成。创作任务停在确认门：直接输入「继续」开始写剧本，或继续提出修改意见。"（scripts 门变体提示可带批集数）。幂等键 (kind=text, agent_action_id, message_type=next_step)，reconciliation 不重复；本任务自身停在门上时不追加（门消息即指引）；项目无门上 Run 时不追加。
+- **结果消息彻底自然化**：非门结果消息由"执行完成：achieved / 产出 N 个 Artifact"改为状态映射自然文案（"本轮任务已完成。/部分完成。/未能完成。/已取消。"），去掉 goal_status 英文术语与 Artifact 计数行；前端 ResultMessage 同步去掉重复的状态括号（状态详情由计划卡 OutcomeView 唯一承载）。
+
+### 为什么这么做
+
+- 指引用"可操作的对话指令"（「继续」）而非重新渲染门卡：配合上一轮的对话短路层，指引文本本身就是操作入口，聊天流不需要 UI 卡片的复活/重排逻辑。
+- 语义约束（用户创作要求）经 evaluator 判断后可能持续不满足并触发 revise 链式后续计划——链路本身有深度上限（1），本轮不动；若实际使用中链式修订仍过频，下一步应区分"需求约束"与"可验证约束"。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest | 全部通过（新增 2 例指引/无指引测试） |
+| uv run ruff / mypy | 通过 |
+| pnpm test / tsc / eslint | 193 passed |
+
+### 学到了什么
+
+1. 多任务编排系统里，"任务各自的完成消息"不等于"流程的当前状态"——用户视角始终需要一条指向全局当前位置（门/等待点）的线索。
+2. 指引消息写成"可直接照做的对话指令"是最省 UI 成本的 CTA：文本即按钮（前提是短路层已把对应短语接成动作）。
+
+
+## 对话丝滑化 F：真实流程复盘四项修复（2026-08-28，用户贴完整对话流程求分析）
+
+### 做了什么
+
+用户贴出门上两轮大纲修订 + 两次「继续」的真实流程，复盘出四个问题并修复：
+
+1. **P1（bug）任务执行中发「继续」得到"没有可继续的待执行任务"**：`find_gated_run` 只认 needs_review；Run 已 queued/running 时短路层回落 Planner，产出与事实相反的澄清并白花一次 LLM 调用。修复：新增 `find_active_run`，短路层在无门可续时先查活跃 Run → 回答"创作任务正在执行中，完成后会在这里汇报，无需重复发送。"
+2. **P2（质量缺陷）自动后续修订不带约束**：子计划 `constraints=[]`，等于让 LLM 无约束重新生成——"已达成"无意义。修复：`_build_child_plan` 携带父 Outcome 的 remaining_constraints（截断 20 条），expected_impact 相应变为"落实上一轮未自动确认的修改要求"。
+3. **P3（刷屏）连续修订每轮各留一条"下一步"指引**：追加新指引前删除同会话旧 next_step 消息，聊天里始终只有一条指向当前位置的提示。
+4. **P4（原因不可见）"部分达成"但用户不知道为什么**：上轮降噪把约束清单全藏了。折中——partially_achieved 显示一行计数"有 N 项修改要求未能自动确认"，blocked 仍全量列出（ResultMessage 与 OutcomeView 一致）。
+
+### 为什么这么做
+
+- P1 的本质：短路层的"无可执行目标"分支把"没有任务"和"任务在跑"混为一谈。状态机有三种相关态（门上/执行中/空闲），回复必须区分。
+- P2：自动修订链的价值前提是"朝着未满足的要求改"；空约束的修订是纯随机扰动，判定为缺陷而非设计取舍。
+- P4 在"信息完整"与"噪音"之间取计数行：用户知道有未确认项、知道系统给了后续建议，但不把他们的创作要求当失败逐条陈列。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest | 全部通过（新增 3 例：执行中续跑/子计划带约束/指引替换） |
+| uv run ruff / mypy | 通过 |
+| pnpm test / tsc / eslint | 193 passed |
+
+### 学到了什么
+
+1. 用户贴完整对话流程是最有价值的反馈形式——单帧截图只能看到 UI 问题，时间线才能暴露状态机分支缺口（P1）与链路质量缺陷（P2）。
+2. 自动化"自愈"链条（部分达成→自动后续计划）必须带着原始意图走完全程，否则每一跳都在丢失信息，最后变成无目标的重复执行。
+
+
+## 对话丝滑化 G：进度面板绑错 Run（跨任务事件污染）+ 确认门态区分（2026-08-28，用户贴流程复盘）
+
+### 做了什么
+
+用户流程：门上发起大纲修订，修订卡"执行中"，但下方进度面板显示**上一个创作任务**的节点（需求归一化/知识检索/故事设定/分集大纲）和"创作完成，需人工复核 ⚠️"横幅。三个叠加缺陷：
+
+1. **useRunEvents 跨 Run 事件污染**：事件累积在 eventsRef，runId 从 R1（创作）切到 R2（修订）时不清空——R1 的节点事件与 needs_review 终态留在面板上；R2 的节点事件被 NODE_LABELS 过滤丢弃，面板永远停留在 R1 的画面。修复：自动连接 effect 在 runId 变化时清空 events/runStatus/progress。
+2. **NODE_LABELS 只有创作工作流节点**：revise_outline 等修订/评估工作流的节点事件全部被过滤，修订任务"没有进度"。修复：补齐 prepare_target/ensure_evaluation/revise_outline/evaluate_episodes/select_revision/revise/continuity_check/re_evaluate 八个节点标签与排序。
+3. **needs_review 一律显示"创作完成，需人工复核"**：确认门（设计内暂停）与真人工复核（低分/连续性失败）共用文案，门上场景严重误导。修复：RunProgress 新增 stageGate prop——门上显示"已到达确认门 ⏸ + 门专属文案"（outline/scripts 两种），无门时保留原人工复核横幅。
+
+### 为什么这么做
+
+- 事件流按 run 隔离是后端事实，前端 Hook 的累积缓存违反了这一隔离——修复在 Hook 层做（切换即清空），而非让每个消费者自己处理。
+- 门态判断用 stageGate prop 而非前端从事件流猜：后端 run.needs_review 事件的 payload 里有 stage_gate，但 SSE 推给旧 Run 的流拿不到新状态；工作台本来就在轮询 RunResponse（含 stage_gate），透传即可。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| pnpm exec tsc --noEmit / eslint | 通过 |
+| pnpm test | 196 passed（新增 3 例门态渲染测试） |
+
+### 学到了什么
+
+1. **"进度面板显示别的任务"这类错乱，优先怀疑客户端跨实例状态残留**：单实例（一个 Run 的生命周期内）行为完全正确，切实例才炸——useEffect 依赖里换 id 时，ref 里的累积状态不会自动失效。
+2. 节点标签表是"新工作流接入清单"的一部分：后端加工作流节点时，前端 NODE_LABELS 是隐性耦合点，漏了不报错、只是静默无进度。

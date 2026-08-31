@@ -78,12 +78,23 @@ export interface RunEventsState {
 // ============================================================
 
 const NODE_LABELS: Record<string, string> = {
+  // Creation Workflow（C-07）
   normalize: "需求归一化",
   retrieve: "知识检索",
   story_bible: "故事设定",
   outline: "分集大纲",
   write_episodes: "剧本撰写",
   finalize: "完成收尾",
+  // Evaluation / Revision Workflow（E-04/F-06）
+  evaluate_episodes: "剧本评估",
+  select_revision: "修订决策",
+  revise: "剧本修订",
+  continuity_check: "连续性检查",
+  re_evaluate: "重新评估",
+  // Outline Revision / Conversational Revision（J-06/J-08）
+  prepare_target: "锁定修订目标",
+  ensure_evaluation: "补齐评估",
+  revise_outline: "大纲修订",
 };
 
 // ============================================================
@@ -219,6 +230,14 @@ export function useRunEvents(
 
   // 自动连接 + 清理
   useEffect(() => {
+    // Run 切换时必须清空上一任务的事件：事件流按 run 隔离，累积会让
+    // 旧任务的节点与终态状态污染新任务的进度面板（如门上修订时仍显示
+    // 创作任务的节点和"需人工复核"横幅）
+    eventsRef.current = [];
+    setEvents([]);
+    setOverallProgress(0);
+    setRunStatus(null);
+    setLastError(null);
     connect();
     return () => {
       manualCloseRef.current = true;
@@ -308,8 +327,13 @@ function _deriveNodeProgress(events: RunEvent[]): NodeProgress[] {
     }
   }
 
-  // 按固定顺序排列
-  const order = ["normalize", "retrieve", "story_bible", "outline", "write_episodes", "finalize"];
+  // 按固定顺序排列（创作管线在前，修订/评估管线在后；单次 Run 只会出现其一）
+  const order = [
+    "normalize", "retrieve", "story_bible", "outline", "write_episodes",
+    "evaluate_episodes", "select_revision", "revise", "continuity_check",
+    "re_evaluate", "finalize",
+    "prepare_target", "ensure_evaluation", "revise_outline",
+  ];
   return order
     .filter((n) => nodeMap.has(n))
     .map((n) => nodeMap.get(n)!);

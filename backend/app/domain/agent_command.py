@@ -22,6 +22,7 @@ AgentIntent = Literal[
     "revise_outline",
     "revise_script",
     "evaluate",
+    "continue",
 ]
 AgentTurnStatus = Literal[
     "received",
@@ -181,8 +182,30 @@ class EvaluateCommand(BaseModel):
         return self
 
 
+class ContinueCommand(BaseModel):
+    """确认门续跑命令（L-3/L-4）。
+
+    target_run_id 由服务端在计划构建时解析（项目最新停在 stage_gate 的
+    Run），Planner 不提供 Run 标识；确认时二次校验 Run 仍在门上。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    intent: Literal["continue"] = "continue"
+    target_run_id: UUID
+    batch_size: int | None = Field(
+        default=None, ge=1, le=50,
+        description="本批集数：None = 写完剩余全部（与 /runs/{id}/continue 语义一致）",
+    )
+
+
 AgentCommand = Annotated[
-    CreateScriptCommand | ExplainCommand | ReviseOutlineCommand | ReviseScriptCommand | EvaluateCommand,
+    CreateScriptCommand
+    | ExplainCommand
+    | ReviseOutlineCommand
+    | ReviseScriptCommand
+    | EvaluateCommand
+    | ContinueCommand,
     Field(discriminator="intent"),
 ]
 

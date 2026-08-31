@@ -56,3 +56,7 @@ class AgentPlannerOutput(BaseModel):
     expected_impact: list[str] = Field(default_factory=list, max_length=20)
     clarification_question: str | None = Field(default=None, max_length=1000)
     answer: str | None = Field(default=None, max_length=4000)
+    batch_size: int | None = Field(
+        default=None, ge=1, le=50,
+        description="仅 intent=continue 时有意义：本批集数，缺省写完全部",
+    )

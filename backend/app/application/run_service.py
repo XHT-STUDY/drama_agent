@@ -18,7 +18,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import AppError, IdempotencyKeyReusedError, NotFoundError, RunAlreadyActiveError
+from app.core.errors import (
+    AppError,
+    IdempotencyKeyReusedError,
+    NotFoundError,
+    RunAlreadyActiveError,
+    RunNotRetryableError,
+)
 from app.db.models.project import Project
 from app.db.models.workflow_run import WorkflowRun
 from app.events.publisher import EventPublisher
@@ -225,6 +231,88 @@ class RunService:
         run = result.scalar_one_or_none()
         if run is None:
             raise NotFoundError(detail=f"Run 不存在: {run_id}", code="RUN_NOT_FOUND")
+        return run
+
+    async def continue_gated_run(
+        self,
+        db: AsyncSession,
+        run_id: uuid.UUID,
+        *,
+        batch_size: int | None = None,
+    ) -> WorkflowRun:
+        """确认门续跑（L-3/L-4）：分段创作停在 stage_gate 后继续执行。
+
+        续跑事实源只此一份，REST 端点、对话短路（确认/继续短语）与
+        continue 意图确认共用本方法：
+        - 剥离 stage_gate / stop_after 与人工复核标记；
+        - outline 门：大纲刷新为项目最新 valid（暂停期间聊天改版生效）；
+        - batch_size 提供时进入批模式：options.script_count = 已有集数 + batch
+          （不超过目标），本批完成后再次停在 scripts 门；缺省写剩余全部；
+        - needs_review → queued，Worker 从 checkpoint 恢复——已完成产物不重算。
+
+        Raises:
+            RunAlreadyActiveError: Run 正在执行，不可重复续跑
+            RunNotRetryableError: 非 needs_review 或不在 stage_gate 上
+        """
+        run = await self.get_run(db, run_id)
+        if run.status in ("queued", "running"):
+            raise RunAlreadyActiveError(detail=f"Run 正在执行（{run.status}），不可重复续跑")
+        summary = run.state_summary or {}
+        gate = summary.get("stage_gate")
+        if run.status != "needs_review" or gate not in ("outline", "scripts"):
+            raise RunNotRetryableError(
+                detail=(
+                    f"Run 不可续跑（状态 {run.status}，"
+                    f"stage_gate={gate or '无'}）：仅分段创作/剧本分批的确认门可继续"
+                )
+            )
+
+        # 剥离分段门字段；清掉复核标记
+        resumed = {
+            k: v
+            for k, v in summary.items()
+            if k not in ("stage_gate", "stop_after", "needs_manual_review", "needs_manual_review_reason")
+        }
+        # 暂停期间大纲可能被 revise_outline 更新 → 刷新为最新 valid
+        from app.artifacts.store import ArtifactStore
+
+        latest_outline = await ArtifactStore().get_latest(
+            db, run.project_id, "episode_outline_set", 1
+        )
+        if gate == "outline" and latest_outline is not None:
+            resumed["outline_set_artifact_id"] = str(latest_outline.id)
+        run.state_summary = resumed
+
+        config = dict(run.config_snapshot or {})
+        options = dict(config.get("options") or {})
+        options.pop("stop_after", None)
+        # L-4 批模式：本批终点 = 已有集数 + batch（不超过目标集数）
+        if batch_size is not None:
+            existing = len(resumed.get("script_artifact_ids") or {})
+            target = int(options.get("outline_count") or options.get("script_count") or existing)
+            end = min(existing + batch_size, target)
+            if end > existing:
+                options["script_count"] = end
+                options["stop_after"] = "scripts"
+                resumed_stop = dict(resumed)
+                resumed_stop["stop_after"] = "scripts"
+                resumed_stop.pop("stage_gate", None)
+                run.state_summary = resumed_stop
+        config["options"] = options
+        run.config_snapshot = config
+
+        run.error_code = None
+        run.error_detail = None
+        await db.flush()
+        await self.transition_status(db, run_id, "queued")
+
+        await self._publisher.publish(
+            db,
+            run_id=run_id,
+            event_type="run.queued",
+            payload={"message": "确认门已确认，继续创作剧本", "stage_gate_cleared": "outline"},
+            autocommit=True,
+        )
         return run
 
     async def list_runs_by_project(

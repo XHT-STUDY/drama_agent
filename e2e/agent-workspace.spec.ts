@@ -81,7 +81,7 @@ test.describe("J-12 Agent Workspace", () => {
     // （同时验证消息以服务端为事实源、刷新后可恢复）
     await page.reload();
     await expect(
-      page.getByTestId("result-goal-status").first(),
+      page.getByTestId("result-message").first(),
     ).toBeVisible({ timeout: 30_000 });
   });
 
@@ -137,12 +137,10 @@ test.describe("J-12 Agent Workspace", () => {
     await sendAndConfirmPlan(page, "修改大纲，第 3 集节奏太慢，冲突提前");
 
     await waitCardTerminal(page);
-    // 部分达成：证据 + 剩余约束（受影响剧集警告）+ 一个后续计划
+    // 部分达成：状态术语 + 一个后续计划（约束/产物明细已降噪，不再渲染）
     await expect(page.getByText("部分达成").first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("remaining-constraints").first()).toContainText(
-      "第 3 集",
-    );
-    await expect(page.getByTestId("evidence-links").first()).toBeVisible();
+    await expect(page.getByTestId("remaining-constraints")).toHaveCount(0);
+    await expect(page.getByTestId("evidence-links")).toHaveCount(0);
 
     // 后续计划：proposed、可确认、恰好一个
     const followUpConfirm = page.getByTestId("confirm-action");

@@ -21,7 +21,6 @@ from app.api.dependencies import get_db
 from app.application.run_service import RunService
 from app.application.workflow_dispatcher import schedule_worker
 from app.core.errors import RunAlreadyActiveError, RunNotRetryableError
-from app.events.publisher import EventPublisher
 from app.events.stream import router as sse_router
 from app.observability.diagnostics import RunDiagnosticsResponse
 
@@ -288,80 +287,18 @@ async def continue_run(
 ) -> RunResponse:
     """确认门续跑（L-3/L-4）：分段创作停在 stage_gate 后继续执行。
 
-    支持 outline 门（SB+大纲确认）与 scripts 门（剧本分批）：
-    - 剥离 stage_gate / stop_after；
-    - outline 门：大纲刷新为项目最新 valid（暂停期间聊天改版生效）；
-    - batch_size 提供时进入批模式：options.script_count = 已有集数 + batch
-      （不超过目标），本批完成后再次停在 scripts 门；缺省写剩余全部。
-    - 回到队列，从 checkpoint 恢复——已完成产物不重算。
+    执行逻辑统一在 RunService.continue_gated_run（REST 端点、对话短路、
+    continue 意图确认三处共用）；此处仅做参数透传、落库与唤醒。
     """
-    run = await _service.get_run(db, run_id)
-    if run.status in ("queued", "running"):
-        raise RunAlreadyActiveError(detail=f"Run 正在执行（{run.status}），不可重复续跑")
-    summary = run.state_summary or {}
-    gate = summary.get("stage_gate")
-    if run.status != "needs_review" or gate not in ("outline", "scripts"):
-        raise RunNotRetryableError(
-            detail=(
-                f"Run 不可续跑（状态 {run.status}，"
-                f"stage_gate={gate or '无'}）：仅分段创作/剧本分批的确认门可继续"
-            )
-        )
-
-    # 剥离分段门字段；清掉复核标记
-    resumed = {
-        k: v
-        for k, v in summary.items()
-        if k not in ("stage_gate", "stop_after", "needs_manual_review", "needs_manual_review_reason")
-    }
-    # 暂停期间大纲可能被 revise_outline 更新 → 刷新为最新 valid
-    from app.artifacts.store import ArtifactStore
-
-    latest_outline = await ArtifactStore().get_latest(
-        db, run.project_id, "episode_outline_set", 1
+    run = await _service.continue_gated_run(
+        db, run_id, batch_size=body.batch_size if body else None
     )
-    if gate == "outline" and latest_outline is not None:
-        resumed["outline_set_artifact_id"] = str(latest_outline.id)
-    run.state_summary = resumed
-
-    config = dict(run.config_snapshot or {})
-    options = dict(config.get("options") or {})
-    options.pop("stop_after", None)
-    # L-4 批模式：本批终点 = 已有集数 + batch（不超过目标集数）
-    batch = body.batch_size if body else None
-    if batch is not None:
-        existing = len(resumed.get("script_artifact_ids") or {})
-        target = int(options.get("outline_count") or options.get("script_count") or existing)
-        end = min(existing + batch, target)
-        if end > existing:
-            options["script_count"] = end
-            options["stop_after"] = "scripts"
-            resumed_stop = dict(resumed)
-            resumed_stop["stop_after"] = "scripts"
-            resumed_stop.pop("stage_gate", None)
-            run.state_summary = resumed_stop
-    config["options"] = options
-    run.config_snapshot = config
-
-    run.error_code = None
-    run.error_detail = None
-    await db.flush()
-    await _service.transition_status(db, run_id, "queued")
     await db.commit()
 
-    await EventPublisher().publish(
-        db,
-        run_id=run_id,
-        event_type="run.queued",
-        payload={"message": "确认门已确认，继续创作剧本", "stage_gate_cleared": "outline"},
-        autocommit=True,
-    )
     logger.info(
-        "续跑 Run: run=%s gate=%s batch_size=%s 已写集数=%d",
+        "续跑 Run: run=%s batch_size=%s",
         run_id,
-        gate,
         body.batch_size if body else None,
-        len(resumed.get("script_artifact_ids") or {}),
     )
     schedule_worker(run.id, run.action, run.config_snapshot or {})
     return RunResponse.from_orm(run)

@@ -182,6 +182,9 @@ class TestAgentActionEvents:
         assert child.status == "proposed"
         assert child.replan_depth == 1
         assert child.run_id is None  # 后续 Action 只展示，不自动建 Run
+        # 子计划携带父计划未自动确认的约束（不得无约束盲改）
+        assert child.plan["constraints"] != []
+        assert child.plan["expected_impact"] == ["落实上一轮未自动确认的修改要求"]
 
         plan_messages = await _messages_of(db_session, action.conversation_id, "action_plan")
         assert len(plan_messages) == 1
@@ -248,3 +251,180 @@ class TestAgentActionEvents:
             select(AgentAction).where(AgentAction.parent_action_id == parent.id)
         )
         assert children.scalar_one_or_none() is None
+
+    async def test_stage_gate_outcome_is_clean_and_has_no_follow_up(
+        self, db_session: AsyncSession
+    ) -> None:
+        """确认门（stage_gate）是设计内的阶段暂停：干净进展消息 + 无子提案。
+
+        - 结果消息为可读阶段文案，metadata 带 stage_gate，
+          不携带未完成约束与产物清单；
+        - 不生成"建议后续动作"子 Action（用户只需在门上确认续跑）。
+        """
+        state_summary = {
+            "stage_gate": "outline",
+            "stop_after": "outline",
+            "story_bible_artifact_id": "00000000-0000-0000-0000-00000000000a",
+            "outline_set_artifact_id": "00000000-0000-0000-0000-00000000000b",
+            "completed_nodes": ["normalize", "retrieve", "story_bible", "outline"],
+        }
+        action, run = await _seed_completed_agent_run(
+            db_session, intent="create_script", state_summary=state_summary
+        )
+        run.status = "needs_review"
+        await db_session.commit()
+
+        finalized = await AgentActionLifecycle().finalize(
+            db_session, action_id=action.id, run=run, final_state=state_summary
+        )
+        await db_session.commit()
+
+        assert finalized is not None
+        assert finalized.status == "needs_review"
+        result = finalized.result or {}
+        assert result["goal_status"] == "partially_achieved"
+        assert result["remaining_constraints"] == []
+        assert result["recommended_next_action"] is None
+
+        # 不生成子提案
+        children = await db_session.execute(
+            select(AgentAction).where(AgentAction.parent_action_id == action.id)
+        )
+        assert children.scalar_one_or_none() is None
+
+        # 结果消息：干净阶段文案 + stage_gate metadata，无未完成约束/产物
+        messages = await _messages_of(db_session, action.conversation_id, "action_result")
+        assert len(messages) == 1
+        meta = messages[0].message_metadata
+        assert meta["stage_gate"] == "outline"
+        assert "remaining_constraints" not in meta
+        assert "evidence_artifact_ids" not in meta
+        assert "大纲已生成" in messages[0].content
+        assert "未完成" not in messages[0].content
+
+    async def test_completed_revision_with_gated_run_appends_next_step_once(
+        self, db_session: AsyncSession
+    ) -> None:
+        """门上多轮修订的主场景：修订完成 + 主任务停在门 → 一次下一步指引。
+
+        - 结果消息为自然文案（无 goal_status 术语/产物清单）；
+        - 指引消息幂等（reconciliation 不重复）；
+        - 项目无门上 Run 时不追加指引。
+        """
+        action, run = await _seed_completed_agent_run(db_session)
+        # 同项目播种一个停在大纲门的主创作 Run
+        gate_run = WorkflowRun(
+            project_id=action.project_id, action="create_script",
+            status="needs_review", config_snapshot={},
+            state_summary={"stage_gate": "outline"},
+        )
+        db_session.add(gate_run)
+        await db_session.commit()
+
+        lifecycle = AgentActionLifecycle()
+        await lifecycle.finalize(
+            db_session, action_id=action.id, run=run, final_state=run.state_summary
+        )
+        await db_session.commit()
+        # reconciliation 重放：不得重复指引
+        await lifecycle.finalize(
+            db_session, action_id=action.id, run=run, final_state=run.state_summary
+        )
+        await db_session.commit()
+
+        results = await _messages_of(db_session, action.conversation_id, "action_result")
+        assert len(results) == 1
+        assert results[0].content.startswith("本轮任务已完成。")
+        assert "achieved" not in results[0].content
+        assert "Artifact" not in results[0].content
+
+        texts = await _messages_of(db_session, action.conversation_id, "text")
+        next_steps = [
+            m for m in texts
+            if (m.message_metadata or {}).get("message_type") == "next_step"
+        ]
+        assert len(next_steps) == 1
+        assert "继续" in next_steps[0].content
+        assert "确认门" in next_steps[0].content
+
+    async def test_no_next_step_without_gated_run(self, db_session: AsyncSession) -> None:
+        """项目无门上 Run 时，完成任务不追加指引。"""
+        action, run = await _seed_completed_agent_run(db_session)
+        await db_session.commit()
+
+        await AgentActionLifecycle().finalize(
+            db_session, action_id=action.id, run=run, final_state=run.state_summary
+        )
+        await db_session.commit()
+
+        texts = await _messages_of(db_session, action.conversation_id, "text")
+        next_steps = [
+            m for m in texts
+            if (m.message_metadata or {}).get("message_type") == "next_step"
+        ]
+        assert next_steps == []
+
+
+    async def test_next_step_hint_is_replaced_not_accumulated(
+        self, db_session: AsyncSession
+    ) -> None:
+        """门上多轮修订：每轮完成替换旧指引，聊天里始终只有一条。"""
+        action, run = await _seed_completed_agent_run(db_session)
+        gate_run = WorkflowRun(
+            project_id=action.project_id, action="create_script",
+            status="needs_review", config_snapshot={},
+            state_summary={"stage_gate": "outline"},
+        )
+        db_session.add(gate_run)
+        await db_session.commit()
+
+        lifecycle = AgentActionLifecycle()
+        await lifecycle.finalize(
+            db_session, action_id=action.id, run=run, final_state=run.state_summary
+        )
+        await db_session.commit()
+
+        # 第二轮修订（新 Action/新 Run，同会话）完成后旧指引应被替换
+        message = Message(
+            conversation_id=action.conversation_id, role="user", content="再改一次",
+            kind="text", message_metadata={}, sequence=100,
+        )
+        db_session.add(message)
+        await db_session.flush()
+        turn2 = AgentTurn(
+            project_id=action.project_id, conversation_id=action.conversation_id,
+            user_message_id=message.id, idempotency_key=f"seed-{uuid.uuid4().hex}",
+            request_hash="0" * 64, status="action_proposed", turn_type="plan",
+        )
+        db_session.add(turn2)
+        await db_session.flush()
+        action2 = AgentAction(
+            project_id=action.project_id, conversation_id=action.conversation_id,
+            agent_turn_id=turn2.id, intent="revise_outline", status="running",
+            plan={"goal": "再修一版", "intent": "revise_outline",
+                  "constraints": [], "steps": []},
+            run_id=None,
+        )
+        db_session.add(action2)
+        await db_session.flush()
+        run2 = WorkflowRun(
+            project_id=action.project_id, action="revise_outline", status="completed",
+            config_snapshot={}, state_summary={},
+        )
+        db_session.add(run2)
+        await db_session.flush()
+        action2.run_id = run2.id
+        await db_session.commit()
+
+        await lifecycle.finalize(
+            db_session, action_id=action2.id, run=run2, final_state={}
+        )
+        await db_session.commit()
+
+        texts = await _messages_of(db_session, action.conversation_id, "text")
+        next_steps = [
+            m for m in texts
+            if (m.message_metadata or {}).get("message_type") == "next_step"
+        ]
+        assert len(next_steps) == 1
+        assert next_steps[0].message_metadata["agent_action_id"] == str(action2.id)

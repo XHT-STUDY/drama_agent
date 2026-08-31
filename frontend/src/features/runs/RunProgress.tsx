@@ -54,6 +54,8 @@ interface Props {
   runStatus: string | null;
   lastError: string | null;
   onReconnect: () => void;
+  /** 确认门类型（needs_review 时区分"设计内的门"与"真人工复核"） */
+  stageGate?: string | null;
 }
 
 // ============================================================
@@ -69,12 +71,14 @@ export function RunProgress({
   runStatus,
   lastError,
   onReconnect,
+  stageGate = null,
 }: Props) {
   const cancelMutation = useMutation({
     mutationFn: () => runsApi.cancel(runId),
   });
 
   const isRunning = !runStatus;
+  const isGate = runStatus === "needs_review" && (stageGate === "outline" || stageGate === "scripts");
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-5">
@@ -85,9 +89,11 @@ export function RunProgress({
             ? "创作完成 🎉"
             : runStatus === "failed"
               ? "创作失败"
-              : runStatus === "needs_review"
-                ? "创作完成，需人工复核 ⚠️"
-                : "创作进度"}
+              : isGate
+                ? "已到达确认门 ⏸"
+                : runStatus === "needs_review"
+                  ? "创作完成，需人工复核 ⚠️"
+                  : "创作进度"}
         </h2>
         <div className="flex items-center gap-2">
           {/* 连接状态指示 */}
@@ -144,8 +150,17 @@ export function RunProgress({
         </div>
       )}
 
+      {/* 确认门（L-3/L-4）：设计内的阶段暂停，指向对话中的门卡 */}
+      {isGate && (
+        <div className="mb-4 rounded bg-blue-50 px-4 py-3 text-sm text-blue-700">
+          {stageGate === "outline"
+            ? "⏸ StoryBible 与分集大纲已生成，停在确认门——在上方对话中确认或提修改意见后继续。"
+            : "⏸ 本批剧本已完成，停在批次确认门——可继续下一批或在对话中修改剧本。"}
+        </div>
+      )}
+
       {/* 需人工复核状态（H-07：低分场景自动修订后仍有低分集，暂停待人工决策） */}
-      {runStatus === "needs_review" && (
+      {runStatus === "needs_review" && !isGate && (
         <div className="mb-4 rounded bg-amber-50 px-4 py-3 text-sm text-amber-700">
           ⚠️ 创作流程已结束，存在待人工复核的内容（如仍有需修订的集）。Artifact 均已生成，可点击下方入口查看。
         </div>

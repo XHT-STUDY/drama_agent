@@ -124,3 +124,34 @@ describe("RunProgress", () => {
     expect(screen.getAllByText("LLM_OUTPUT_INVALID").length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("RunProgress 确认门态（L-3/L-4）", () => {
+  it("stage_gate 门上显示'已到达确认门'而非'需人工复核'", () => {
+    render(wrap(React.createElement(RunProgress, {
+      runId: "r1", overallProgress: 60, nodes: mkNodes(),
+      connected: true, runStatus: "needs_review", lastError: null,
+      eventCount: 0, onReconnect: nop, stageGate: "outline",
+    })));
+    expect(screen.getByText("已到达确认门 ⏸")).toBeTruthy();
+    expect(screen.getByText(/停在确认门/)).toBeTruthy();
+    expect(screen.queryByText(/需人工复核/)).toBeNull();
+  });
+
+  it("scripts 门提示继续下一批", () => {
+    render(wrap(React.createElement(RunProgress, {
+      runId: "r1", overallProgress: 80, nodes: mkNodes(),
+      connected: true, runStatus: "needs_review", lastError: null,
+      eventCount: 0, onReconnect: nop, stageGate: "scripts",
+    })));
+    expect(screen.getByText(/本批剧本已完成/)).toBeTruthy();
+  });
+
+  it("无 stage_gate 的 needs_review 仍显示人工复核横幅", () => {
+    render(wrap(React.createElement(RunProgress, {
+      runId: "r1", overallProgress: 60, nodes: mkNodes(),
+      connected: true, runStatus: "needs_review", lastError: null,
+      eventCount: 0, onReconnect: nop, stageGate: null,
+    })));
+    expect(screen.getByText("创作完成，需人工复核 ⚠️")).toBeTruthy();
+  });
+});

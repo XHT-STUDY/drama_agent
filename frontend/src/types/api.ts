@@ -563,7 +563,8 @@ export type AgentIntent =
   | "explain"
   | "revise_outline"
   | "revise_script"
-  | "evaluate";
+  | "evaluate"
+  | "continue";
 
 export type AgentGoalStatus = "achieved" | "partially_achieved" | "blocked";
 
@@ -622,6 +623,7 @@ export type AgentCommand =
   | { intent: "revise_outline"; source_outline_id: string; constraints: string[] }
   | { intent: "revise_script"; source_script_id: string; episode_number: number; constraints: string[] }
   | { intent: "evaluate"; scope: "project" | "episode"; episode_number?: number | null };
+  | { intent: "continue"; target_run_id: string; batch_size?: number | null };
 
 /** 服务端持久化的结构化计划 */
 export interface AgentActionPlan {

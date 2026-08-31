@@ -115,7 +115,7 @@ export function AgentComposer({
           创作设置
         </button>
         <span aria-live="polite" className="text-xs text-[var(--text-muted)]" data-testid="composer-status">
-          {sending ? "正在发送…" : draft.length > 0 ? `${draft.length} 字符` : ""}
+          {sending ? "Agent 正在思考…" : draft.length > 0 ? `${draft.length} 字符` : ""}
           {sendError ? ` ${sendError}` : ""}
         </span>
         <button
@@ -125,7 +125,7 @@ export function AgentComposer({
           data-testid="composer-send"
           className="touch-target rounded-lg bg-[var(--accent)] px-4 text-sm font-medium text-white transition-state hover:bg-[var(--accent-hover)] disabled:opacity-50 sm:min-w-24"
         >
-          {sending ? "发送中…" : "发送"}
+          发送
         </button>
       </div>
 

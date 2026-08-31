@@ -89,6 +89,14 @@ class AgentOutcomeService:
         goal_status: AgentGoalStatus
         goal_status, remaining = self._deterministic_status(evidence)
 
+        # 确认门（stage_gate=outline/scripts）是设计内的阶段暂停而非异常：
+        # 不调 evaluator、不产生后续动作建议（避免在门上生成"等待确认"的
+        # 子计划卡，用户只需在门上确认续跑），也不把"等待确认"列为未完成约束。
+        is_stage_gate = (
+            evidence.run_status == "needs_review"
+            and state.get("stage_gate") in ("outline", "scripts")
+        )
+
         # 语义约束判断：确定性结论已 blocked / 无语义约束 → 不调用模型
         judgments: list[tuple[str, bool, str]] = []
         recommendation: OutcomeRecommendation | None = None
@@ -97,6 +105,7 @@ class AgentOutcomeService:
         ]
         if (
             goal_status != "blocked"
+            and not is_stage_gate
             and semantic_constraints
             and agent is not None
             and prompt_loader is not None
@@ -132,7 +141,14 @@ class AgentOutcomeService:
                 if goal_status == "achieved":
                     goal_status = "partially_achieved"
 
-        next_action = self._recommended_next_action(evidence, recommendation)
+        if is_stage_gate:
+            remaining = []
+
+        next_action = (
+            None
+            if is_stage_gate
+            else self._recommended_next_action(evidence, recommendation)
+        )
 
         return AgentOutcome(
             goal_status=goal_status,

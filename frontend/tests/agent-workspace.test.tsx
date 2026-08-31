@@ -257,10 +257,10 @@ describe("ActionPlanCard", () => {
     });
   });
 
-  it("结果消息展示 goal_status / 评分变化 / 剩余约束 / 证据链接", () => {
+  it("结果消息为自然文案：无状态术语重复、约束仅 blocked 显示、不渲染产物链接", () => {
     const messages = [
       msg({
-        content: "执行完成：partially_achieved",
+        content: "本轮任务部分完成。",
         kind: "action_result",
         metadata: {
           goal_status: "partially_achieved",
@@ -275,14 +275,57 @@ describe("ActionPlanCard", () => {
       React.createElement(
         QueryClientProvider,
         { client: qc() },
-        React.createElement(MessageList, { messages, projectId: "p1" }),
+        React.createElement(MessageList, { messages }),
       ),
     );
 
-    expect(screen.getByTestId("result-goal-status").textContent).toBe("部分达成");
+    // 自然文案上屏；状态由计划卡 OutcomeView 承载，消息不再重复
+    expect(screen.getByTestId("result-message").textContent).toContain("本轮任务部分完成。");
     expect(screen.getByTestId("result-score-delta").textContent).toContain("+2.5");
-    expect(screen.getByTestId("result-remaining").textContent).toContain("仍引用旧大纲");
-    expect(screen.getByTestId("result-evidence")).toBeTruthy();
+    expect(screen.queryByTestId("result-goal-status")).toBeNull();
+    // 部分达成只给计数不给清单（把用户要求当失败陈列是噪音）
+    expect(screen.queryByTestId("result-remaining")).toBeNull();
+    expect(screen.getByTestId("result-partial-count").textContent).toContain("1 项");
+    // 产物 UUID 链接不再出现在消息流（版本页查看）
+    expect(screen.queryByTestId("result-evidence")).toBeNull();
+    expect(screen.queryByText(/产物 00000000/)).toBeNull();
+  });
+
+  it("确认门结果消息渲染为干净阶段文案（无状态术语）", () => {
+    const messages = [
+      msg({
+        content: "StoryBible 与分集大纲已生成，等待确认后继续创作剧本。",
+        kind: "action_result",
+        metadata: {
+          goal_status: "partially_achieved",
+          stage_gate: "outline",
+        },
+        sequence: 3,
+      }),
+    ];
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: qc() },
+        React.createElement(MessageList, { messages }),
+      ),
+    );
+
+    expect(screen.getByText("StoryBible 与分集大纲已生成，等待确认后继续创作剧本。")).toBeTruthy();
+    expect(screen.queryByTestId("result-goal-status")).toBeNull();
+  });
+
+  it("发送中：用户消息乐观上屏 + 正在思考气泡", () => {
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: qc() },
+        React.createElement(MessageList, { messages: [], pendingContent: "写一个足球故事" }),
+      ),
+    );
+
+    expect(screen.getByTestId("pending-user-message").textContent).toContain("写一个足球故事");
+    expect(screen.getByTestId("agent-typing").textContent).toContain("正在思考");
   });
 });
 
@@ -461,10 +504,55 @@ describe("ActionPlanCard 确认门继续按钮（L-3）", () => {
     expect(btn).toBeTruthy();
     expect(screen.getByTestId("continue-batch-1")).toBeTruthy();
     expect(screen.getByTestId("continue-batch-5")).toBeTruthy();
-    
+
 
     fireEvent.click(btn);
     await waitFor(() => expect(continued).toBe(1));
+  });
+
+  it("大纲门内嵌内容预览（SB 摘要 + 分集列表），不必跳页查看", async () => {
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    route("GET", /\/agent\/actions\/a1$/, () => actionFixture({ status: "needs_review" }));
+    route("GET", /\/runs\/run-1$/, () => ({
+      run_id: "run-1", project_id: "p1", action: "create_script",
+      status: "needs_review", stage_gate: "outline",
+      created_at: NOW, updated_at: NOW,
+    }));
+    route("GET", /\/projects\/p1\/artifacts\/latest\?type=story_bible.*$/, () => ({
+      id: "sb-1", project_id: "p1", type: "story_bible", version: 1,
+      episode_number: 1, status: "valid", created_at: NOW, updated_at: NOW,
+      content: {
+        title: "逆风少年", genre: "热血", logline: "被弃用后逆袭",
+        protagonist: { name: "林风" }, antagonist: { name: "赵教练" },
+      },
+    }));
+    route("GET", /\/projects\/p1\/artifacts\/latest\?type=episode_outline_set.*$/, () => ({
+      id: "ol-1", project_id: "p1", type: "episode_outline_set", version: 1,
+      episode_number: 1, status: "valid", created_at: NOW, updated_at: NOW,
+      content: {
+        episodes: [
+          { episode_number: 1, title: "落选", objective: "建立冲突" },
+          { episode_number: 2, title: "转机", objective: "遇见伯乐" },
+        ],
+      },
+    }));
+
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+        React.createElement(ActionPlanCard, { actionId: "a1", projectId: "p1" }),
+      ),
+    );
+
+    await screen.findByTestId("gate-preview");
+    // 数据异步到达:等 SB 摘要与分集列表出现
+    await screen.findByText(/逆风少年/);
+    expect(screen.getByTestId("gate-preview").textContent).toContain("林风");
+    const episodes = screen.getByTestId("gate-preview-episodes");
+    expect(episodes.textContent).toContain("第 1 集");
+    expect(episodes.textContent).toContain("落选");
+    expect(episodes.textContent).toContain("第 2 集");
   });
 
   it("非分段计划不显示继续按钮", async () => {

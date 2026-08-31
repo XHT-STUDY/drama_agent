@@ -216,7 +216,7 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **`staged`（L-2，**默认 true**）**：分阶段创作是默认体验——create_script 计划带 `stop_after=outline`，Run 在 StoryBible 与分集大纲产出后转 `needs_review`（`run.needs_review` 事件 payload 含 `stage_gate=outline` 与 Artifact ID），不写剧本；用户在门上选择写 1 集 / 5 集 / 全部（L-4）。`staged=false` 为确认计划后一口气写完（legacy 直连 API 行为不变）。参与幂等 request_hash。
 
-**Planner v1.1**：典型创作请求（"我想写/帮我写一个 XX 故事"）直接判 `create_script` 不澄清；"先搭建设定和大纲""分阶段来"与默认流程一致，同样判 `create_script`（不是新意图）。
+**Planner v1.2**：典型创作请求（"我想写/帮我写一个 XX 故事"）直接判 `create_script` 不澄清；"先搭建设定和大纲""分阶段来"与默认流程一致，同样判 `create_script`（不是新意图）。白名单动态生成：项目存在停在确认门的 Run 时注入 `continue` 意图（"大纲可以了，开始写吧"→ continue 计划，`batch_size` 可选 1-50，缺省写剩余全部）；无门上 Run 时 `continue` 不可用，Planner 不会产出该意图（漂移防御：`GATED_RUN_NOT_FOUND`）。
 
 **续跑（L-3）**：`POST /runs/{id}/continue`——仅 `needs_review` 且 `stage_gate=outline` 的 Run 可续（否则 409 `RUN_NOT_RETRYABLE`；活跃中重复续跑 409 `RUN_ALREADY_ACTIVE`）。续跑时剥离 `stop_after`/`stage_gate`，并把大纲刷新为项目**最新 valid 版本**（暂停期间通过聊天修改大纲的成果生效）；Run 回 `queued`，从 checkpoint 恢复——SB/大纲不重算，直接进入剧本阶段。事件 `run.queued` payload 含 `stage_gate_cleared=outline`。
 
@@ -224,13 +224,15 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **响应语义**：响应体为 `AgentTurnResponse`（注意字段名是 `id` 而非 `turn_id`，含 `status` / `turn_type` / `response_message_id` / `action_id` / `error_code`）。终态返回 200：`turn_type=clarification`（`status=needs_input`，无 Action）、`answer`（`status=answered`，只读）、`plan`（`status=action_proposed`，返回 proposed AgentAction）；Planner 失败同样返回 200（`status=failed` + `error_code`，不创建 Action/Run）。重复请求命中有效 lease 下的 planning Turn 返回 202 + 当前快照；命中终态返回与首次完全一致的 200 原响应。同 key 不同载荷返回 409 `IDEMPOTENCY_KEY_REUSED`。
 
-**确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`、`revise_script→revise_script`、`revise_outline→revise_outline`；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）。Run 幂等键为 `agent-action:{action_id}`。
+**确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`、`revise_script→revise_script`、`revise_outline→revise_outline`；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）；`continue` 不新建 Run——恢复 `target_run_id` 指向的既有 Run（确认时二次校验仍在确认门，已离开则 Action→`stale` + 409 `RUN_NOT_RETRYABLE`，并把 Run config 的 `agent_action_id` 改指本 continue Action 以承接终态回写）。Run 幂等键为 `agent-action:{action_id}`。
+
+**对话短路（确认/续跑短语）**：Turn 内容为整句确认或续跑短语时在 Planner 之前被确定性路由——确认类（"确认""好的""就按这个来"等）命中会话最新 proposed Action 走 confirm；无 proposed 但项目有门上 Run 时直接续跑；续跑类（"继续""写5集""把剩下的写完"等，可带批集数）续跑 stage_gate Run。两者产出 `answer` 型 Turn（Planner 零调用）；未命中或无可执行目标回落 Planner 原行为。整句匹配防误触发："好的，不过我想把主角改成女生"不会短路。
 
 **Action 生命周期与 Outcome（J-09）**：确认后的 Run config 携带 `agent_action_id`，Dispatcher 在 Run 状态变化时同步 Action（queued→running→终态）。Run 终态后回写 `result`（AgentOutcome：`goal_status=achieved|partially_achieved|blocked`、`evidence_artifact_ids`、`score_delta`、`remaining_constraints`、可空 `recommended_next_action`）并向会话追加 `action_result` 消息；部分达成且深度 0 时创建 `parent_action_id`/`replan_depth=1` 的 proposed 子 Action 与 `action_plan` 消息（只展示等待确认，不自动建 Run）。Worker 崩溃后 GET Action 自动 reconciliation 补写（幂等，不重复消息/子提案）。新增 SSE 事件 `agent_action.updated`（payload 含 `agent_action_id`、`status`、`goal_status`），现有消费者忽略新字段仍兼容。
 
 **revise_script 计划（J-06）**：目标由服务端解析——目标集的最新 valid 剧本（Planner 不提供 UUID），来源快照含 checksum；目标集无有效剧本时 Turn→`failed`（404 `SCRIPT_NOT_FOUND` 语义，经 Turn `error_code` 返回）。Run options 携带 `source_script_artifact_id` / `episode_number` / `user_constraints`。
 
-**Wave 2 已知限制**：Planner 白名单开放 `create_script | explain | evaluate | revise_script | revise_outline`（J-06/J-08 起，M3 完成）；单集 evaluate 的 `episode_number` 进入计划与来源快照，但当前 Run 仍评估项目全部剧本。
+**Wave 2 已知限制**：Planner 白名单开放 `create_script | explain | evaluate | revise_script | revise_outline`（J-06/J-08 起，M3 完成）+ 动态 `continue`（有门上 Run 时）；单集 evaluate 的 `episode_number` 进入计划与来源快照，但当前 Run 仍评估项目全部剧本。
 
 ### 修订（F-06）
 

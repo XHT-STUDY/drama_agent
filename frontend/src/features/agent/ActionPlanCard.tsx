@@ -13,10 +13,10 @@
  */
 
 import Link from "next/link";
-import type { AgentOutcome } from "@/types/api";
+import type { AgentOutcome, Artifact } from "@/types/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { runsApi } from "@/lib/api-client";
+import { artifactsApi, runsApi } from "@/lib/api-client";
 import { useAgentAction } from "@/hooks/use-agent-action";
 
 const GOAL_STATUS_LABEL: Record<string, string> = {
@@ -38,10 +38,8 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 function OutcomeView({
-  projectId,
   outcome,
 }: {
-  projectId: string;
   outcome: AgentOutcome;
 }) {
   const statusColor =
@@ -50,6 +48,12 @@ function OutcomeView({
       : outcome.goal_status === "partially_achieved"
         ? "text-[var(--warning)]"
         : "text-[var(--danger)]";
+  // 未完成约束：blocked 全量展示；partially_achieved 只给计数（降噪）；
+  // 产物链接在版本页查看
+  const showConstraints =
+    outcome.goal_status === "blocked" && outcome.remaining_constraints.length > 0;
+  const showPartialCount =
+    outcome.goal_status === "partially_achieved" && outcome.remaining_constraints.length > 0;
   return (
     <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3" data-testid="action-outcome">
       <p className="text-sm font-medium">
@@ -64,25 +68,17 @@ function OutcomeView({
           </span>
         )}
       </p>
-      {outcome.remaining_constraints.length > 0 && (
+      {showConstraints && (
         <ul className="list-disc pl-5 text-xs text-[var(--warning)]" data-testid="remaining-constraints">
           {outcome.remaining_constraints.map((c) => (
             <li key={c}>{c}</li>
           ))}
         </ul>
       )}
-      {outcome.evidence_artifact_ids.length > 0 && (
-        <div className="flex flex-wrap gap-2" data-testid="evidence-links">
-          {outcome.evidence_artifact_ids.slice(0, 8).map((id) => (
-            <Link
-              key={id}
-              href={`/projects/${projectId}/versions?artifact=${id}`}
-              className="rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--accent)] transition-state hover:border-[var(--accent)]"
-            >
-              产物 {id.slice(0, 8)}…
-            </Link>
-          ))}
-        </div>
+      {showPartialCount && (
+        <p className="text-xs text-[var(--text-muted)]" data-testid="partial-count">
+          有 {outcome.remaining_constraints.length} 项修改要求未能自动确认。
+        </p>
       )}
     </div>
   );
@@ -95,6 +91,120 @@ interface Props {
   onAskAgain?: () => void;
   /** 计划执行确认后的刷新（继续按钮成功后失效查询） */
   onContinued?: () => void;
+}
+
+type SBContent = {
+  title?: string;
+  genre?: string;
+  logline?: string;
+  protagonist?: { name?: string };
+  antagonist?: { name?: string };
+};
+type EpisodeItem = { episode_number?: number; title?: string; objective?: string };
+type ScriptContent = { title?: string; word_count?: number };
+
+/** 门上内嵌预览：SB/大纲/剧本就地可看，不必跳页再回来 */
+function GatePreview(props: {
+  stageGate: "outline" | "scripts";
+  projectId: string;
+  storyBible?: Artifact | null;
+  outline?: Artifact | null;
+  scripts?: Artifact[];
+}) {
+  const { stageGate, projectId, storyBible, outline, scripts } = props;
+  const sb = storyBible?.content as SBContent | undefined;
+  const episodes = (outline?.content?.episodes ?? []) as EpisodeItem[];
+  const latestPerEpisode = new Map<number, Artifact>();
+  for (const s of scripts ?? []) {
+    if (s.status !== "valid") continue;
+    const existing = latestPerEpisode.get(s.episode_number);
+    if (!existing || s.version > existing.version) latestPerEpisode.set(s.episode_number, s);
+  }
+  return (
+    <details
+      className="rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] p-3"
+      open
+      data-testid="gate-preview"
+    >
+      <summary className="cursor-pointer text-xs font-medium">本次生成的内容预览</summary>
+      <div className="mt-2 space-y-2 text-xs">
+        {stageGate === "outline" && (
+          <>
+            {sb && (
+              <div>
+                <p className="font-medium">
+                  {sb.title ?? "未命名"}
+                  {sb.genre ? `（${sb.genre}）` : ""}
+                </p>
+                {sb.logline && (
+                  <p className="mt-0.5 text-[var(--text-muted)]">{sb.logline}</p>
+                )}
+                {(sb.protagonist?.name || sb.antagonist?.name) && (
+                  <p className="mt-0.5 text-[var(--text-muted)]">
+                    主角：{sb.protagonist?.name ?? "—"} · 反派：{sb.antagonist?.name ?? "—"}
+                  </p>
+                )}
+              </div>
+            )}
+            {episodes.length > 0 && (
+              <ol className="space-y-1" data-testid="gate-preview-episodes">
+                {episodes.map((ep) => (
+                  <li key={ep.episode_number} className="flex gap-2">
+                    <span className="shrink-0 font-medium text-[var(--accent)]">
+                      第 {ep.episode_number} 集
+                    </span>
+                    <span>
+                      <span className="font-medium">{ep.title ?? ""}</span>
+                      {ep.objective && (
+                        <span className="text-[var(--text-muted)]"> — {ep.objective}</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+            <p className="flex gap-3">
+              <Link href={`/projects/${projectId}/story-bible`} className="text-[var(--accent)] underline">
+                查看完整 Story Bible
+              </Link>
+              <Link href={`/projects/${projectId}/outline`} className="text-[var(--accent)] underline">
+                查看完整大纲
+              </Link>
+            </p>
+          </>
+        )}
+        {stageGate === "scripts" && (
+          <>
+            {latestPerEpisode.size > 0 ? (
+              <ul className="space-y-1" data-testid="gate-preview-scripts">
+                {[...latestPerEpisode.values()]
+                  .sort((a, b) => a.episode_number - b.episode_number)
+                  .map((s) => {
+                    const c = s.content as ScriptContent;
+                    return (
+                      <li key={s.id} className="flex items-center justify-between gap-2">
+                        <span>
+                          第 {s.episode_number} 集 · {c.title ?? "未命名"}
+                          {c.word_count ? ` · ${c.word_count} 字` : ""}
+                        </span>
+                        <Link
+                          href={`/projects/${projectId}/scripts/${s.episode_number}`}
+                          className="text-[var(--accent)] underline"
+                        >
+                          查看
+                        </Link>
+                      </li>
+                    );
+                  })}
+              </ul>
+            ) : (
+              <p className="text-[var(--text-muted)]">暂无剧本。</p>
+            )}
+          </>
+        )}
+      </div>
+    </details>
+  );
 }
 
 export function ActionPlanCard({
@@ -128,6 +238,30 @@ export function ActionPlanCard({
   });
   const stageGate =
     action?.status === "needs_review" ? runQuery.data?.stage_gate ?? null : null;
+
+  // 门上内嵌预览：SB/大纲/剧本就地可看，不必跳页再回来（门上聊天修订
+  // 会产生新版本，轻量轮询保持预览新鲜）
+  const gateStoryBible = useQuery({
+    queryKey: ["gate-preview", projectId, "story_bible"],
+    queryFn: () => artifactsApi.getLatest(projectId, "story_bible"),
+    enabled: stageGate === "outline",
+    retry: false,
+    refetchInterval: 10_000,
+  });
+  const gateOutline = useQuery({
+    queryKey: ["gate-preview", projectId, "episode_outline_set"],
+    queryFn: () => artifactsApi.getLatest(projectId, "episode_outline_set"),
+    enabled: stageGate === "outline",
+    retry: false,
+    refetchInterval: 10_000,
+  });
+  const gateScripts = useQuery({
+    queryKey: ["gate-preview", projectId, "script_draft"],
+    queryFn: () => artifactsApi.listVersions(projectId, "script_draft"),
+    enabled: stageGate === "scripts",
+    retry: false,
+    refetchInterval: 10_000,
+  });
 
   const continueMutation = useMutation({
     mutationFn: (batchSize?: number | undefined) =>
@@ -170,7 +304,10 @@ export function ActionPlanCard({
       <header className="mb-2 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">{plan.goal}</h3>
         <span className="shrink-0 rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--text-muted)]">
-          {STATUS_LABEL[action.status] ?? action.status}
+          {/* 确认门是设计内的阶段暂停：展示"等待确认"而非"需人工复核" */}
+          {stageGate
+            ? "等待确认"
+            : STATUS_LABEL[action.status] ?? action.status}
         </span>
       </header>
 
@@ -236,13 +373,19 @@ export function ActionPlanCard({
         </div>
       )}
 
-      {/* L-3/L-4 确认门续跑：Run 停在门上 → 按门类型提供继续选项 */}
+      {/* L-3/L-4 确认门续跑：Run 停在门上 → 内嵌预览 + 按门类型提供继续选项 */}
       {stageGate === "outline" && (
         <div className="mt-4">
-          <p className="mb-2 text-xs text-[var(--text-muted)]">
-            StoryBible 与大纲已生成（暂停期间如有修改，将以最新版本继续）。选择本批生成方式：
+          <GatePreview
+            stageGate="outline"
+            projectId={projectId}
+            storyBible={gateStoryBible.data ?? null}
+            outline={gateOutline.data ?? null}
+          />
+          <p className="mt-2 text-xs text-[var(--text-muted)]">
+            不满意可直接在下方对话框输入修改意见（如『把第 2 集冲突提前』），修订确认后再继续创作。
           </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
               onClick={() => continueMutation.mutate(1)}
@@ -280,10 +423,11 @@ export function ActionPlanCard({
       )}
       {stageGate === "scripts" && (
         <div className="mt-4">
-          <p className="mb-2 text-xs text-[var(--text-muted)]" aria-live="polite">
-            本批剧本与评估已完成，可继续下一批（每批完成后暂停，可先聊天修改剧本）。
+          <GatePreview stageGate="scripts" projectId={projectId} scripts={gateScripts.data ?? []} />
+          <p className="mt-2 text-xs text-[var(--text-muted)]" aria-live="polite">
+            可继续下一批，或直接在对话框输入修改意见（先在右栏选中要改的集数）。
           </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
               onClick={() => continueMutation.mutate(1)}
@@ -327,7 +471,7 @@ export function ActionPlanCard({
         </p>
       )}
 
-      {/* 恢复入口：stale / failed / needs_review */}
+      {/* 恢复入口：stale / failed / needs_review（确认门除外——门上有专属按钮） */}
       {isStale && (
         <div className="mt-3 rounded border border-[var(--warning)] bg-[var(--warning-bg)] p-2 text-xs text-[var(--warning)]" role="alert">
           {confirmError}
@@ -344,7 +488,7 @@ export function ActionPlanCard({
       {!isStale && confirmError && (
         <p className="mt-2 text-xs text-[var(--danger)]" role="alert">{confirmError}</p>
       )}
-      {(action.status === "failed" || action.status === "needs_review") && (
+      {(action.status === "failed" || (action.status === "needs_review" && !stageGate)) && (
         <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
           <Link
             href={`/projects/${projectId}/versions`}
@@ -363,14 +507,9 @@ export function ActionPlanCard({
         </div>
       )}
 
-      {terminalWithOutcome && action.result && (
-        <OutcomeView projectId={projectId} outcome={action.result} />
-      )}
-      {terminalWithOutcome && action.result?.recommended_next_action && (
-        <p className="mt-2 text-xs text-[var(--text-muted)]">
-          建议的后续动作：{action.result.recommended_next_action.intent}
-          （见下方后续计划，需手动确认）
-        </p>
+      {/* 确认门上只保留门按钮：结果/后续建议是噪音，流程就是"确认 → 下一步" */}
+      {terminalWithOutcome && action.result && !stageGate && (
+        <OutcomeView outcome={action.result} />
       )}
     </section>
   );

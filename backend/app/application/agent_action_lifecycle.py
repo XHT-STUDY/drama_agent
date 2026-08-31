@@ -147,7 +147,9 @@ class AgentActionLifecycle:
             return action
 
         # assistant 结果消息（幂等：同 action + kind 只追加一次）
-        result_message = await self._append_result_message(db, action, run, outcome)
+        result_message = await self._append_result_message(
+            db, action, run, outcome, final_state=final_state
+        )
 
         # 一次后续计划：partially/blocked + 深度 0 + 白名单建议 → proposed 子 Action
         child_action = await self._maybe_create_child_action(
@@ -156,6 +158,10 @@ class AgentActionLifecycle:
         )
         if child_action is not None:
             await self._append_plan_message(db, child_action)
+
+        # 收尾指引：修订类任务完成而主创作任务仍停在确认门时，追加可读的
+        # 下一步提示（配合对话短路，输入「继续」即可续跑）。
+        await self._append_next_step_message(db, action=action, final_state=final_state)
 
         await self._publisher.publish_agent_action_event(
             db,
@@ -225,7 +231,7 @@ class AgentActionLifecycle:
         *,
         role: str,
         content: str,
-        kind: Literal["action_result", "action_plan"],
+        kind: Literal["action_result", "action_plan", "text"],
         metadata: dict[str, Any],
     ) -> Any:
         data = MessageCreate(role=role, content=content, kind=kind, metadata=metadata)
@@ -238,6 +244,8 @@ class AgentActionLifecycle:
         action: AgentAction,
         run: WorkflowRun,
         outcome: AgentOutcome,
+        *,
+        final_state: dict[str, Any] | None = None,
     ) -> Any:
         existing = await self._find_message(
             db, action.conversation_id,
@@ -245,27 +253,113 @@ class AgentActionLifecycle:
         )
         if existing is not None:
             return existing
-        lines = [f"执行完成：{outcome.goal_status}"]
-        if outcome.score_delta is not None:
-            lines.append(f"评分变化：{outcome.score_delta:+.1f}")
-        if outcome.evidence_artifact_ids:
-            lines.append(f"产出 {len(outcome.evidence_artifact_ids)} 个 Artifact")
-        for constraint in outcome.remaining_constraints:
-            lines.append(f"未完成：{constraint}")
-        return await self._append_message(
-            db,
-            action.conversation_id,
-            role="assistant",
-            content="\n".join(lines),
-            kind="action_result",
-            metadata={
+
+        gate = (final_state or {}).get("stage_gate")
+        if gate in ("outline", "scripts"):
+            # 确认门是设计内的阶段暂停：可读的阶段性进展消息，
+            # 不渲染 goal_status 术语/未完成约束/产物清单（前端按
+            # stage_gate metadata 走最小化卡片）。
+            state = final_state or {}
+            written = len(state.get("script_artifact_ids") or {})
+            target = state.get("target_episode_count") or 0
+            content = (
+                "StoryBible 与分集大纲已生成，等待确认后继续创作剧本。"
+                if gate == "outline"
+                else f"本批剧本已完成（共 {written}/{target} 集），可继续下一批或先修改剧本。"
+            )
+            metadata: dict[str, Any] = {
                 "agent_action_id": str(action.id),
                 "run_id": str(run.id),
                 "message_type": "result",
                 "goal_status": outcome.goal_status,
-                "evidence_artifact_ids": [str(a) for a in outcome.evidence_artifact_ids],
+                "stage_gate": str(gate),
+            }
+        else:
+            # 可读自然文案；状态详情由计划卡的 OutcomeView 承载，避免重复
+            status_text = {
+                "achieved": "本轮任务已完成。",
+                "partially_achieved": "本轮任务部分完成。",
+                "blocked": "本轮任务未能完成。",
+                "cancelled": "任务已取消。",
+            }.get(outcome.goal_status, "本轮任务已结束。")
+            lines = [status_text]
+            if outcome.score_delta is not None:
+                lines.append(f"评分变化：{outcome.score_delta:+.1f}")
+            for constraint in outcome.remaining_constraints:
+                lines.append(f"未完成：{constraint}")
+            content = "\n".join(lines)
+            metadata = {
+                "agent_action_id": str(action.id),
+                "run_id": str(run.id),
+                "message_type": "result",
+                "goal_status": outcome.goal_status,
                 "score_delta": outcome.score_delta,
                 "remaining_constraints": outcome.remaining_constraints,
+            }
+        return await self._append_message(
+            db,
+            action.conversation_id,
+            role="assistant",
+            content=content,
+            kind="action_result",
+            metadata=metadata,
+        )
+
+    async def _append_next_step_message(
+        self,
+        db: AsyncSession,
+        *,
+        action: AgentAction,
+        final_state: dict[str, Any] | None,
+    ) -> None:
+        """任务完成后项目仍停在确认门 → 追加可读的下一步指引（幂等）。
+
+        场景：用户在门上多轮聊天修订，每轮修订是独立任务；完成后聊天
+        底部只剩"已完成"卡，主创作任务的门卡淹没在历史里——用户不知
+        如何推进。指引配合对话短路层，输入「继续」即直达续跑。
+        """
+        # 本任务自己停在门上：门消息/门按钮已是指引，不重复
+        if (final_state or {}).get("stage_gate"):
+            return
+        if action.status != "completed":
+            return
+        existing = await self._find_message(
+            db, action.conversation_id,
+            kind="text", agent_action_id=action.id, message_type="next_step",
+        )
+        if existing is not None:
+            return
+        from app.skills.agent_shortcut import find_gated_run
+
+        gated = await find_gated_run(db, action.project_id)
+        if gated is None:
+            return
+        gate = (gated.state_summary or {}).get("stage_gate")
+        hint = (
+            "直接输入「继续」写下一批剧本，或继续提出修改意见。"
+            if gate == "scripts"
+            else "直接输入「继续」开始写剧本，或继续提出修改意见。"
+        )
+        # 门上多轮修订时每轮完成都会到这里：清掉上一条指引再追加，
+        # 聊天里始终只有一条指向当前位置的提示，不刷屏。
+        from sqlalchemy import delete
+
+        await db.execute(
+            delete(Message).where(
+                Message.conversation_id == action.conversation_id,
+                Message.kind == "text",
+                Message.message_metadata["message_type"].astext == "next_step",
+            )
+        )
+        await self._append_message(
+            db,
+            action.conversation_id,
+            role="assistant",
+            content=f"上一轮任务已完成。创作任务停在确认门：{hint}",
+            kind="text",
+            metadata={
+                "agent_action_id": str(action.id),
+                "message_type": "next_step",
             },
         )
 
@@ -323,7 +417,8 @@ class AgentActionLifecycle:
             return None  # (parent, depth) 唯一：已有子提案时不再重复
 
         built = await self._build_child_plan(
-            db, action=action, recommendation=recommendation
+            db, action=action, recommendation=recommendation,
+            constraints=outcome.remaining_constraints,
         )
         if built is None:
             logger.info(
@@ -382,8 +477,13 @@ class AgentActionLifecycle:
         *,
         action: AgentAction,
         recommendation: RecommendedNextAction,
+        constraints: list[str] | None = None,
     ) -> tuple[AgentActionPlan, list[ArtifactSnapshot]] | None:
-        """用当前最新 Artifact 重解析目标，构建服务端模板化子计划。"""
+        """用当前最新 Artifact 重解析目标，构建服务端模板化子计划。
+
+        子计划携带父计划未自动确认的约束——否则后续修订等于在无约束
+        地重新生成，"已达成"没有意义。
+        """
         from app.application.agent_command_service import (
             build_evaluate_plan,
             build_revise_outline_plan,
@@ -391,6 +491,7 @@ class AgentActionLifecycle:
         )
         from app.artifacts.store import ArtifactStore
 
+        carried = [c for c in (constraints or []) if c][:20]
         store = ArtifactStore()
         intent = recommendation.intent
         episode = recommendation.target.episode_number
@@ -402,14 +503,16 @@ class AgentActionLifecycle:
             source = await store.get_latest(db, action.project_id, "script_draft", episode)
             if source is None:
                 return None
-            built = build_revise_script_plan(source=source, constraints=[])
+            built = build_revise_script_plan(source=source, constraints=carried)
         elif intent == "revise_outline":
             source_outline = await store.get_latest(
                 db, action.project_id, "episode_outline_set", 1
             )
             if source_outline is None:
                 return None
-            built = build_revise_outline_plan(source_outline=source_outline, constraints=[])
+            built = build_revise_outline_plan(
+                source_outline=source_outline, constraints=carried
+            )
         elif intent == "evaluate":
             head = build_evaluate_plan(episode=episode)
             built = (*head, [])
@@ -422,9 +525,11 @@ class AgentActionLifecycle:
             intent=intent,
             command=command,
             target=target,
-            constraints=[],
+            constraints=carried,
             steps=steps,
-            expected_impact=["延续上一个计划的未完成约束"],
+            expected_impact=(
+                ["落实上一轮未自动确认的修改要求"] if carried else ["延续上一个计划的未完成约束"]
+            ),
         )
         return plan, snapshots
 

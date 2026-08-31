@@ -16,6 +16,8 @@ interface Props {
   projectId: string;
   activeContext: ActiveArtifactContext | null;
   onActiveContextChange: (context: ActiveArtifactContext | null) => void;
+  /** 变化时重新拉取产物索引（Run 推进/门上生成新产物后由工作台递增） */
+  refreshSignal?: number;
 }
 
 function toContext(artifact: Artifact): ActiveArtifactContext {
@@ -44,19 +46,20 @@ export function ArtifactContextPanel({
   projectId,
   activeContext,
   onActiveContextChange,
+  refreshSignal = 0,
 }: Props) {
   const storyBible = useQuery({
-    queryKey: ["agent-context", projectId, "story_bible"],
+    queryKey: ["agent-context", projectId, "story_bible", refreshSignal],
     queryFn: () => artifactsApi.getLatest(projectId, "story_bible"),
     retry: false,
   });
   const outline = useQuery({
-    queryKey: ["agent-context", projectId, "episode_outline_set"],
+    queryKey: ["agent-context", projectId, "episode_outline_set", refreshSignal],
     queryFn: () => artifactsApi.getLatest(projectId, "episode_outline_set"),
     retry: false,
   });
   const scripts = useQuery({
-    queryKey: ["agent-context", projectId, "script_draft"],
+    queryKey: ["agent-context", projectId, "script_draft", refreshSignal],
     queryFn: () => artifactsApi.listVersions(projectId, "script_draft"),
     retry: false,
   });

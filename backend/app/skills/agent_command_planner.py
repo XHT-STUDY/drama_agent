@@ -21,8 +21,9 @@ from app.prompts.loader import PromptLoader
 from app.skills.protocol import Skill, SkillMetadata
 
 KNOWN_AGENT_INTENTS = frozenset(
-    {"create_script", "explain", "revise_outline", "revise_script", "evaluate"}
+    {"create_script", "explain", "revise_outline", "revise_script", "evaluate", "continue"}
 )
+# 基础白名单（动态白名单在此基础上按项目状态追加，见 AgentCommandService._available_intents）
 DEFAULT_AVAILABLE_INTENTS = (
     "create_script", "explain", "evaluate", "revise_script", "revise_outline",
 )

@@ -10,11 +10,11 @@
  * Run 进度复用 useRunEvents，计划卡复用 useAgentAction。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { conversationsApi, runsApi } from "@/lib/api-client";
+import { artifactsApi, conversationsApi, runsApi } from "@/lib/api-client";
 import { useAgentConversation } from "@/hooks/use-agent-conversation";
 import { useRunEvents } from "@/hooks/use-run-events";
 import { ActionPlanCard } from "./ActionPlanCard";
@@ -115,6 +115,36 @@ export function AgentWorkspace({ projectId, project }: Props) {
       : null;
   const runEvents = useRunEvents(activeRunId);
 
+  // 右栏产物索引随 Run 状态变化自动刷新（门上生成 SB/大纲后立即可见）
+  const [contextRefresh, setContextRefresh] = useState(0);
+  useEffect(() => {
+    setContextRefresh((n) => n + 1);
+  }, [gatedRun.data?.status, conversation.activeActionId]);
+
+  // 大纲门：自动把最新大纲设为活动上下文——用户可直接在对话里
+  // 提修改意见（如"把第 2 集冲突提前"），无需先去右栏手动选中。
+  const outlineAtGate = useQuery({
+    queryKey: ["gate-outline", projectId],
+    queryFn: () => artifactsApi.getLatest(projectId, "episode_outline_set"),
+    enabled: gatedRun.data?.stage_gate === "outline",
+    retry: false,
+  });
+  useEffect(() => {
+    if (
+      gatedRun.data?.stage_gate === "outline" &&
+      outlineAtGate.data &&
+      !activeContext
+    ) {
+      setActiveContext({
+        artifact_id: outlineAtGate.data.id,
+        artifact_type: "episode_outline_set",
+        episode_number: outlineAtGate.data.episode_number,
+        version: outlineAtGate.data.version,
+        checksum: outlineAtGate.data.checksum ?? null,
+      });
+    }
+  }, [gatedRun.data?.stage_gate, outlineAtGate.data, activeContext]);
+
   // 消息流里已经内嵌的计划卡不在右栏重复渲染；右栏只兜底展示
   // 刚由 Turn 产出、消息列表尚未刷新的计划。
   const planMessageActionIds = useMemo(() => {
@@ -134,6 +164,7 @@ export function AgentWorkspace({ projectId, project }: Props) {
         projectId={projectId}
         activeContext={activeContext}
         onActiveContextChange={setActiveContext}
+        refreshSignal={contextRefresh}
       />
       {focusActionId && !planMessageActionIds.has(focusActionId) && (
         <ActionPlanCard
@@ -148,7 +179,16 @@ export function AgentWorkspace({ projectId, project }: Props) {
     </>
   );
 
-  const emptyConversation = conversation.messages.length === 0;
+  // 首条消息发送中也要渲染消息流（乐观气泡），不能落在空状态占位上
+  const emptyConversation =
+    conversation.messages.length === 0 && !conversation.pendingContent;
+  // 新消息/发送中自动滚动到底部（loadMore 前拼页不改变最后一条 id，不触发）
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const lastMessageId = conversation.messages[conversation.messages.length - 1]?.id;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lastMessageId, conversation.pendingContent]);
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
@@ -162,7 +202,10 @@ export function AgentWorkspace({ projectId, project }: Props) {
           creating={createConversation.isPending}
         >
           {/* 消息流 */}
-          <div className="max-h-[52vh] min-h-48 overflow-y-auto rounded-lg bg-[var(--surface-muted)] p-3">
+          <div
+            ref={scrollRef}
+            className="max-h-[52vh] min-h-48 overflow-y-auto rounded-lg bg-[var(--surface-muted)] p-3"
+          >
             {conversation.isLoading ? (
               <p className="text-xs text-[var(--text-muted)]">正在加载消息…</p>
             ) : emptyConversation ? (
@@ -177,7 +220,7 @@ export function AgentWorkspace({ projectId, project }: Props) {
             ) : (
               <MessageList
                 messages={conversation.messages}
-                projectId={projectId}
+                pendingContent={conversation.pendingContent}
                 renderPlanCard={(actionId) => (
                   <ActionPlanCard
                     actionId={actionId}
@@ -200,6 +243,7 @@ export function AgentWorkspace({ projectId, project }: Props) {
               runStatus={runEvents.runStatus}
               lastError={runEvents.lastError}
               onReconnect={runEvents.reconnect}
+              stageGate={gatedRun.data?.stage_gate ?? null}
             />
           )}
 
