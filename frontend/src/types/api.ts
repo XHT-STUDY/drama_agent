@@ -145,16 +145,22 @@ export interface EpisodeOutlineSetContent {
 // 剧本
 // ============================================================
 
+export type DialogueLineType = "dialogue" | "vo" | "os";
+
 export interface DialogueLine {
   speaker: string;
   text: string;
   parenthetical?: string;
+  /** 台词类型：dialogue=对白，vo=画外音旁白，os=内心独白 */
+  line_type?: DialogueLineType;
 }
 
 export interface Scene {
   scene_number: number;
   location: string;
   time_of_day: string;
+  /** 内/外景：内、外、内/外；缺省按 外 处理 */
+  int_ext?: string;
   characters: string[];
   action: string;
   dialogue: DialogueLine[];

@@ -1,10 +1,10 @@
 ---
 name: write_episode
-version: "1.1.0"
+version: "1.2.0"
 input_schema: EpisodeWriterInput
 output_schema: ScriptDraft
 owner: writer
-changelog: "v1.1: 注入 ContextBuilder 按预算组装的创作上下文（G-02）——当前集大纲完整不截断，旧会话摘要经连续性段进入上下文"
+changelog: "v1.2: 剧本正文改为中文短剧剧本格式（场景头 `集-场 时间 内/外 地点` / 人物行 / △动作 / 对白·VO·OS 台词），新增 int_ext 与 line_type 字段，plain_text 由服务端从 scenes 确定性渲染；v1.1: 注入 ContextBuilder 按预算组装的创作上下文（G-02）——当前集大纲完整不截断，旧会话摘要经连续性段进入上下文"
 ---
 
 # 单集剧本写作
@@ -32,17 +32,39 @@ changelog: "v1.1: 注入 ContextBuilder 按预算组装的创作上下文（G-02
 请以 JSON 格式输出 ScriptDraft：
 - episode_number: 集号
 - title: 单集标题
+- opening_hook: 开头钩子
 - scenes: 场景列表，每项包含：
-  - scene_number: 场景编号（从 1 开始）
-  - location: 场景地点
+  - scene_number: 场景编号（从 1 开始，连续）
+  - location: 场景地点（如"冰封荒原-风雪坡"）
+  - time_of_day: 时间（日/夜/傍晚等）
+  - int_ext: 内外景，取值 `内` / `外` / `内/外`
   - characters: 出场角色列表
-  - dialogues: 台词列表（含 character、line、type）
-  - actions: 动作描述列表
-  - notes: 导演备注
-- plain_text: 完整剧本纯文本
+  - action: 动作描述，可包含多行（每行一个镜头/动作，渲染时会逐行加 △ 前缀）
+  - dialogue: 台词列表，每项包含：
+    - speaker: 说话角色名
+    - text: 台词文本
+    - parenthetical: 情绪/语气提示（如"冷静""高亢"），可为 null
+    - line_type: 台词类型，`dialogue`=对白 / `vo`=画外音旁白 / `os`=内心独白
 - ending_hook: 结尾钩子
+- plain_text: 完整剧本纯文本（服务端会按下面格式从 scenes 重新渲染，可忽略自报值）
 - word_count: 字数（由服务端工具计算，不要自行估算）
 - dialogue_ratio: 台词比例（由服务端工具计算，不要自行估算）
+
+剧本正文（plain_text）按中文短剧剧本格式渲染，示例：
+
+```
+1-1 日 外 冰封荒原-风雪坡
+人物：苏翊
+△狂风裹挟着冰屑横扫荒原，天地间白茫茫一片。苏翊顶着风雪在雪地里艰难挪步。
+苏翊OS（冷静）：雪质干硬。局部结霜有差异，前方岩壁下有避风空腔。
+林晓VO（高亢）：试炼开启。陆铁峥已击杀掠兽。而苏翊还在雪地打转。
+苏翊（凝重）：爪印深达十公分，步幅超两米。是极地冰熊。
+```
+
+- 场景头：`集号-场号 时间 内/外 地点`
+- 场景头下一行为出场人物：`人物：A、B`
+- 动作描述每行以 `△` 开头
+- 对白：`角色名（情绪）：台词`；画外音旁白：`角色名VO（情绪）：台词`；内心独白：`角色名OS（情绪）：台词`
 
 ## 自检清单
 

@@ -16,6 +16,7 @@ from typing import Any
 
 from app.core.security import escape_html, sanitize_filename_part
 from app.tools.protocol import Tool, ToolMetadata
+from app.tools.script_render import scene_lines as _script_scene_lines
 
 # 评估维度 → 中文标签（与前端 EVAL_DIMENSION_LABELS 一致）
 EVAL_DIMENSION_LABELS: dict[str, str] = {
@@ -159,29 +160,17 @@ def markdown_from_outline(c: dict[str, Any]) -> str:
 
 
 def markdown_from_script(c: dict[str, Any]) -> str:
-    """单集剧本 → Markdown（与前端 markdownFromScript 对齐）。"""
+    """单集剧本 → Markdown（与前端 markdownFromScript 对齐）。
+
+    正文使用中文短剧剧本格式（复用 script_render 行构造，与 plain_text 一致）：
+    场景头 `1-1 日 外 地点` / `人物：A、B` / `△动作` / `角色名（情绪）：台词`。
+    """
     lines: list[str] = [f"# 第 {c.get('episode_number', '')} 集剧本：{c.get('title', '')}", ""]
+    episode_number = int(c.get("episode_number", 0) or 0)
 
     for scene in c.get("scenes", []):
-        lines += [
-            f"## 第 {scene.get('scene_number', '')} 场：{scene.get('location', '')}"
-            f"（{scene.get('time_of_day', '')}）",
-            "",
-        ]
-        if scene.get("action"):
-            lines.append(str(scene["action"]))
-            lines.append("")
-        dialogue = scene.get("dialogue", [])
-        if dialogue:
-            for d in dialogue:
-                speaker = d.get("speaker", "")
-                text = d.get("text", "")
-                parenthetical = d.get("parenthetical")
-                if parenthetical:
-                    lines.append(f"- {speaker}（{parenthetical}）：{text}")
-                else:
-                    lines.append(f"- {speaker}：{text}")
-            lines.append("")
+        lines.extend(_script_scene_lines(episode_number, scene))
+        lines.append("")
 
     return "\n".join(lines)
 

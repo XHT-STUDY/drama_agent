@@ -205,7 +205,7 @@ class TestSceneChanges:
     def test_scene_renumbering_no_false_add_remove(self) -> None:
         """中间插入导致后续场景编号位移，仍应对齐而非误判 removed+added。
 
-        场景号是剧本内容的一部分（plain_text 含【第N场】），
+        场景号是剧本内容的一部分（plain_text 场景头含 集号-场号），
         重编号场景仅因头部行变化而标记 modified，其余行不变。
         """
         a = _script_a()
@@ -225,7 +225,10 @@ class TestSceneChanges:
                 c for c in s.line_changes if c.change_type == "modified"
             )
             assert header.old_text and header.new_text
-            assert "场" in header.old_text and "场" in header.new_text
+            # 场景头行：`0-场号 时间 内/外 地点`，仅场号位移
+            assert header.old_text.split(" ")[0].startswith("0-")
+            assert header.new_text.split(" ")[0].startswith("0-")
+            assert header.old_text.split(" ", 1)[1] == header.new_text.split(" ", 1)[1]
 
 
 class TestLineLevelCounting:

@@ -50,12 +50,12 @@ prompts:
     changelog: "初始版本：基于大纲与连续性状态撰写单集完整剧本（场景/对白/旁白）"
     user_content_vars: [story_bible, episode_outline, previous_summary, rag_context]
   - name: write_episode
-    version: "1.1.0"
+    version: "1.2.0"
     input_schema: EpisodeWriterInput
     output_schema: ScriptDraft
     owner: writer
     template: episode_writer_v2.md
-    changelog: "v1.1: 注入 ContextBuilder 按预算组装的创作上下文（G-02）——当前集大纲完整不截断，旧会话摘要经连续性段进入上下文"
+    changelog: "v1.2: 剧本正文改为中文短剧剧本格式（场景头 `集-场 时间 内/外 地点` / 人物行 / △动作 / 对白·VO·OS 台词），新增 int_ext 与 line_type 字段，plain_text 由服务端从 scenes 确定性渲染。v1.1: 注入 ContextBuilder 按预算组装的创作上下文（G-02）——当前集大纲完整不截断，旧会话摘要经连续性段进入上下文"
     user_content_vars: [assembled_context]
 
   # ---- 剧集评估 ----
@@ -80,12 +80,12 @@ prompts:
 
   # ---- 单集剧本修订 ----
   - name: revise_episode
-    version: "1.0.0"
+    version: "1.1.0"
     input_schema: RevisionTaskInput
     output_schema: RevisionResult
     owner: reviser
     template: reviser.md
-    changelog: "初始版本：按修订计划局部改写单集剧本，输出完整新稿与 operation 执行记录；显式列出 preserve 与禁止修改项"
+    changelog: "v1.1: script_draft 新增 int_ext / line_type 字段，plain_text 由服务端按中文短剧剧本格式渲染。v1.0: 按修订计划局部改写单集剧本，输出完整新稿与 operation 执行记录；显式列出 preserve 与禁止修改项"
     user_content_vars: [story_bible, episode_outline, script_draft]
 
   # ---- 连续性语义检查 ----

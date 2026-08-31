@@ -4,7 +4,7 @@ word_count 和 dialogue_ratio 由确定性 Tool 计算，
 不可信任 LLM 自报数值。
 """
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -42,14 +42,18 @@ class EpisodeWriterInput(BaseModel):
 
 
 class DialogueLine(BaseModel):
-    """单句对白。"""
+    """单句台词。"""
 
     model_config = {"extra": "forbid"}
 
     speaker: str = Field(..., description="说话角色名", min_length=1)
-    text: str = Field(..., description="对白文本", min_length=1)
+    text: str = Field(..., description="台词文本", min_length=1)
     parenthetical: str | None = Field(
-        default=None, description="括号内动作提示，如“(低声)”"
+        default=None, description="括号内情绪/动作提示，如“冷静”"
+    )
+    line_type: Literal["dialogue", "vo", "os"] = Field(
+        default="dialogue",
+        description="台词类型：dialogue=对白，vo=画外音旁白，os=内心独白",
     )
 
 
@@ -61,10 +65,14 @@ class Scene(BaseModel):
     scene_number: int = Field(..., description="场次编号", ge=1)
     location: str = Field(..., description="场景地点", min_length=1)
     time_of_day: str = Field(..., description="时间，如“日/夜/傍晚”", min_length=1)
+    int_ext: str | None = Field(
+        default=None,
+        description="内/外景：内、外、内/外；缺省按 外 处理",
+    )
     characters: list[str] = Field(default_factory=list, description="出场角色列表")
-    action: str = Field(..., description="动作描写", min_length=1)
+    action: str = Field(..., description="动作描写，可含多行（每行一个镜头/动作）", min_length=1)
     dialogue: list[DialogueLine] = Field(
-        default_factory=list, description="对白列表"
+        default_factory=list, description="台词列表"
     )
 
 

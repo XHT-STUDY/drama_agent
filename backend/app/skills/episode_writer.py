@@ -25,6 +25,7 @@ from app.domain.script import EpisodeWriterInput, ScriptDraft
 from app.prompts.loader import PromptLoader
 from app.skills.protocol import Skill, SkillMetadata
 from app.tools.dialogue_ratio import DialogueRatioTool
+from app.tools.script_render import script_plain_text
 from app.tools.word_count import WordCountTool
 
 logger = logging.getLogger(__name__)
@@ -154,11 +155,20 @@ class EpisodeWriterSkill(Skill):
     async def _override_metrics(self, draft: ScriptDraft) -> None:
         """使用确定性工具计算并覆盖 LLM 自报的指标。
 
+        plain_text: 从 scenes 确定性渲染（中文短剧剧本格式），不信任 LLM 自报文本
         word_count: 使用 WordCountTool 统计 plain_text 中文+标点数
         dialogue_ratio: 使用 DialogueRatioTool 计算 scenes 中对白占比
 
         仅记录告警，不因轻微越界直接失败。
         """
+        # plain_text 覆盖（与导出/前端展示/diff 共用同一渲染器，保证格式一致）
+        rendered = script_plain_text(
+            draft.episode_number, [s.model_dump() for s in draft.scenes]
+        )
+        if draft.plain_text != rendered:
+            logger.info("第 %d 集 plain_text 覆盖: 服务端确定性渲染", draft.episode_number)
+            draft.plain_text = rendered
+
         # 字数覆盖
         wc_result = await self._word_counter.execute(plain_text=draft.plain_text)
         computed_wc = int(wc_result.get("chinese_chars_with_punct", 0))

@@ -1,10 +1,10 @@
 ---
 name: revise_episode
-version: "1.0.0"
+version: "1.1.0"
 input_schema: RevisionTaskInput
 output_schema: RevisionResult
 owner: reviser
-changelog: "初始版本：按修订计划局部改写单集剧本，输出完整新稿与 operation 执行记录；显式列出 preserve 与禁止修改项"
+changelog: "v1.1: script_draft 新增 int_ext / line_type 字段，plain_text 由服务端按中文短剧剧本格式渲染；v1.0: 初始版本——按修订计划局部改写单集剧本，输出完整新稿与 operation 执行记录；显式列出 preserve 与禁止修改项"
 ---
 
 # 单集剧本修订
@@ -48,7 +48,7 @@ changelog: "初始版本：按修订计划局部改写单集剧本，输出完�
 ## 输出格式
 
 请以 JSON 格式输出 RevisionResult：
-- `script_draft`：修改后的**完整**剧本，字段为 episode_number / title / opening_hook / scenes（scene_number / location / time_of_day / characters / action / dialogue，dialogue 含 speaker / text / parenthetical）/ ending_hook / plain_text / word_count / dialogue_ratio（后两项由服务端工具计算，可忽略自估值）。
+- `script_draft`：修改后的**完整**剧本，字段为 episode_number / title / opening_hook / scenes（scene_number / location / time_of_day / int_ext（内/外/内/外）/ characters / action / dialogue，dialogue 含 speaker / text / parenthetical（情绪提示）/ line_type（`dialogue`=对白 / `vo`=画外音旁白 / `os`=内心独白））/ ending_hook / plain_text / word_count / dialogue_ratio（plain_text 与后两项由服务端按中文短剧剧本格式渲染/计算，可忽略自报值）。
 - `operation_executions`：每个修订操作的执行情况列表，每项包含：
   - `operation_id`：计划中真实的 operation_id
   - `status`：执行结果，取值 `applied`（已执行）/ `partial`（部分执行）/ `skipped`（未执行）

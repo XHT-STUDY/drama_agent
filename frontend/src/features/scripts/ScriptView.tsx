@@ -34,24 +34,21 @@ function charColor(name: string): string {
   return colors[Math.abs(hash) % colors.length];
 }
 
-/** 对白行 */
-function DialogueBlock({ speaker, text, parenthetical }: {
-  speaker: string;
-  text: string;
-  parenthetical?: string;
+/** 台词行：`角色名（情绪）：台词` / `角色名VO（情绪）：旁白` / `角色名OS（情绪）：内心` */
+function DialogueLineView({ line }: {
+  line: { speaker: string; text: string; parenthetical?: string; line_type?: string };
 }) {
+  const suffix = line.line_type === "vo" ? "VO" : line.line_type === "os" ? "OS" : "";
   return (
-    <div className="ml-6 mt-1.5">
-      <div className="flex items-baseline gap-2">
-        <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${charColor(speaker)}`}>
-          {speaker}
-        </span>
-        {parenthetical && (
-          <span className="text-xs text-gray-400 italic">({parenthetical})</span>
-        )}
-      </div>
-      <p className="mt-1 text-sm leading-relaxed text-gray-800">{text}</p>
-    </div>
+    <p className="mt-1.5 text-sm leading-relaxed text-gray-800">
+      <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${charColor(line.speaker)}`}>
+        {line.speaker}{suffix}
+      </span>
+      {line.parenthetical && (
+        <span className="ml-1 text-xs text-gray-500 italic">（{line.parenthetical}）</span>
+      )}
+      <span className="ml-1">{line.text}</span>
+    </p>
   );
 }
 
@@ -110,10 +107,10 @@ export function ScriptView({ content, highlightedScenes = [] }: Props) {
                     : "border-gray-200"
                 }`}
               >
-                {/* Scene 头部：编号 + 地点 + 时间 */}
-                <div className="mb-3 flex items-center gap-3 border-b border-gray-100 pb-3">
+                {/* 场景头：`1-1 日 外 冰封荒原-风雪坡` */}
+                <div className="mb-1.5 flex items-center gap-2">
                   <span
-                    className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
                       isHighlighted
                         ? "bg-orange-500 text-white"
                         : "bg-gray-100 text-gray-600"
@@ -121,45 +118,36 @@ export function ScriptView({ content, highlightedScenes = [] }: Props) {
                   >
                     {scene.scene_number}
                   </span>
-                  <span className="text-sm font-medium text-gray-700">
-                    {scene.location || "未指定地点"}
+                  <span className="text-sm font-semibold tracking-wide text-gray-900">
+                    {content.episode_number}-{scene.scene_number} {scene.time_of_day}{" "}
+                    {scene.int_ext || "外"} {scene.location || "未指定地点"}
                   </span>
-                  {scene.time_of_day && (
-                    <span className="text-xs text-gray-400">
-                      {scene.time_of_day}
-                    </span>
-                  )}
-                  {scene.characters && scene.characters.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {scene.characters.map((name) => (
-                        <span
-                          key={name}
-                          className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${charColor(name)}`}
-                        >
-                          {name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
-                {/* 动作描述 */}
-                {scene.action && (
-                  <p className="mb-3 text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">
-                    {scene.action}
-                  </p>
+                {/* 出场人物：`人物：A、B` */}
+                {scene.characters && scene.characters.length > 0 && (
+                  <div className="mb-2 text-sm text-gray-500">
+                    人物：{scene.characters.join("、")}
+                  </div>
                 )}
 
-                {/* 对白 */}
+                {/* 动作描述：每行加 △ 前缀 */}
+                {scene.action &&
+                  scene.action
+                    .split("\n")
+                    .map((a) => a.trim())
+                    .filter((a) => a.length > 0)
+                    .map((a, i) => (
+                      <p key={i} className="text-sm leading-relaxed text-gray-700">
+                        △{a}
+                      </p>
+                    ))}
+
+                {/* 台词 */}
                 {scene.dialogue && scene.dialogue.length > 0 && (
-                  <div className="space-y-1">
+                  <div className="mt-1">
                     {scene.dialogue.map((line, i) => (
-                      <DialogueBlock
-                        key={i}
-                        speaker={line.speaker}
-                        text={line.text}
-                        parenthetical={line.parenthetical}
-                      />
+                      <DialogueLineView key={i} line={line} />
                     ))}
                   </div>
                 )}

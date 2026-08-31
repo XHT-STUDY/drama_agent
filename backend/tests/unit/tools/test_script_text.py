@@ -161,3 +161,106 @@ def test_regex_no_crash_on_odd_input() -> None:
     for text in ["第1场", "场", "：", "abcd：", "第1场（日）", "第1场 地点（日）x"]:
         result = full_script_to_script_draft(text, title="畸形")
         assert result is None or isinstance(result, dict)
+
+
+class TestShortDramaFormatParsing:
+    """中文短剧剧本格式（`1-1 日 外 地点` / 人物：/ △ / VO / OS）解析。"""
+
+    def test_scene_heading_new_format(self) -> None:
+        """新场景头 `集-场 时间 内/外 地点` 可识别，场景号取连字符后的场号。"""
+        text = (
+            "1-1 日 外 冰封荒原-风雪坡\n"
+            "人物：苏翊\n"
+            "△狂风裹挟着冰屑横扫荒原。\n"
+            "苏翊（凝重）：是极地冰熊。\n"
+            "\n"
+            "1-2 夜 内/外 岩坡山洞\n"
+            "人物：苏翊\n"
+            "苏翊：这里安全。\n"
+        )
+        content = full_script_to_script_draft(text, title="格式")
+        assert content is not None
+        scenes = content["scenes"]
+        assert len(scenes) == 2
+        assert scenes[0]["scene_number"] == 1
+        assert scenes[0]["location"] == "冰封荒原-风雪坡"
+        assert scenes[0]["time_of_day"] == "日"
+        assert scenes[0]["int_ext"] == "外"
+        assert scenes[1]["scene_number"] == 2
+        assert scenes[1]["time_of_day"] == "夜"
+        assert scenes[1]["int_ext"] == "内/外"
+        ScriptDraft.model_validate(content)
+
+    def test_characters_line(self) -> None:
+        """`人物：A、B` 行解析为 characters，不当作对白。"""
+        text = (
+            "1-1 日 外 荒原\n"
+            "人物：苏翊、陆铁峥\n"
+            "苏翊：走。\n"
+            "\n"
+            "1-2 日 外 山洞\n"
+            "苏翊：到了。\n"
+        )
+        content = full_script_to_script_draft(text, title="人物")
+        assert content is not None
+        assert content["scenes"][0]["characters"] == ["苏翊", "陆铁峥"]
+        # 人物行未被误认为 speaker="人物" 的对白
+        assert all(d["speaker"] != "人物" for d in content["scenes"][0]["dialogue"])
+
+    def test_action_lines_kept_separate(self) -> None:
+        """△ 动作行逐行保留在 action 中（换行分隔），不与对白混淆。"""
+        text = (
+            "1-1 日 外 荒原\n"
+            "△狂风裹挟着冰屑横扫荒原。\n"
+            "△苏翊裹紧领口。\n"
+            "苏翊：冷。\n"
+            "\n"
+            "1-2 日 外 山洞\n"
+            "苏翊：到了。\n"
+        )
+        content = full_script_to_script_draft(text, title="动作")
+        assert content is not None
+        assert content["scenes"][0]["action"] == "狂风裹挟着冰屑横扫荒原。\n苏翊裹紧领口。"
+
+    def test_dialogue_vo_os_types(self) -> None:
+        """`角色VO（情绪）：` 与 `角色OS（情绪）：` 解析出 line_type 与括注。"""
+        text = (
+            "1-1 日 外 荒原\n"
+            "林晓VO（高亢）：试炼开启。\n"
+            "苏翊OS（冷静）：雪质干硬。\n"
+            "苏翊（凝重）：是极地冰熊。\n"
+            "\n"
+            "1-2 日 外 山洞\n"
+            "苏翊：到了。\n"
+        )
+        content = full_script_to_script_draft(text, title="台词类型")
+        assert content is not None
+        dialogue = content["scenes"][0]["dialogue"]
+        assert dialogue[0] == {
+            "speaker": "林晓",
+            "text": "试炼开启。",
+            "parenthetical": "高亢",
+            "line_type": "vo",
+        }
+        assert dialogue[1]["line_type"] == "os"
+        assert dialogue[1]["parenthetical"] == "冷静"
+        # 无前缀的默认为对白，不写 line_type
+        assert dialogue[2] == {
+            "speaker": "苏翊",
+            "text": "是极地冰熊。",
+            "parenthetical": "凝重",
+        }
+
+    def test_legacy_format_still_supported(self) -> None:
+        """旧格式 `第X场 地点（时间）` 仍可解析。"""
+        text = (
+            "第1场 训练场（日）\n"
+            "林峰：我来了。\n"
+            "\n"
+            "第2场 宿舍（夜）\n"
+            "林峰：我走了。\n"
+        )
+        content = full_script_to_script_draft(text, title="旧格式")
+        assert content is not None
+        assert content["scenes"][0]["location"] == "训练场"
+        assert content["scenes"][1]["time_of_day"] == "夜"

@@ -311,14 +311,40 @@ describe("markdown 序列化", () => {
     expect(md).not.toContain("episode_number");
   });
 
-  it("剧本：逐场渲染地点/动作/对白，不输出内部引用", () => {
+  it("剧本：中文短剧剧本格式（场景头/人物/△动作/台词），不输出内部引用", () => {
     const md = markdownFromScript(makeScript(1));
     expect(md).toContain("# 第 1 集剧本：第1集");
-    expect(md).toContain("## 第 1 场：训练场（白天）");
+    expect(md).toContain("1-1 白天 外 训练场");
+    expect(md).toContain("人物：林峰、赵启");
+    expect(md).toContain("△两人对峙");
     expect(md).toContain("赵启：你不配站在这里。");
     expect(md).toContain("林峰（握紧拳头）：我会证明给你看。");
     expect(md).not.toContain("referenced_outline_artifact_id");
     expect(md).not.toContain("plain_text");
+  });
+
+  it("剧本：VO/OS 台词带类型后缀，缺省内外景按 外 处理", () => {
+    const md = markdownFromScript(
+      makeScript(1, {
+        scenes: [
+          {
+            scene_number: 2,
+            location: "岩坡山洞",
+            time_of_day: "夜",
+            int_ext: "内/外",
+            characters: ["苏翊"],
+            action: "△苏翊挤进石缝。",
+            dialogue: [
+              { speaker: "林晓", text: "试炼开启。", line_type: "vo" },
+              { speaker: "苏翊", text: "这里安全。", line_type: "os", parenthetical: "松口气" },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(md).toContain("1-2 夜 内/外 岩坡山洞");
+    expect(md).toContain("林晓VO：试炼开启。");
+    expect(md).toContain("苏翊OS（松口气）：这里安全。");
   });
 
   it("评估：维度中文标签 + 分数 + 问题证据/建议，不含 issue_id", () => {

@@ -90,9 +90,11 @@ class TestExportMarkdownEscaping:
         md = self._render(self._script_data(), ["script"])
         assert md.startswith("# 测试项目 — 内容导出")
         assert "# 第 1 集剧本：第1集" in md
-        assert "## 第 1 场：天台（夜）" in md
-        assert "- 主角：" in md
-        assert "- 反派：引号 &quot; 与 &amp; 与 &#39; 单引号" in md
+        # 中文短剧剧本格式：场景头 `1-1 夜 外 天台`、动作行 △、对白行
+        assert "1-1 夜 外 天台" in md
+        assert "△风吹过" in md
+        assert "主角：" in md
+        assert "反派：引号 &quot; 与 &amp; 与 &#39; 单引号" in md
         # 集号仍为数值（未因转义变成字符串）
         assert "第 1 集剧本" in md
 

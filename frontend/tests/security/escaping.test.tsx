@@ -91,8 +91,10 @@ describe("buildExportMarkdown 内容转义", () => {
     });
     expect(md).toContain("# 测试项目 — 内容导出");
     expect(md).toContain("# 第 1 集剧本：第1集");
-    expect(md).toContain("## 第 1 场：天台（夜）");
-    expect(md).toContain("- 主角：");
+    // 中文短剧剧本格式：场景头 `1-1 夜 外 天台`、动作行 △、对白行
+    expect(md).toContain("1-1 夜 外 天台");
+    expect(md).toContain("△风吹过");
+    expect(md).toContain("主角：");
   });
 
   it("项目名含 HTML 时转义", () => {

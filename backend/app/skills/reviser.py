@@ -31,6 +31,7 @@ from app.domain.script import ScriptDraft
 from app.prompts.loader import PromptLoader
 from app.skills.protocol import Skill, SkillMetadata
 from app.tools.dialogue_ratio import DialogueRatioTool
+from app.tools.script_render import script_plain_text
 from app.tools.word_count import WordCountTool
 
 logger = logging.getLogger(__name__)
@@ -175,9 +176,19 @@ class ReviserSkill(Skill):
     async def _override_metrics(self, draft: ScriptDraft) -> None:
         """使用确定性工具重算并覆盖 LLM 自报的 word_count / dialogue_ratio。
 
+        plain_text 同步从 scenes 确定性渲染（中文短剧剧本格式），不信任 LLM 自报文本。
+
         Args:
             draft: 修订后的剧本（原地覆盖指标）
         """
+        # plain_text 覆盖（与写作/导出/前端展示/diff 共用同一渲染器）
+        rendered = script_plain_text(
+            draft.episode_number, [s.model_dump() for s in draft.scenes]
+        )
+        if draft.plain_text != rendered:
+            logger.info("第 %d 集 plain_text 覆盖: 服务端确定性渲染", draft.episode_number)
+            draft.plain_text = rendered
+
         wc_result = await self._word_counter.execute(plain_text=draft.plain_text)
         computed_wc = int(wc_result.get("chinese_chars_with_punct", 0))
         if draft.word_count != computed_wc:

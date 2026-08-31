@@ -22,6 +22,7 @@ from app.domain.diff import (
 )
 from app.domain.script import Scene, ScriptDraft
 from app.tools.protocol import Tool, ToolMetadata
+from app.tools.script_render import scene_lines as _render_scene_lines
 
 # ---- 阈值常量 ----
 MIN_SCENE_SIMILARITY = 0.35  # 阶段二：低于此不视为匹配（整场重写 → removed+added）
@@ -32,10 +33,12 @@ MAX_DIFF_LINE_CHANGES = 2000  # 变更行数超过此值 → truncated=True 限�
 # ---- 内部工具 ----
 
 def _scene_lines(scene: Scene) -> list[str]:
-    """把 Scene 转成与 plain_text 同构的行列表（确定性，不依赖 plain_text 渲染）。"""
-    lines = [f"【第{scene.scene_number}场 {scene.location} {scene.time_of_day}】", scene.action]
-    lines.extend(f"{d.speaker}：{d.text}" for d in scene.dialogue)
-    return lines
+    """把 Scene 转成与 plain_text 同构的行列表（确定性，不依赖 plain_text 渲染）。
+
+    复用 script_render 的行构造（中文短剧剧本格式）；
+    集号在两侧 diff 中一致，统一用 0 以聚焦场景内容差异。
+    """
+    return _render_scene_lines(0, scene.model_dump())
 
 
 # ---- 行级 diff 核心 ----

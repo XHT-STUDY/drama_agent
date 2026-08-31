@@ -287,10 +287,17 @@ class TestContent:
             assert f"- {label}：" in md[first:]
 
     def test_script_parenthetical_dialogue(self) -> None:
-        """带括注对白格式：`- 说话人（提示）：台词`。"""
+        """剧本正文按中文短剧剧本格式渲染：`说话人（提示）：台词`。"""
         md = markdown_from_script(_script(1, "被抛弃"))
-        assert "- 林峰（低声）：我不会放弃" in md
-        assert "- 教练：你被开除了" in md
+        assert "林峰（低声）：我不会放弃" in md
+        assert "教练：你被开除了" in md
+
+    def test_script_scene_heading_and_action(self) -> None:
+        """场景头为 `集-场 时间 内/外 地点`，动作行带 △ 前缀，含人物行。"""
+        md = markdown_from_script(_script(1, "被抛弃"))
+        assert "1-1 日 外 " in md
+        assert "人物：" in md
+        assert "△" in md
 
     def test_revision_operations(self) -> None:
         """修订操作渲染含指令 / 保留 / 预期效果。"""
