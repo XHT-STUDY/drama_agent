@@ -7,13 +7,16 @@
 
 - 确认类短语 → 会话内最新 proposed Action 走 confirm；无 proposed
   Action 但项目有停在确认门的 Run 时直接续跑；
-- 续跑类短语 → 项目停在 stage_gate 的 Run 续跑（可带批集数）。
+- 续跑类短语 → 项目停在 stage_gate 的 Run 续跑（可带批集数）；
+- 重试类短语 → 项目最新 failed 的 Run 从断点重试（I-01 retry）。
 
 安全原则：
 - 整句匹配（首尾锚定 + 长度上限），"好的,改成悬疑吧"这类带附加
   请求的消息绝不短路，回落 Planner 正常处理；
-- 最新 pending 优先（proposed Action 与门上 Run 按时间取新）；
-- 未命中或无可执行目标时返回 None，行为与改动前完全一致。
+- 最新 pending 优先（proposed Action 与门上 Run 按时间取新者）；
+- 未命中或无可执行目标时返回 None，行为与改动前完全一致；
+- 确认/续跑未命中目标但项目最新 Run 是 failed 时，不再回落 Planner
+  产出误导性澄清——用户已明确表达意图，确定性答复失败原因与重试入口。
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.agent_action import AgentAction
 from app.db.models.workflow_run import WorkflowRun
 
-ShortcutKind = Literal["confirm", "continue"]
+ShortcutKind = Literal["confirm", "continue", "retry"]
 Shortcut = tuple[ShortcutKind, int | None]
 
 # 整句长度上限：确认/续跑都是短语，超出即不再尝试短路
@@ -61,6 +64,11 @@ _BARE_RE = re.compile(
     r"[吧呗啊呢。,，!！~]*$",
     re.IGNORECASE,
 )
+_RETRY_RE = re.compile(
+    r"^(?:重试|再试(?:一次|下|一下)?|重新执行|重新跑|retry again?|try again)"
+    r"[吧呗啊呢。,，!！~]*$",
+    re.IGNORECASE,
+)
 
 _NUM_WORD: dict[str, int] = {
     "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
@@ -80,6 +88,8 @@ def detect_shortcut(content: str) -> Shortcut | None:
         return None
     if _CONFIRM_RE.match(text):
         return ("confirm", None)
+    if _RETRY_RE.match(text):
+        return ("retry", None)
     if _NEXT_RE.match(text):
         return ("continue", 1)
     for regex in (_BATCH_NUM_RE, _BATCH_WORD_RE):
@@ -133,6 +143,59 @@ async def find_active_run(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def find_latest_failed_run(
+    db: AsyncSession, project_id: uuid.UUID
+) -> WorkflowRun | None:
+    """项目内最新一个 failed 的 Run（短路重试与失败感知答复共用）。"""
+    result = await db.execute(
+        select(WorkflowRun)
+        .where(WorkflowRun.project_id == project_id, WorkflowRun.status == "failed")
+        .order_by(WorkflowRun.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def find_latest_run(
+    db: AsyncSession, project_id: uuid.UUID
+) -> WorkflowRun | None:
+    """项目内最新一个 Run（不限状态）。
+
+    用于确认/续跑未命中目标时的失败感知：若最新动态是一次失败，
+    必须如实告知并给出重试入口，而不是回落 Planner 凭空澄清。
+    """
+    result = await db.execute(
+        select(WorkflowRun)
+        .where(WorkflowRun.project_id == project_id)
+        .order_by(WorkflowRun.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+# 常见 run 层错误码 → 可读失败原因（与 retry.py 的 LLM_ERROR_RUN_CODES 对应）
+_FAILURE_CODE_TEXT: dict[str, str] = {
+    "LLM_OUTPUT_TRUNCATED": "模型输出超过上限被截断（可调大 LLM_MAX_TOKENS 后重试）",
+    "LLM_TIMEOUT": "模型调用超时",
+    "LLM_RATE_LIMITED": "模型调用频率受限",
+    "LLM_PROVIDER_ERROR": "模型服务异常",
+    "LLM_INVALID_OUTPUT": "模型输出未通过校验",
+    "RUN_BUDGET_EXCEEDED": "超出单次任务的调用/Token 预算",
+    "WORKFLOW_RECOVERY_EXHAUSTED": "多次尝试后仍未完成（自动重试次数已用完）",
+    "WORKFLOW_EXECUTOR_ERROR": "任务执行器异常",
+    "EXTERNAL_TOOL_ERROR": "外部工具调用失败",
+    "RUN_CANCELLED": "任务已取消",
+}
+
+def describe_run_failure(run: WorkflowRun) -> str:
+    """把 failed Run 的错误码/详情转成一句可读原因（对话与结果消息共用）。"""
+    if run.error_code:
+        return _FAILURE_CODE_TEXT.get(run.error_code, f"错误码 {run.error_code}")
+    if run.error_detail:
+        return run.error_detail[:120]
+    return "未知错误"
 
 
 async def find_latest_proposed_action(

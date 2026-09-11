@@ -78,10 +78,13 @@ from app.skills.agent_command_planner import (
     AgentCommandPlannerSkill,
 )
 from app.skills.agent_shortcut import (
+    describe_run_failure,
     detect_shortcut,
     find_active_run,
     find_gated_run,
+    find_latest_failed_run,
     find_latest_proposed_action,
+    find_latest_run,
     render_continue_answer,
 )
 
@@ -724,21 +727,80 @@ class AgentCommandService:
                 if gated is not None:
                     # 确认门上的"确认"即续跑（门消息承诺"等待确认后继续创作"）
                     return await self._continue_gated(db, gated.id, batch=None)
-                # 任务执行中：如实回答，不误导也不白花一次 Planner 调用
-                if await find_active_run(db, project.id) is not None:
-                    return self._active_run_answer()
-                return None
+                return await self._no_target_answer(db, project.id)
+            if kind == "retry":
+                failed = await find_latest_failed_run(db, project.id)
+                if failed is None:
+                    return AgentPlannerOutput(
+                        turn_type="answer", answer="当前没有失败的任务可重试。"
+                    )
+                return await self._retry_failed(db, failed.id)
             gated = await find_gated_run(db, project.id)
             if gated is None:
-                if await find_active_run(db, project.id) is not None:
-                    return self._active_run_answer()
-                return None
+                return await self._no_target_answer(db, project.id)
             return await self._continue_gated(db, gated.id, batch=batch)
         except AppError as exc:
             logger.info("短路执行失败，转为可读答复: kind=%s error=%s", kind, exc)
             return AgentPlannerOutput(
                 turn_type="answer", answer=f"未能执行：{exc.detail}"
             )
+
+    async def _no_target_answer(
+        self, db: AsyncSession, project_id: uuid.UUID
+    ) -> AgentPlannerOutput | None:
+        """确认/续跑未命中任何目标时的确定性答复。
+
+        最新动态是失败 → 如实告知原因并给出重试入口，绝不回落 Planner
+        凭空澄清（用户刚被告知"等待确认"，反问"想做什么"最伤信任）；
+        任务执行中 → 执行中答复；确实没有任务 → 返回 None 回落 Planner。
+        """
+        if await find_active_run(db, project_id) is not None:
+            return self._active_run_answer()
+        latest = await find_latest_run(db, project_id)
+        if latest is not None and latest.status == "failed":
+            if latest.error_code == "WORKFLOW_RECOVERY_EXHAUSTED":
+                tail = (
+                    "该任务的自动重试次数已用完，建议重新发起创作，"
+                    "或直接告诉我你想调整什么。"
+                )
+            else:
+                tail = "输入「重试」可从断点重新执行，或直接告诉我你想调整什么。"
+            return AgentPlannerOutput(
+                turn_type="answer",
+                answer=f"上一次创作任务失败了：{describe_run_failure(latest)}。\n{tail}",
+            )
+        return None
+
+    async def _retry_failed(
+        self, db: AsyncSession, run_id: uuid.UUID
+    ) -> AgentPlannerOutput:
+        """从断点重试失败的 Run（I-01 retry：不重调已完成节点）。"""
+        run = await self._run_service.get_run(db, run_id)
+        if run.status != "failed":
+            return AgentPlannerOutput(
+                turn_type="answer", answer="当前没有失败的任务可重试。"
+            )
+        if run.error_code == "WORKFLOW_RECOVERY_EXHAUSTED":
+            # 恢复预算已耗尽的 Run 再排队会立刻再次耗尽——诚实拒绝，
+            # 指向重新发起而非让用户陷入"重试→秒败"死循环
+            return AgentPlannerOutput(
+                turn_type="answer",
+                answer=(
+                    "该任务的自动重试次数已经用完，再重试也会立刻失败。"
+                    "建议重新发起创作（已有的故事设定和大纲不受影响），"
+                    "或直接告诉我你想调整什么。"
+                ),
+            )
+        run.error_code = None
+        run.error_detail = None
+        await db.flush()
+        await self._run_service.transition_status(db, run_id, "queued")
+        schedule_worker(run.id, run.action, run.config_snapshot or {})
+        logger.info("对话短路重试 failed Run: run=%s", run_id)
+        return AgentPlannerOutput(
+            turn_type="answer",
+            answer="已开始从断点重试，已完成的步骤不会重复执行，完成后会在这里汇报。",
+        )
 
     @staticmethod
     def _active_run_answer() -> AgentPlannerOutput:

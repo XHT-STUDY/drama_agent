@@ -60,7 +60,9 @@ ACTION_TRANSITIONS: dict[str, frozenset[str]] = {
     "queued": frozenset({"running", "failed", "cancelled"}),
     "running": frozenset({"completed", "needs_review", "failed", "cancelled"}),
     "completed": frozenset(),
-    "needs_review": frozenset(),
+    # 分段创作（L-3/L-4）让一个 Action 跨越多个 Run 幕次：门上暂停后再续跑，
+    # 续跑后的终态必须能回写，否则失败/完成对用户不可见
+    "needs_review": frozenset({"completed", "failed", "cancelled"}),
     "failed": frozenset(),
     "cancelled": frozenset(),
     "stale": frozenset(),

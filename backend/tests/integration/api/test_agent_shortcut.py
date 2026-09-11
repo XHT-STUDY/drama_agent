@@ -560,3 +560,141 @@ async def _assistant_texts(db_session: AsyncSession, project_id: str) -> list[st
         .order_by(Message.sequence)
     )).all()
     return [content for content, role, kind in rows if role == "assistant" and kind == "text"]
+
+
+# ========================================================================
+# E：失败感知——续跑/确认无目标时如实告知；「重试」直达 retry（P1）
+# ========================================================================
+
+
+async def _seed_failed_run(
+    db_session: AsyncSession, *, error_code: str = "LLM_OUTPUT_TRUNCATED"
+) -> WorkflowRun:
+    """播种一个 failed Run（2026-09-07 事故形态：续跑后写剧本被截断）。"""
+    project = Project(title="失败项目", target_episode_count=2)
+    db_session.add(project)
+    await db_session.flush()
+    run = WorkflowRun(
+        project_id=project.id, action="create_script", status="failed",
+        error_code=error_code,
+        error_detail="Episode Writer LLM 调用失败: output_truncated",
+    )
+    db_session.add(run)
+    await db_session.commit()
+    return run
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_continue_with_latest_failure_answers_failure(
+    agent_api: AsyncClient,
+    db_session: AsyncSession,
+    stub_skill: _StubPlannerSkill,
+    no_worker: None,
+) -> None:
+    """最新动态是失败时发"继续"→ 如实告知失败原因与重试入口，不回落 Planner。"""
+    run = await _seed_failed_run(db_session)
+    project_id = str(run.project_id)
+
+    body = await _post_turn(agent_api, project_id, "继续")
+
+    assert body["status"] == "answered"
+    assert body["turn_type"] == "answer"
+    assert stub_skill.calls == 0, "用户意图已明确，回落 Planner 只会得到误导性澄清"
+    texts = await _assistant_texts(db_session, project_id)
+    assert "失败" in texts[-1]
+    assert "重试" in texts[-1]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_retry_phrase_requeues_failed_run(
+    agent_api: AsyncClient,
+    db_session: AsyncSession,
+    stub_skill: _StubPlannerSkill,
+    no_worker: None,
+) -> None:
+    """"重试"→ 最新 failed Run 清错误回队列（I-01 retry 语义），不经 Planner。"""
+    run = await _seed_failed_run(db_session)
+    project_id = str(run.project_id)
+
+    body = await _post_turn(agent_api, project_id, "重试")
+
+    assert body["status"] == "answered"
+    assert stub_skill.calls == 0
+    refreshed = await _get_run(db_session, run.id)
+    assert refreshed.status == "queued"
+    assert refreshed.error_code is None
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_retry_phrase_without_failed_run_answers_deterministically(
+    agent_api: AsyncClient,
+    db_session: AsyncSession,
+    stub_skill: _StubPlannerSkill,
+    no_worker: None,
+) -> None:
+    """没有 failed Run 时发"重试"→ 确定性答复，不调 Planner 也不捏造澄清。"""
+    project_id = await _create_project(agent_api, "无失败项目")
+
+    body = await _post_turn(agent_api, project_id, "重试")
+
+    assert body["status"] == "answered"
+    assert stub_skill.calls == 0
+    texts = await _assistant_texts(db_session, project_id)
+    assert "没有失败的任务" in texts[-1]
+
+
+# ========================================================================
+# F：耗尽 Run 的诚实交互——「重试」拒绝死循环（P0' 配套）
+# ========================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_retry_phrase_on_exhausted_run_refuses_honestly(
+    agent_api: AsyncClient,
+    db_session: AsyncSession,
+    stub_skill: _StubPlannerSkill,
+    no_worker: None,
+) -> None:
+    """恢复预算耗尽的 Run：「重试」确定性拒绝并指向重新发起，不回队列。"""
+    run = await _seed_failed_run(
+        db_session, error_code="WORKFLOW_RECOVERY_EXHAUSTED"
+    )
+    project_id = str(run.project_id)
+
+    body = await _post_turn(agent_api, project_id, "重试")
+
+    assert body["status"] == "answered"
+    assert stub_skill.calls == 0
+    refreshed = await _get_run(db_session, run.id)
+    assert refreshed.status == "failed", "耗尽 Run 不得被重新排队（会立刻再耗尽）"
+    assert refreshed.error_code == "WORKFLOW_RECOVERY_EXHAUSTED"
+    texts = await _assistant_texts(db_session, project_id)
+    assert "重试次数" in texts[-1]
+    assert "重新发起" in texts[-1]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_continue_with_exhausted_failure_suggests_restart(
+    agent_api: AsyncClient,
+    db_session: AsyncSession,
+    stub_skill: _StubPlannerSkill,
+    no_worker: None,
+) -> None:
+    """耗尽后发「继续」：失败答复指向重新发起，而不是教用户去重试。"""
+    run = await _seed_failed_run(
+        db_session, error_code="WORKFLOW_RECOVERY_EXHAUSTED"
+    )
+    project_id = str(run.project_id)
+
+    body = await _post_turn(agent_api, project_id, "继续")
+
+    assert body["status"] == "answered"
+    assert stub_skill.calls == 0
+    texts = await _assistant_texts(db_session, project_id)
+    assert "重新发起" in texts[-1]
+    assert "「重试」" not in texts[-1], "耗尽场景不得再推荐必然失败的重试"

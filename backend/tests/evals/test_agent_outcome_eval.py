@@ -151,13 +151,25 @@ REAL_EVAL_ENABLED = os.environ.get("EVAL_LLM_ENABLED") == "1"
 class TestRealModelOutcomeEval:
     def test_semantic_constraint_goal_status_agreement(self) -> None:
         """语义约束用例：模型判断 + Service 合并语义 → goal_status 一致率。"""
+        from pathlib import Path
+
+        from dotenv import dotenv_values
+
         from app.core.config import Settings
         from app.domain.agent_command import AgentOutcomeEvaluatorInput
         from app.llm.openai_compatible import OpenAICompatibleLLM
         from app.prompts.loader import PromptLoader
         from app.skills.agent_outcome_evaluator import AgentOutcomeEvaluatorSkill
 
-        settings = Settings()
+        # pytest 全局设 APP_ENV=test → Settings 跳过 .env 源（防泄漏设计），
+        # 真实评测必须以 init kwargs 显式注入真实配置
+        repo_root = Path(__file__).resolve().parents[3]
+        real = {
+            key.lower(): value
+            for key, value in dotenv_values(repo_root / ".env").items()
+            if value and key.startswith(("LLM_", "RUN_"))
+        }
+        settings = Settings(app_env="local", **real)
         agent = BaseAgent(name="planner", llm=OpenAICompatibleLLM(settings))
         skill = AgentOutcomeEvaluatorSkill()
         loader = PromptLoader()

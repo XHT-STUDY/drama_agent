@@ -19,6 +19,7 @@ class LLMErrorCode(StrEnum):
 
     LLM_TIMEOUT = "llm_timeout"
     INVALID_OUTPUT = "invalid_output"
+    OUTPUT_TRUNCATED = "output_truncated"
     RATE_LIMITED = "rate_limited"
     PROVIDER_ERROR = "provider_error"
 

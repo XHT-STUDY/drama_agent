@@ -41,8 +41,11 @@ class StructuredOutputParser:
         *,
         model: str = "",
         temperature: float = 0.7,
-        max_tokens: int = 4096,
-        timeout_seconds: int = 180,
+        # 0 = 未显式指定，透传给 LLMClient 回退 Settings（llm_max_tokens /
+        # llm_timeout_seconds）——parser/agent 层不得自带硬编码默认值，
+        # 否则会挡住 .env 配置（timeout 曾因此失效）
+        max_tokens: int = 0,
+        timeout_seconds: int = 0,
         **kwargs: Any,
     ) -> LLMCallResult:
         """调用 LLM 并校验输出。

@@ -222,7 +222,9 @@ class AgentCommandPlannerSkill(Skill):
                 [{"role": "user", "content": rendered}],
                 prompt_name="agent_command_planner",
                 temperature=0.1,
-                max_tokens=1600,
+                # 4096：推理型真实模型会把 completion 预算大量花在推理 token
+                # 上，1600 曾被截断（output_truncated → INVALID_OUTPUT 死路）
+                max_tokens=4096,
             )
         except InvalidPlannerOutputError:
             raise

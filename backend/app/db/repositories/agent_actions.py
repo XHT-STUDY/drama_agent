@@ -20,7 +20,9 @@ from app.domain.agent_command import ACTION_TRANSITIONS, AgentActionStatus
 class AgentActionRepository(BaseRepository):
     """AgentAction 的锁定读取与状态迁移接口。"""
 
-    _MUTABLE_FIELDS = frozenset({"run_id", "result", "requires_confirmation"})
+    _MUTABLE_FIELDS = frozenset(
+        {"run_id", "result", "requires_confirmation", "last_synced_phase"}
+    )
 
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, AgentAction)

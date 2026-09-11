@@ -70,6 +70,7 @@ class WorkflowDispatcher:
             (WorkflowRun.status == "running") & expired,
         )
 
+        exhausted_ids: list[uuid.UUID] = []
         async with self._session_factory() as db, db.begin():
             exhausted_result = await db.execute(
                 select(WorkflowRun)
@@ -83,6 +84,7 @@ class WorkflowDispatcher:
                 exhausted.error_detail = f"Workflow 恢复次数已达到上限 {self._max_attempts}"
                 exhausted.lease_owner = None
                 exhausted.lease_expires_at = None
+                exhausted_ids.append(exhausted.id)
                 logger.warning(
                     "Run 恢复次数耗尽，标记失败: run=%s action=%s attempts=%d",
                     exhausted.id,
@@ -104,32 +106,53 @@ class WorkflowDispatcher:
                 .limit(1)
             )
             run = result.scalar_one_or_none()
-            if run is None:
-                return None
-
-            was_queued = run.status == "queued"
-            previous_status = run.status
-            run.status = "running"
-            run.lease_owner = self.owner
-            run.lease_expires_at = now + timedelta(seconds=self._lease_seconds)
-            run.attempt_count += 1
-            logger.info(
-                "Dispatcher 领取 Run: run=%s action=%s %s→running attempt=%d/%d owner=%s",
-                run.id,
-                run.action,
-                previous_status,
-                run.attempt_count,
-                self._max_attempts,
-                self.owner,
-            )
-            if was_queued:
-                await EventPublisher().publish(
-                    db,
-                    run_id=run.id,
-                    event_type="run.running",
+            if run is not None:
+                was_queued = run.status == "queued"
+                previous_status = run.status
+                run.status = "running"
+                run.lease_owner = self.owner
+                run.lease_expires_at = now + timedelta(seconds=self._lease_seconds)
+                run.attempt_count += 1
+                logger.info(
+                    "Dispatcher 领取 Run: run=%s action=%s %s→running attempt=%d/%d owner=%s",
+                    run.id,
+                    run.action,
+                    previous_status,
+                    run.attempt_count,
+                    self._max_attempts,
+                    self.owner,
                 )
-            await db.flush()
-            return run
+                if was_queued:
+                    await EventPublisher().publish(
+                        db,
+                        run_id=run.id,
+                        event_type="run.running",
+                    )
+                await db.flush()
+
+        # 耗尽 Run 的 Action 终态回写：必须在领取事务外独立提交——
+        # _finalize 内部异常会 rollback，若同事务会把耗尽标记一并回滚，
+        # 导致 Run 永远僵死在 running。用户必须能看到"重试已用完"。
+        if exhausted_ids:
+            from app.application.run_service import RunService
+
+            for run_id in exhausted_ids:
+                try:
+                    async with self._session_factory() as fin_db:
+                        await _finalize_agent_action_if_any(
+                            fin_db,
+                            RunService(),
+                            run_id,
+                            agent=None,
+                            prompt_loader=None,
+                        )
+                        await fin_db.commit()
+                except Exception:
+                    logger.exception(
+                        "耗尽 Run 的 Action 回写失败（GET Action 时 reconciliation 补写）: run=%s",
+                        run_id,
+                    )
+        return run
 
     async def renew_lease(self, run_id: uuid.UUID) -> bool:
         """仅当前持有者可续租。"""
@@ -1010,7 +1033,12 @@ async def _execute_workflow(
                     db, run_svc, run_id, agent=agent, prompt_loader=prompt_loader
                 )
             except Exception:
-                pass
+                # 终态写入失败不得静默：至少留下日志供排查；
+                # 状态兜底由 GET Action 的 reconciliation 补写
+                logger.exception(
+                    "Run 终态写入失败（GET Action 时 reconciliation 补写）: run=%s",
+                    run_id,
+                )
         except Exception as e:
             logger.exception("Workflow 执行失败: run=%s", run_id)
             try:
@@ -1028,7 +1056,12 @@ async def _execute_workflow(
                     db, run_svc, run_id, agent=agent, prompt_loader=prompt_loader
                 )
             except Exception:
-                pass
+                # 终态写入失败不得静默：至少留下日志供排查；
+                # 状态兜底由 GET Action 的 reconciliation 补写
+                logger.exception(
+                    "Run 终态写入失败（GET Action 时 reconciliation 补写）: run=%s",
+                    run_id,
+                )
         finally:
             # I-01：清理预算与取消标记，避免 registry 泄漏
             # I-02：发布 run.llm_stats 事件（须在 exit_run 前读取预算），

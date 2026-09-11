@@ -57,8 +57,9 @@ class BaseAgent:
         *,
         model: str = "",
         temperature: float = 0.7,
-        max_tokens: int = 4096,
-        timeout_seconds: int = 180,
+        # 0 = 未显式指定，透传给 parser/client 回退 Settings，不在本层设默认值
+        max_tokens: int = 0,
+        timeout_seconds: int = 0,
         **kwargs: Any,
     ) -> LLMCallResult:
         """调用 LLM 并返回经 Schema 校验的结构化结果。

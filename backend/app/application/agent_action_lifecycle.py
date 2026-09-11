@@ -5,9 +5,10 @@
 - Run 终态 → Action 终态 + AgentOutcome 回写 + assistant result 消息
   + 可空的一次后续 action_plan 消息（proposed 子 Action，深度 1）;
 - reconciliation：Worker 在 Run 终态后崩溃时，GET Action 或后台重放
-  可安全重入 finalize——结果回写以"终态 Action + 已有 result"幂等，
-  消息以 (conversation, kind, agent_action_id) 幂等，
-  子提案以 (parent_action_id, replan_depth) 数据库唯一约束幂等。
+  可安全重入 finalize——回写以"幕次键（last_synced_phase）一致 + 已有
+  result"幂等（分段创作一个 Action 跨多幕：门上暂停与最终结局各有
+  一条结果消息），消息以 (conversation, kind, agent_action_id, run_status)
+  幂等，子提案以 (parent_action_id, replan_depth) 数据库唯一约束幂等。
 
 子 Action 只展示和等待确认（status=proposed，不自动创建 Run）；
 replan_depth=1 的 Action 完成后不再生成子提案（深度上限 1）。
@@ -55,6 +56,18 @@ _RUN_TO_ACTION_STATUS: dict[str, str] = {
 _TERMINAL_ACTION_STATUSES = frozenset(
     {"completed", "failed", "cancelled", "needs_review", "stale", "rejected"}
 )
+
+
+def _run_phase(run: WorkflowRun, final_state: dict[str, Any] | None) -> str:
+    """Run 幕次键：门上暂停带门类型，用于区分同一 Action 的多次暂停。
+
+    分段创作同一 Run 可多次停在门上（outline 门 → scripts 门），
+    仅用 run.status 无法区分，幕次键需包含 stage_gate。
+    """
+    if run.status == "needs_review":
+        gate = (final_state or {}).get("stage_gate")
+        return f"needs_review:{gate or 'unknown'}"
+    return run.status
 
 
 class AgentActionLifecycle:
@@ -107,8 +120,15 @@ class AgentActionLifecycle:
         # Run 尚未终态 → 不回写（Dispatcher 在终态后才调用；防御性守卫）
         if run.status not in _RUN_TO_ACTION_STATUS:
             return action
-        # 已完成过回写（崩溃后重入 / 重复 reconciliation）→ 幂等返回
-        if action.status in _TERMINAL_ACTION_STATUSES and action.result is not None:
+        phase = _run_phase(run, final_state)
+        # 同幕次幂等（崩溃重入 / 重复 reconciliation）：本幕已回写过则直接
+        # 返回。分段创作（L-3/L-4）让一个 Action 跨越多个 Run 幕次——门上
+        # 暂停 → 续跑 → 终态，新幕次必须再次回写，否则续跑后的失败/完成
+        # 对用户不可见（看到的永远是门上那句"等待确认"）。
+        # last_synced_phase 为 NULL 的存量行保持冻结语义（旧行为不变）。
+        if action.result is not None and (
+            action.last_synced_phase is None or action.last_synced_phase == phase
+        ):
             return action
 
         outcome = await AgentOutcomeService().evaluate(
@@ -121,7 +141,8 @@ class AgentActionLifecycle:
         )
 
         # 状态回写：cancelled/failed 允许 queued 直达；completed/needs_review
-        # 需先补 queued→running（Worker 在标记 running 前崩溃的场景）。
+        # 需先补 queued→running（Worker 在标记 running 前崩溃的场景）；
+        # needs_review 的 Action 在续跑后允许迁移到新幕次终态。
         target_status = _RUN_TO_ACTION_STATUS[run.status]
         repo = AgentActionRepository(db)
         try:
@@ -135,8 +156,9 @@ class AgentActionLifecycle:
             action = await repo.transition(
                 action_id,
                 target_status,  # type: ignore[arg-type]
-                expected_statuses={"queued", "running"},
+                expected_statuses={"queued", "running", "needs_review"},
                 result=outcome.model_dump(mode="json"),
+                last_synced_phase=phase,
             )
         except AgentStateTransitionError:
             # 并发回写胜者已写入（result hash 一致性由确定性评估保证）
@@ -213,15 +235,21 @@ class AgentActionLifecycle:
         kind: str,
         agent_action_id: uuid.UUID,
         message_type: str,
+        run_status: str | None = None,
     ) -> Message | None:
-        result = await db.execute(
-            select(Message).where(
-                Message.conversation_id == conversation_id,
-                Message.kind == kind,
-                Message.message_metadata["agent_action_id"].astext == str(agent_action_id),
-                Message.message_metadata["message_type"].astext == message_type,
+        conditions = [
+            Message.conversation_id == conversation_id,
+            Message.kind == kind,
+            Message.message_metadata["agent_action_id"].astext == str(agent_action_id),
+            Message.message_metadata["message_type"].astext == message_type,
+        ]
+        if run_status is not None:
+            # 同一 Action 可有多条结果消息（门上暂停一条、终态一条），
+            # 幂等键必须包含 Run 状态，否则终态消息被门上消息吞掉
+            conditions.append(
+                Message.message_metadata["run_status"].astext == run_status
             )
-        )
+        result = await db.execute(select(Message).where(*conditions))
         return result.scalar_one_or_none()
 
     async def _append_message(
@@ -250,6 +278,7 @@ class AgentActionLifecycle:
         existing = await self._find_message(
             db, action.conversation_id,
             kind="action_result", agent_action_id=action.id, message_type="result",
+            run_status=run.status,
         )
         if existing is not None:
             return existing
@@ -273,26 +302,46 @@ class AgentActionLifecycle:
                 "message_type": "result",
                 "goal_status": outcome.goal_status,
                 "stage_gate": str(gate),
+                "run_status": run.status,
             }
         else:
-            # 可读自然文案；状态详情由计划卡的 OutcomeView 承载，避免重复
-            status_text = {
-                "achieved": "本轮任务已完成。",
-                "partially_achieved": "本轮任务部分完成。",
-                "blocked": "本轮任务未能完成。",
-                "cancelled": "任务已取消。",
-            }.get(outcome.goal_status, "本轮任务已结束。")
-            lines = [status_text]
-            if outcome.score_delta is not None:
-                lines.append(f"评分变化：{outcome.score_delta:+.1f}")
-            for constraint in outcome.remaining_constraints:
-                lines.append(f"未完成：{constraint}")
-            content = "\n".join(lines)
+            if run.status == "failed":
+                # 失败必须如实、可读、给出路——这是用户信任对话状态的基础
+                from app.skills.agent_shortcut import describe_run_failure
+
+                if run.error_code == "WORKFLOW_RECOVERY_EXHAUSTED":
+                    # 耗尽Run再「重试」只会立刻再次耗尽：指重新发起而非重试
+                    content = (
+                        f"创作任务失败了：{describe_run_failure(run)}。\n"
+                        "该任务无法再自动重试；已生成的产物不受影响，"
+                        "建议重新发起创作，或直接告诉我你想调整什么。"
+                    )
+                else:
+                    content = (
+                        f"创作任务失败了：{describe_run_failure(run)}。\n"
+                        "已生成的产物不受影响。输入「重试」可从断点重新执行，"
+                        "或直接告诉我你想调整什么。"
+                    )
+            else:
+                # 可读自然文案；状态详情由计划卡的 OutcomeView 承载，避免重复
+                status_text = {
+                    "achieved": "本轮任务已完成。",
+                    "partially_achieved": "本轮任务部分完成。",
+                    "blocked": "本轮任务未能完成。",
+                    "cancelled": "任务已取消。",
+                }.get(outcome.goal_status, "本轮任务已结束。")
+                lines = [status_text]
+                if outcome.score_delta is not None:
+                    lines.append(f"评分变化：{outcome.score_delta:+.1f}")
+                for constraint in outcome.remaining_constraints:
+                    lines.append(f"未完成：{constraint}")
+                content = "\n".join(lines)
             metadata = {
                 "agent_action_id": str(action.id),
                 "run_id": str(run.id),
                 "message_type": "result",
                 "goal_status": outcome.goal_status,
+                "run_status": run.status,
                 "score_delta": outcome.score_delta,
                 "remaining_constraints": outcome.remaining_constraints,
             }

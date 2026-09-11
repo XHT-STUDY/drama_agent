@@ -147,10 +147,23 @@ REAL_EVAL_ENABLED = __import__("os").environ.get("EVAL_LLM_ENABLED") == "1"
 class TestRealModelCommandEval:
     def test_run_full_dataset_and_report_metrics(self) -> None:
         """全量数据集 → 各 intent P/R/F1 + 澄清召回，结果落盘 results/。"""
+        from pathlib import Path
+
+        from dotenv import dotenv_values
+
         from app.core.config import Settings
         from app.llm.openai_compatible import OpenAICompatibleLLM
 
-        settings = Settings()
+        # pytest 全局设 APP_ENV=test → Settings 跳过 .env 源且强制 fake
+        # provider（防泄漏设计）。真实评测必须以 init kwargs 显式注入真实
+        # 配置（init 优先级最高，不受 conftest 环境影响）。
+        repo_root = Path(__file__).resolve().parents[3]
+        real = {
+            key.lower(): value
+            for key, value in dotenv_values(repo_root / ".env").items()
+            if value and key.startswith(("LLM_", "RUN_"))
+        }
+        settings = Settings(app_env="local", **real)
         agent = BaseAgent(name="planner", llm=OpenAICompatibleLLM(settings))
         skill = AgentCommandPlannerSkill()
         loader = PromptLoader()

@@ -133,7 +133,7 @@ class TestEvaluationService:
         assert artifact.content["script_artifact_id"] == script_id
         # overall 由服务端确定性回填
         assert artifact.content["overall_score"] == 77.3
-        assert artifact.prompt_version == "1.2.0"
+        assert artifact.prompt_version == "1.3.0"
 
     async def test_evaluate_script_idempotent(
         self, async_client: AsyncClient, db_session: AsyncSession,

@@ -150,6 +150,26 @@ export const artifactsApi = {
     ).then((r) => (r as unknown as PaginatedList<Artifact>).items);
   },
 
+  /** 按类型拉取项目下全部 Artifact（跨集、跨版本）。
+   *
+   * 服务端 total 返回的是当页条数，无法据此判断是否还有下一页，
+   * 因此按"当页满页则继续拉"翻页，并设页数上限防御死循环。
+   */
+  async listAllByType(projectId: string, type: string): Promise<Artifact[]> {
+    const pageSize = 100;
+    const all: Artifact[] = [];
+    let offset = 0;
+    for (let page = 0; page < 50; page++) {
+      const res = await request<PaginatedList<Artifact>>(
+        `/projects/${projectId}/artifacts?type=${encodeURIComponent(type)}&offset=${offset}&limit=${pageSize}`,
+      );
+      all.push(...res.items);
+      if (res.items.length < pageSize) break;
+      offset += pageSize;
+    }
+    return all;
+  },
+
   getLinks(artifactId: string): Promise<Array<{ id: string; source_id: string; target_id: string; relation: string }>> {
     return request(`/artifacts/${artifactId}/links`);
   },

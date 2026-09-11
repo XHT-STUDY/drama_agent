@@ -269,3 +269,63 @@ class TestEvaluationAgent:
         )
         assert report.episode_number == 1
         assert report.overall_score > 0
+
+
+class TestEvalTimeoutBudget:
+    """评估独立超时透传（Rubric v2 大 JSON 在慢速模型上 360s 跑不完）。"""
+
+    async def test_eval_call_uses_eval_timeout_setting(
+        self, agent: BaseAgent, prompt_loader: PromptLoader, skill: EvaluationSkill,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """skill → agent → client 全链路携带 llm_eval_timeout_seconds。"""
+        from app.llm.models import LLMCallResult
+
+        captured: dict[str, object] = {}
+        original = agent.generate_structured
+
+        async def _capture(schema: object, messages: list[dict[str, str]], **kw: object) -> LLMCallResult:
+            captured.update(kw)
+            return await original(schema, messages, **kw)  # type: ignore[arg-type]
+
+        agent.generate_structured = _capture  # type: ignore[method-assign]
+        _register_report(agent, _golden_report())
+
+        await skill.execute({
+            "input": _evaluation_input(),
+            "agent": agent,
+            "prompt_loader": prompt_loader,
+            "script_artifact_id": uuid4(),
+        })
+
+        from app.core.config import Settings
+
+        assert captured["timeout_seconds"] == Settings().llm_eval_timeout_seconds
+        assert captured["timeout_seconds"] >= 900  # 必须显著大于全局 180/360
+
+    async def test_eval_timeout_is_env_configurable(
+        self, agent: BaseAgent, prompt_loader: PromptLoader, skill: EvaluationSkill,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """LLM_EVAL_TIMEOUT_SECONDS 环境变量可覆盖（换模型时免改码）。"""
+        monkeypatch.setenv("LLM_EVAL_TIMEOUT_SECONDS", "1234")
+        from app.llm.models import LLMCallResult
+
+        captured: dict[str, object] = {}
+        original = agent.generate_structured
+
+        async def _capture(schema: object, messages: list[dict[str, str]], **kw: object) -> LLMCallResult:
+            captured.update(kw)
+            return await original(schema, messages, **kw)  # type: ignore[arg-type]
+
+        agent.generate_structured = _capture  # type: ignore[method-assign]
+        _register_report(agent, _golden_report())
+
+        await skill.execute({
+            "input": _evaluation_input(),
+            "agent": agent,
+            "prompt_loader": prompt_loader,
+            "script_artifact_id": uuid4(),
+        })
+
+        assert captured["timeout_seconds"] == 1234

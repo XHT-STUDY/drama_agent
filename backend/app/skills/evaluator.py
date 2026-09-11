@@ -127,6 +127,10 @@ class EvaluationSkill(Skill):
         )
 
         # 4. 调用 LLM 生成结构化输出
+        # 评估独立超时：大 JSON 输出（Rubric v2 证据锚定 + 大纲兑现核对）在
+        # 慢速真实模型上 360s 跑不完（实测 3×360s 全超时），用专属预算
+        from app.core.config import Settings
+
         messages: list[dict[str, str]] = [
             {"role": "user", "content": rendered},
         ]
@@ -135,6 +139,7 @@ class EvaluationSkill(Skill):
             messages,
             prompt_name="evaluate_episode",
             temperature=0.3,
+            timeout_seconds=Settings().llm_eval_timeout_seconds,
         )
 
         if result.error_code or result.parsed is None:
@@ -159,7 +164,10 @@ class EvaluationSkill(Skill):
         # 7. 后校验与规范化
         self._normalize_issues(report, ev_input)
 
-        # 8. 绑定 Artifact 与 Rubric 版本
+        # 8. 大纲兑现缺口软门禁（Prompt 要求落 issue，此处兜底）
+        self._ensure_outline_beats_issue(report)
+
+        # 9. 绑定 Artifact 与 Rubric 版本
         report.script_artifact_id = script_artifact_id
         report.rubric_version = rubric.version
 
@@ -295,6 +303,68 @@ class EvaluationSkill(Skill):
             if norm_quote in _normalize_text(text):
                 return scene_number
         return None
+
+    # ---- 大纲兑现缺口软门禁 ----
+
+    @staticmethod
+    def _parse_outline_beats(signals: dict[str, Any]) -> tuple[int, int] | None:
+        """解析 outline_beats_delivered 信号（"n/m" 字符串），非法返回 None。"""
+        raw = signals.get("outline_beats_delivered")
+        if not isinstance(raw, str):
+            return None
+        match = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", raw)
+        if match is None:
+            return None
+        delivered, total = int(match.group(1)), int(match.group(2))
+        if total <= 0 or not (0 <= delivered <= total):
+            return None
+        return delivered, total
+
+    def _ensure_outline_beats_issue(self, report: EvaluationReport) -> None:
+        """大纲声明项未全部兑现而 LLM 漏报时，自动补一条汇总 issue。
+
+        与"低分维度自动补 issue"同模式的软门禁：Prompt 已要求逐项落
+        issue，此处只兜底"信号显示有缺口但没有任何 outline_gap issue"
+        的情况；信号缺失或不可解析时静默跳过（不阻断工作流）。
+        """
+        if not report.dimension_assessments:
+            return
+        assessment = report.dimension_assessments.get(
+            EvaluationDimension.MAIN_CLARITY
+        )
+        if assessment is None:
+            return
+        beats = self._parse_outline_beats(assessment.signals)
+        if beats is None:
+            return
+        delivered, total = beats
+        if delivered >= total:
+            return
+        has_outline_gap = any(
+            i.issue_id.startswith("outline_gap_") or i.issue_id == "outline_gap"
+            for i in report.issues
+        )
+        if has_outline_gap:
+            return
+        severity = "high" if delivered * 2 < total else "medium"
+        report.issues.append(
+            EvaluationIssue(
+                issue_id="outline_gap_auto",
+                dimension=EvaluationDimension.MAIN_CLARITY,
+                severity=severity,  # type: ignore[arg-type]
+                scene_number=None,
+                evidence=f"大纲声明 {total} 项关键内容，本集仅兑现 {delivered} 项",
+                diagnosis=(
+                    f"本集大纲共声明 {total} 项（关键事件/必需角色/伏笔），"
+                    f"仅兑现 {delivered} 项，存在大纲承诺缺口"
+                ),
+                suggestion="对照本集大纲逐项核对，补写未兑现的关键事件与伏笔",
+            )
+        )
+        logger.warning(
+            "第 %d 集大纲兑现缺口自动补 issue: %d/%d（severity=%s）",
+            report.episode_number, delivered, total, severity,
+        )
 
     # ---- 服务端回填 ----
 

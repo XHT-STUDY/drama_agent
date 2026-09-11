@@ -15,11 +15,11 @@
  * - 版本与评估绑定显示
  */
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { artifactsApi, runsApi } from "@/lib/api-client";
+import { artifactsApi, projectsApi, runsApi } from "@/lib/api-client";
 import { Loading } from "@/components/Loading";
 import { ErrorMessage } from "@/components/ErrorMessage";
 import { Empty } from "@/components/Empty";
@@ -64,6 +64,23 @@ export default function ScriptDetailPage() {
 
   const evalContent = evalArtifact?.content as EvaluationReportContent | undefined;
 
+  // ---- 项目信息（集数导航的长度来源：目标总集数） ----
+  const { data: project } = useQuery({
+    queryKey: ["project", projectId],
+    queryFn: () => projectsApi.get(projectId),
+  });
+
+  // ---- 各集剧本/评估状态（填充左侧导航的 ●/✓ 图标） ----
+  const { data: scriptArtifacts } = useQuery({
+    queryKey: ["artifacts", projectId, "script_draft", "all"],
+    queryFn: () => artifactsApi.listAllByType(projectId, "script_draft"),
+  });
+  const { data: evalArtifacts } = useQuery({
+    queryKey: ["artifacts", projectId, "evaluation_report", "all"],
+    queryFn: () => artifactsApi.listAllByType(projectId, "evaluation_report"),
+    retry: false,
+  });
+
   // ---- 评估中状态 ----
   const [isEvaluating, setIsEvaluating] = useState(false);
 
@@ -106,15 +123,43 @@ export default function ScriptDetailPage() {
   }, [projectId, router]);
 
   // ---- 构建 EpisodeNav 数据 ----
-  // 从 script 页面仅知道当前集号；其他集的剧本状态在切换到该集时由 API 查询
-  const navItems: EpisodeNavItem[] = [
-    {
-      episode_number: episodeNum,
-      title: scriptContent?.title,
-      hasScript: !!scriptContent,
-      hasEvaluation: !!evalContent && !evalError,
-    },
-  ];
+  // 长度 = 项目目标总集数（项目加载前先以当前集号兜底，避免闪现错误数量）；
+  // 各集状态从 Artifact 列表派生（列表按创建时间倒序，每集取最新 valid 版本），
+  // 当前集额外以已加载的最新 Artifact 为准
+  const scriptEpisodes = useMemo(() => {
+    const titles = new Map<number, string | undefined>();
+    for (const a of scriptArtifacts ?? []) {
+      if (a.status !== "valid" || titles.has(a.episode_number)) continue;
+      const t = (a.content as { title?: unknown } | null)?.title;
+      titles.set(a.episode_number, typeof t === "string" ? t : undefined);
+    }
+    return titles;
+  }, [scriptArtifacts]);
+
+  const evalEpisodes = useMemo(
+    () =>
+      new Set(
+        (evalArtifacts ?? [])
+          .filter((a) => a.status === "valid")
+          .map((a) => a.episode_number),
+      ),
+    [evalArtifacts],
+  );
+
+  const targetCount = Math.max(project?.target_episode_count ?? 0, episodeNum, 1);
+
+  const navItems: EpisodeNavItem[] = Array.from({ length: targetCount }, (_, i) => {
+    const num = i + 1;
+    const isCurrent = num === episodeNum;
+    return {
+      episode_number: num,
+      title: isCurrent ? scriptContent?.title : scriptEpisodes.get(num),
+      hasScript: isCurrent ? !!scriptContent : scriptEpisodes.has(num),
+      hasEvaluation: isCurrent
+        ? !!evalContent && !evalError
+        : evalEpisodes.has(num),
+    };
+  });
 
   // ---- 加载 ----
   if (scriptLoading && !scriptContent) {
@@ -146,7 +191,7 @@ export default function ScriptDetailPage() {
         <BackLink projectId={projectId} />
         <Empty
           title={`第 ${episodeNum} 集剧本未生成`}
-          description="请先运行创作工作流，确保当前集数在创作范围内（MVP 默认生成前 3 集）。"
+          description={`该集尚未生成剧本（目标共 ${project?.target_episode_count ?? "？"} 集），请先运行创作工作流生成第 ${episodeNum} 集。`}
           actionLabel="返回项目工作台"
           actionHref={`/projects/${projectId}`}
         />
@@ -166,7 +211,7 @@ export default function ScriptDetailPage() {
             <EpisodeNav
               episodes={navItems}
               currentEpisode={episodeNum}
-              targetCount={10}
+              targetCount={targetCount}
               onSelect={handleEpisodeSelect}
             />
           </div>

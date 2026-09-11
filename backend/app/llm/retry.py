@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 # - LLM_TIMEOUT：超时，退避后重试
 # - PROVIDER_ERROR：5xx / 连接失败，退避后重试
 # INVALID_OUTPUT 不在其中：交给 StructuredOutputParser 带反馈重试。
+# OUTPUT_TRUNCATED 也不在其中：max_tokens 截断是确定性失败，重试同样截断，
+# 由调用方调大上限后重跑整个节点。
 RETRYABLE_CODES: frozenset[LLMErrorCode] = frozenset(
     {
         LLMErrorCode.RATE_LIMITED,
@@ -58,6 +60,7 @@ LLM_ERROR_RUN_CODES: dict[str, str] = {
     LLMErrorCode.RATE_LIMITED.value: "LLM_RATE_LIMITED",
     LLMErrorCode.PROVIDER_ERROR.value: "LLM_PROVIDER_ERROR",
     LLMErrorCode.INVALID_OUTPUT.value: "LLM_INVALID_OUTPUT",
+    LLMErrorCode.OUTPUT_TRUNCATED.value: "LLM_OUTPUT_TRUNCATED",
 }
 
 

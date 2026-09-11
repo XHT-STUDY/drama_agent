@@ -80,7 +80,8 @@ def classify_error_code(exc: BaseException) -> str | None:
     优先级：
     1. AppError.code（如 BudgetExceededError → RUN_BUDGET_EXCEEDED）；
     2. LLM 错误码文本（skill 抛出的 "LLM 调用失败: llm_timeout - ..."）→
-       LLM_TIMEOUT / LLM_RATE_LIMITED / LLM_PROVIDER_ERROR / LLM_INVALID_OUTPUT。
+       LLM_TIMEOUT / LLM_RATE_LIMITED / LLM_PROVIDER_ERROR / LLM_INVALID_OUTPUT /
+       LLM_OUTPUT_TRUNCATED。
     """
     from app.core.errors import AppError
 

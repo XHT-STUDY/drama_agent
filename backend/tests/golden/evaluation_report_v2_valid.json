@@ -37,7 +37,9 @@
           "quote": "这句话剧本原文里并没有出现过"
         }
       ],
-      "signals": {}
+      "signals": {
+        "outline_beats_delivered": "4/4"
+      }
     },
     "character_appeal": {
       "level": 4,

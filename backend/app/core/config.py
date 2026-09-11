@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     llm_api_base: str = ""
     llm_api_key: str = ""
     llm_timeout_seconds: int = 180
+    # 评估类调用独立超时：Rubric v2 + 大纲兑现核对要求大 JSON 输出，
+    # 实测 ~12 token/s 的生成速度下 360s 数学上跑不完（3×360s 全超时）
+    llm_eval_timeout_seconds: int = 900
+    # 单次调用的默认输出 token 上限（调用点未显式传 max_tokens 时生效）。
+    # 4096 会静默截断大 JSON（StoryBible 实测：截断 → 校验重试确定性失败），
+    # 8192 已在 outline 生产验证可用；换输出上限更高的模型时改这里。
+    llm_max_tokens: int = 8192
     llm_max_retries: int = 2
 
     # ---- LLM 重试与 per-run 预算（I-01） ----

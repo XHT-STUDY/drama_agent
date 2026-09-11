@@ -101,6 +101,13 @@ class AgentAction(Base, UUIDMixin):
         default=None,
         comment="结构化 AgentOutcome",
     )
+    last_synced_phase: Mapped[str | None] = mapped_column(
+        String(64),
+        default=None,
+        comment="最后一次终态回写的 Run 幕次键（如 needs_review:outline / failed / "
+        "completed）；分段创作的一个 Action 跨多个 Run 幕次，据此区分"
+        "真重入与新幕次。NULL = 旧代码写入的存量行，保持冻结语义",
+    )
     run_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("workflow_runs.id", ondelete="SET NULL"),
         default=None,

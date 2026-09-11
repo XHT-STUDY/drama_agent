@@ -60,12 +60,12 @@ prompts:
 
   # ---- 剧集评估 ----
   - name: evaluate_episode
-    version: "1.2.0"
+    version: "1.3.0"
     input_schema: EvaluationInput
     output_schema: EvaluationReport
     owner: evaluator
     template: evaluate_episode.md
-    changelog: "v1.2: 新增 dimension_assessments（5 档锚点先定位档位再给档内分数、逐维度原文证据引用与可观察信号、相邻档位对比理由），注入分带映射与信号清单"
+    changelog: "v1.3: 新增大纲兑现核对——逐项核对本集大纲声明的关键事件/必需角色/伏笔引入与回收是否兑现，main_clarity 信号记录 outline_beats_delivered，未兑现项必须落 issue"
     user_content_vars: [story_bible, episode_outline, script_draft]
 
   # ---- 修订计划 ----
@@ -131,12 +131,12 @@ prompts:
 
   # ---- 对话命令 Planner ----
   - name: agent_command_planner
-    version: "1.2.0"
+    version: "1.3.0"
     input_schema: AgentPlannerInput
     output_schema: AgentPlannerOutput
     owner: planner
     template: agent_command_planner.md
-    changelog: "v1.2：新增 continue 意图（确认门续跑）与 batch_size。v1.1：典型创作请求直接判 create_script；分阶段默认流程说明。v1.0：初始版本"
+    changelog: "v1.3：输出纪律强化——第一个字符必须是 {，禁止推理过程/解释/代码块围栏（真实模型 completion 被推理 token 挤爆导致截断）。v1.2：新增 continue 意图（确认门续跑）与 batch_size。v1.1：典型创作请求直接判 create_script；分阶段默认流程说明。v1.0：初始版本"
     user_content_vars: [user_request, project_context, active_context]
 
 

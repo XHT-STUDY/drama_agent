@@ -28,8 +28,9 @@ class LLMClient(ABC):
         *,
         model: str = "",
         temperature: float = 0.7,
-        max_tokens: int = 4096,
-        timeout_seconds: int = 180,
+        # 0 = 未显式指定，由实现回退各自 Settings 配置
+        max_tokens: int = 0,
+        timeout_seconds: int = 0,
         **kwargs: Any,
     ) -> LLMCallResult:
         """调用 LLM 并返回经 Pydantic Schema 校验的结构化结果。
@@ -39,8 +40,8 @@ class LLMClient(ABC):
             messages: 对话消息列表 [{"role": "user", "content": "..."}, ...]
             model: 模型名（空则用默认）
             temperature: 生成温度
-            max_tokens: 最大输出 token
-            timeout_seconds: 超时时间
+            max_tokens: 最大输出 token（0 = 回退 Settings.llm_max_tokens）
+            timeout_seconds: 超时时间（0 = 回退 Settings.llm_timeout_seconds）
 
         Returns:
             LLMCallResult（含原始文本和校验后的结构化对象）

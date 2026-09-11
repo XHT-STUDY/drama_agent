@@ -111,7 +111,7 @@ class OpenAICompatibleLLM(LLMClient):
         *,
         model: str = "",
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: int = 0,
         timeout_seconds: int = 0,
         **kwargs: Any,
     ) -> LLMCallResult:
@@ -130,6 +130,11 @@ class OpenAICompatibleLLM(LLMClient):
         # 此前硬编码 180s 覆盖了 .env 配置（用户实测 outline 超时根因）
         effective_timeout = timeout_seconds or self.settings.llm_timeout_seconds
 
+        # max_tokens 解析：未显式传参（0）时回退 Settings.llm_max_tokens——
+        # 此前默认 4096 静默截断大 JSON（story_bible 实测根因），
+        # 链路上的 parser/agent 默认值统一为 0 透传，显式传参仍优先
+        effective_max_tokens = max_tokens or self.settings.llm_max_tokens
+
         # 解析模型名
         resolved_model = model or self._resolve_model(kwargs.get("prompt_name", ""))
         if not resolved_model:
@@ -146,7 +151,7 @@ class OpenAICompatibleLLM(LLMClient):
             "model": resolved_model,
             "messages": augmented_messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_tokens": effective_max_tokens,
             "stream": False,
         }
 
@@ -165,7 +170,7 @@ class OpenAICompatibleLLM(LLMClient):
             resolved_model,
             schema.__name__,
             prompt_name,
-            max_tokens,
+            effective_max_tokens,
             effective_timeout,
         )
         logger.debug(
@@ -335,6 +340,24 @@ class OpenAICompatibleLLM(LLMClient):
             completion_tokens=usage_data.get("completion_tokens", 0),
             total_tokens=usage_data.get("total_tokens", 0),
         )
+
+        # 截断检测：finish_reason=length 说明输出被 max_tokens 硬切，
+        # JSON 必然不完整，且重试同样必然截断——快速失败（带 usage 供预算
+        # 计数），不进入注定失败的 parse 重试（story_bible 实测白烧 3 次调用）
+        if choices[0].get("finish_reason") == "length":
+            result = LLMCallResult(
+                content=content,
+                usage=usage,
+                model=model,
+                duration_ms=duration_ms,
+                error_code=LLMErrorCode.OUTPUT_TRUNCATED,
+                error_detail=(
+                    "输出在 max_tokens 上限处被截断（finish_reason=length），"
+                    "JSON 不完整；可调大 LLM_MAX_TOKENS 或精简输出后重跑"
+                ),
+            )
+            self._call_history.append(result)
+            return result
 
         # 提取 JSON 文本（处理 ```json 代码块包裹的情况）
         json_text = _extract_json(content)

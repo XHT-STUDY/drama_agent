@@ -101,8 +101,8 @@ class FakeLLM(LLMClient):
         *,
         model: str = "",
         temperature: float = 0.7,
-        max_tokens: int = 4096,
-        timeout_seconds: int = 180,
+        max_tokens: int = 0,
+        timeout_seconds: int = 0,
         **kwargs: Any,
     ) -> LLMCallResult:
         """模拟 LLM 调用——返回注册的 fixture 或注入故障。
