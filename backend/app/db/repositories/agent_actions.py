@@ -44,6 +44,30 @@ class AgentActionRepository(BaseRepository):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def sync_result(
+        self,
+        action_id: uuid.UUID,
+        *,
+        result: dict[str, Any],
+        last_synced_phase: str,
+    ) -> AgentAction:
+        """同状态新幕次的结果回写：只更新 result 与幕次键，不做状态迁移。
+
+        场景：续跑后再次 needs_review（下一批门/修订轮用尽）、断点重试后
+        再次 failed——状态不变但结局已变，状态机不定义自迁移，结果与
+        消息仍必须对用户可见。
+        """
+        action = await self.get_for_update(action_id)
+        if action is None:
+            raise AgentStateTransitionError(
+                detail=f"AgentAction 不存在: {action_id}",
+                entity="AGENT_ACTION",
+            )
+        action.result = result
+        action.last_synced_phase = last_synced_phase
+        await self.session.flush()
+        return action
+
     async def transition(
         self,
         action_id: uuid.UUID,

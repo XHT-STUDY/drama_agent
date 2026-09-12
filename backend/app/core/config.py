@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     llm_provider: str = "openai_compatible"
     llm_api_base: str = ""
     llm_api_key: str = ""
+    # 全局默认模型：角色模型（LLM_*_MODEL）未配置时回退到此值；留空则该
+    # 角色调用前快速失败（不再硬编码第三方模型名兜底——非 OpenAI 端点上
+    # 必然 404 Model not exist，P0-1 修订链路事故根因）
+    llm_model: str = ""
     llm_timeout_seconds: int = 180
     # 评估类调用独立超时：Rubric v2 + 大纲兑现核对要求大 JSON 输出，
     # 实测 ~12 token/s 的生成速度下 360s 数学上跑不完（3×360s 全超时）

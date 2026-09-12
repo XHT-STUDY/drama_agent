@@ -32,6 +32,7 @@ def _client(**kw: Any) -> OpenAICompatibleLLM:
         "llm_provider": "openai_compatible",
         "llm_api_key": "test-key",
         "llm_api_base": "http://test",
+        "llm_model": "test-model",
         "llm_max_tokens": 8192,
         "llm_timeout_seconds": 360,
     }

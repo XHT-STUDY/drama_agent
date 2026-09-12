@@ -8,7 +8,7 @@
 
 | 资产 | 规模 | 说明 |
 |---|---:|---|
-| `backend/tests/evals/agent_commands.json` | 55 条 | 对话命令 → 意图/澄清；覆盖五类 intent、中文指代（这里/当前稿）、明确/模糊剧集、active context、冲突约束、越界集数、白名单未开放 |
+| `backend/tests/evals/agent_commands.json` | 60 条 | 对话命令 → 意图/澄清；覆盖五类 intent、中文指代（这里/当前稿）、明确/模糊剧集、active context、冲突约束、越界集数、白名单未开放 |
 | `backend/tests/evals/agent_outcomes.json` | 32 条 | Run 终态 + 证据 → goal_status/后续建议；覆盖 achieved / partially_achieved / blocked、证据充分性、语义约束、非法后续意图、replan 深度上限 |
 | `backend/tests/evals/test_agent_command_eval.py` | harness | CI：数据集契约 + preflight 澄清召回（零模型调用）；真实：全量 P/R/F1 |
 | `backend/tests/evals/test_agent_outcome_eval.py` | harness | CI：确定性规则全量断言；真实：语义约束 goal_status 一致率 |
@@ -32,34 +32,42 @@ CI 层同时覆盖的恢复/并发契约（详见 `docs/TEST_PLAN.md` §8）：T
 `tests/integration/workflow/test_dispatcher_recovery.py`、
 `tests/integration/events/test_agent_action_events.py`。
 
-## 3. 真实模型评测（**未执行**）
+## 3. 真实模型评测
 
-**状态：未执行——当前环境未配置真实模型 API Key（`EVAL_LLM_ENABLED=1` 与
-`LLM_*` 凭证缺失）。以下为执行方式与报告模板；执行后由 harness 自动写入
-`backend/tests/evals/results/*.json`，再人工把结果誊入本节，任何字段不得手填估计值。**
+### 3.1 对话命令（已执行，2026-09-07）——首次真实模型评测
 
-执行命令：
+环境：`EVAL_LLM_ENABLED=1`，provider `openai_compatible`，model `deepseek-v4-pro-0813`，
+Planner Prompt **v1.3.0**（本次评测同时验证了 v1.3 输出纪律 + planner max_tokens 4096
+的有效性：60/60 用例全部产出可解析输出，**0 例 INVALID_OUTPUT / 截断失败**——
+修复前真实使用中 Planner 曾因 completion 被推理 token 挤爆而三连失败）。
 
-```bash
-cd backend
-EVAL_LLM_ENABLED=1 LLM_API_KEY=<key> LLM_BASE_URL=<url> LLM_PLANNER_MODEL=<model> \
-  uv run pytest -m eval_real --no-header -v
-```
+> 执行方式备注：pytest 全局 `APP_ENV=test` 会使 Settings 跳过 `.env` 源，
+> harness 已改为显式 init kwargs 注入真实配置（见 test_agent_command_eval.py）。
 
-产出与指标（harness 落盘 `tests/evals/results/agent_commands_results.json` /
-`agent_outcomes_results.json`）：
+| intent | precision | recall | F1 | tp/fp/fn |
+|---|---|---|---|---|
+| create_script | 93.75% | 100% | 96.8% | 15/1/0 |
+| explain | 100% | 66.7% | 80.0% | 4/0/2 |
+| evaluate | 100% | 87.5% | 93.3% | 7/0/1 |
+| revise_script | 100% | 40.0% | 57.1% | 4/0/6 |
+| revise_outline | 100% | 20.0% | 33.3% | 1/0/4 |
+| **澄清召回率** | **87.5%**（7/8） | | | |
 
-| 指标 | 来源 | 结果 |
-|---|---|---|
-| provider / model / prompt version | harness 记录 | 待执行 |
-| 各 intent precision / recall / F1 | commands 全量 55 条 | 待执行 |
-| 澄清召回率 | clarification 用例 | 待执行 |
-| goal_status 人工一致率 | outcomes 语义约束用例（人工抽检标注基准） | 待执行 |
-| 后续计划可接受率 | 人工评审 recommended_next_action | 待执行 |
-| 平均 tokens / P50 / P95 延迟 / 失败分类 | harness 失败列表 + 调用统计 | 待执行 |
+失败分类：**0 例调用/解析失败**；未命中均为"应出计划却澄清/改判"（recall 损失）。
 
-> 目标准确率、目标准确率/澄清召回率的人工一致率需要人工标注样本；
-> 后续计划可接受率按"建议意图 + 目标集与人工期望一致"判定。
+解读与后续：
+- create_script（主路径）F1 96.8%，可用；precision 全线 ≥93.75%，误判计划罕见。
+- revise_script / revise_outline 召回偏低：harness 的 project_context 为评测桩
+  （"项目上下文略"），修订类请求缺乏可引用上下文时模型倾向保守澄清——
+  属 harness 局限与 prompt 调优空间，不是路由正确性问题（P=100%）。
+  后续调优方向：v1.4 prompt 给"修订类请求在无上下文时的判定规则"。
+- 澄清召回 87.5%（1 例漏澄清），"unknown" 1 例 FP。
+- goal_status 一致率 / 后续计划可接受率（outcome 语义用例）：未执行，
+  需人工标注基准；harness 已就绪（test_agent_outcome_eval.py）。
+
+### 3.2 Outcome 语义评测（未执行）
+
+需真实 Key + 人工标注基准；harness 与配置注入已修复就绪（同 3.1 执行方式）。
 
 ## 4. E2E（Agent Workspace）
 

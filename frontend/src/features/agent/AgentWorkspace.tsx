@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { artifactsApi, conversationsApi, runsApi } from "@/lib/api-client";
 import { useAgentConversation } from "@/hooks/use-agent-conversation";
+import { useAgentActionEvents } from "@/hooks/use-agent-action";
 import { useRunEvents } from "@/hooks/use-run-events";
 import { ActionPlanCard } from "./ActionPlanCard";
 import { AgentComposer } from "./AgentComposer";
@@ -114,6 +115,20 @@ export function AgentWorkspace({ projectId, project }: Props) {
       ? gatedRunId
       : null;
   const runEvents = useRunEvents(activeRunId);
+
+  // 终态自愈：页面刷新可能落在「Run 终态已提交、结果消息尚未提交」的
+  // 竞态窗口内，此时 Run/Action 轮询都已停止且无实时事件——SSE 对新连接
+  // 始终重放历史，靠它补收错过的 agent_action.updated 并失效缓存追平
+  //（无新事件时重放只会触发一次无害的刷新）。
+  const onActionUpdated = useCallback(
+    (payload: { agent_action_id?: string; status?: string; goal_status?: string }) => {
+      if (payload.agent_action_id && payload.agent_action_id !== focusActionId) return;
+      void queryClient.invalidateQueries({ queryKey: ["agent-action"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-messages"] });
+    },
+    [focusActionId, queryClient],
+  );
+  useAgentActionEvents(gatedRunId, onActionUpdated);
 
   // 右栏产物索引随 Run 状态变化自动刷新（门上生成 SB/大纲后立即可见）
   const [contextRefresh, setContextRefresh] = useState(0);

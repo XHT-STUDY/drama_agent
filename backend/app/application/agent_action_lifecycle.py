@@ -59,15 +59,18 @@ _TERMINAL_ACTION_STATUSES = frozenset(
 
 
 def _run_phase(run: WorkflowRun, final_state: dict[str, Any] | None) -> str:
-    """Run 幕次键：门上暂停带门类型，用于区分同一 Action 的多次暂停。
+    """Run 幕次键（v2，带执行次数）：区分同一 Action 的多次回写。
 
-    分段创作同一 Run 可多次停在门上（outline 门 → scripts 门），
-    仅用 run.status 无法区分，幕次键需包含 stage_gate。
+    v2 = 状态[:门类型]:a{attempt_count}。重试/续跑都以新的 attempt 重新
+    执行，且系统已向用户承诺"完成后会在这里汇报"——重试后的再次失败、
+    续跑后的再次暂停（下一批门 / 修订轮用尽）都是新幕次，必须再次回写。
+    不带 v2 前缀的旧格式值视为存量冻结（与 NULL 同语义，见 0010 迁移）。
     """
     if run.status == "needs_review":
         gate = (final_state or {}).get("stage_gate")
-        return f"needs_review:{gate or 'unknown'}"
-    return run.status
+        gate_key = gate if gate in ("outline", "scripts") else "paused"
+        return f"v2:needs_review:{gate_key}:a{run.attempt_count}"
+    return f"v2:{run.status}:a{run.attempt_count}"
 
 
 class AgentActionLifecycle:
@@ -125,9 +128,12 @@ class AgentActionLifecycle:
         # 返回。分段创作（L-3/L-4）让一个 Action 跨越多个 Run 幕次——门上
         # 暂停 → 续跑 → 终态，新幕次必须再次回写，否则续跑后的失败/完成
         # 对用户不可见（看到的永远是门上那句"等待确认"）。
-        # last_synced_phase 为 NULL 的存量行保持冻结语义（旧行为不变）。
+        # last_synced_phase 为 NULL 或旧格式（无 v2 前缀）的存量行保持冻结
+        # 语义（旧行为不变）。
         if action.result is not None and (
-            action.last_synced_phase is None or action.last_synced_phase == phase
+            action.last_synced_phase is None
+            or action.last_synced_phase == phase
+            or not action.last_synced_phase.startswith("v2:")
         ):
             return action
 
@@ -143,23 +149,33 @@ class AgentActionLifecycle:
         # 状态回写：cancelled/failed 允许 queued 直达；completed/needs_review
         # 需先补 queued→running（Worker 在标记 running 前崩溃的场景）；
         # needs_review 的 Action 在续跑后允许迁移到新幕次终态。
+        # 同状态新幕次（needs_review→needs_review：下一批门 / 修订轮用尽，
+        # 或 failed→failed：重试后再次失败）不走状态机自迁移——状态不变，
+        # 但 result 与幕次键必须更新，结局与消息才对用户可见。
         target_status = _RUN_TO_ACTION_STATUS[run.status]
         repo = AgentActionRepository(db)
         try:
-            if (
-                action.status == "queued"
-                and target_status in ("completed", "needs_review")
-            ):
-                action = await repo.transition(
-                    action_id, "running", expected_statuses={"queued"}
+            if action.status == target_status:
+                action = await repo.sync_result(
+                    action_id,
+                    result=outcome.model_dump(mode="json"),
+                    last_synced_phase=phase,
                 )
-            action = await repo.transition(
-                action_id,
-                target_status,  # type: ignore[arg-type]
-                expected_statuses={"queued", "running", "needs_review"},
-                result=outcome.model_dump(mode="json"),
-                last_synced_phase=phase,
-            )
+            else:
+                if (
+                    action.status == "queued"
+                    and target_status in ("completed", "needs_review")
+                ):
+                    action = await repo.transition(
+                        action_id, "running", expected_statuses={"queued"}
+                    )
+                action = await repo.transition(
+                    action_id,
+                    target_status,  # type: ignore[arg-type]
+                    expected_statuses={"queued", "running", "needs_review"},
+                    result=outcome.model_dump(mode="json"),
+                    last_synced_phase=phase,
+                )
         except AgentStateTransitionError:
             # 并发回写胜者已写入（result hash 一致性由确定性评估保证）
             await db.rollback()
@@ -168,9 +184,9 @@ class AgentActionLifecycle:
                 raise
             return action
 
-        # assistant 结果消息（幂等：同 action + kind 只追加一次）
+        # assistant 结果消息（幂等：同 action + 幕次键只追加一次）
         result_message = await self._append_result_message(
-            db, action, run, outcome, final_state=final_state
+            db, action, run, outcome, phase=phase, final_state=final_state
         )
 
         # 一次后续计划：partially/blocked + 深度 0 + 白名单建议 → proposed 子 Action
@@ -235,7 +251,7 @@ class AgentActionLifecycle:
         kind: str,
         agent_action_id: uuid.UUID,
         message_type: str,
-        run_status: str | None = None,
+        phase: str | None = None,
     ) -> Message | None:
         conditions = [
             Message.conversation_id == conversation_id,
@@ -243,11 +259,12 @@ class AgentActionLifecycle:
             Message.message_metadata["agent_action_id"].astext == str(agent_action_id),
             Message.message_metadata["message_type"].astext == message_type,
         ]
-        if run_status is not None:
-            # 同一 Action 可有多条结果消息（门上暂停一条、终态一条），
-            # 幂等键必须包含 Run 状态，否则终态消息被门上消息吞掉
+        if phase is not None:
+            # 同一 Action 可有多条结果消息（门上暂停、每幕终态各一条），
+            # 幂等键必须是幕次键（含 attempt）：只按 run_status 查重会把
+            # 续跑/重试后的新结局误判为已写入（两次 needs_review 互吞）
             conditions.append(
-                Message.message_metadata["run_status"].astext == run_status
+                Message.message_metadata["phase"].astext == phase
             )
         result = await db.execute(select(Message).where(*conditions))
         return result.scalar_one_or_none()
@@ -273,12 +290,13 @@ class AgentActionLifecycle:
         run: WorkflowRun,
         outcome: AgentOutcome,
         *,
+        phase: str,
         final_state: dict[str, Any] | None = None,
     ) -> Any:
         existing = await self._find_message(
             db, action.conversation_id,
             kind="action_result", agent_action_id=action.id, message_type="result",
-            run_status=run.status,
+            phase=phase,
         )
         if existing is not None:
             return existing
@@ -303,6 +321,7 @@ class AgentActionLifecycle:
                 "goal_status": outcome.goal_status,
                 "stage_gate": str(gate),
                 "run_status": run.status,
+                "phase": phase,
             }
         else:
             if run.status == "failed":
@@ -342,6 +361,7 @@ class AgentActionLifecycle:
                 "message_type": "result",
                 "goal_status": outcome.goal_status,
                 "run_status": run.status,
+                "phase": phase,
                 "score_delta": outcome.score_delta,
                 "remaining_constraints": outcome.remaining_constraints,
             }

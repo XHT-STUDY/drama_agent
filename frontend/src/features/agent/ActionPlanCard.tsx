@@ -238,6 +238,13 @@ export function ActionPlanCard({
   });
   const stageGate =
     action?.status === "needs_review" ? runQuery.data?.stage_gate ?? null : null;
+  // 门后续跑中：Action 停在 needs_review 不再变化，但 Run 还在执行——
+  // 徽章必须如实显示"执行中"而非"需人工复核"，否则等待终态的界面
+  // （含 E2E）会在机器仍在工作时提前放行
+  const runResuming =
+    action?.status === "needs_review" &&
+    (runQuery.data?.status === "queued" ||
+      runQuery.data?.status === "running");
 
   // 门上内嵌预览：SB/大纲/剧本就地可看，不必跳页再回来（门上聊天修订
   // 会产生新版本，轻量轮询保持预览新鲜）
@@ -304,10 +311,13 @@ export function ActionPlanCard({
       <header className="mb-2 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">{plan.goal}</h3>
         <span className="shrink-0 rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--text-muted)]">
-          {/* 确认门是设计内的阶段暂停：展示"等待确认"而非"需人工复核" */}
+          {/* 确认门是设计内的阶段暂停：展示"等待确认"；门后 Run 仍在
+              执行时展示"执行中"——两者都不是人可操作的终态 */}
           {stageGate
             ? "等待确认"
-            : STATUS_LABEL[action.status] ?? action.status}
+            : runResuming
+              ? "执行中"
+              : STATUS_LABEL[action.status] ?? action.status}
         </span>
       </header>
 

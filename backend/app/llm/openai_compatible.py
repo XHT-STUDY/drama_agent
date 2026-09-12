@@ -56,23 +56,26 @@ class OpenAICompatibleLLM(LLMClient):
     使用方式：
         settings = Settings()
         llm = OpenAICompatibleLLM(settings)
-        result = await llm.generate_structured(ScriptDraft, messages, model="gpt-4o")
+        result = await llm.generate_structured(ScriptDraft, messages, model="your-model")
     """
 
     def __init__(
         self,
         settings: Settings,
         *,
-        default_model: str = "gpt-4o",
+        default_model: str = "",
     ) -> None:
         """初始化 OpenAI 兼容客户端。
 
         Args:
             settings: DramaAgent Settings 实例
-            default_model: 未指定模型时的默认模型名
+            default_model: 未指定模型时的默认模型名；
+                未传时回退 Settings.llm_model（全局 LLM_MODEL）。
+                解析结果为空时调用前快速失败，不再硬编码第三方模型名——
+                非 OpenAI 端点上必然 404（P0-1 修订链路事故根因）。
         """
         self.settings = settings
-        self.default_model = default_model
+        self.default_model = default_model or settings.llm_model
 
         # httpx 客户端（惰性创建）
         self._client: httpx.AsyncClient | None = None
@@ -135,10 +138,25 @@ class OpenAICompatibleLLM(LLMClient):
         # 链路上的 parser/agent 默认值统一为 0 透传，显式传参仍优先
         effective_max_tokens = max_tokens or self.settings.llm_max_tokens
 
-        # 解析模型名
-        resolved_model = model or self._resolve_model(kwargs.get("prompt_name", ""))
+        # 解析模型名：显式传参 > 角色模型 > default_model（含 LLM_MODEL 兜底）。
+        # 全链为空时快速失败——不硬编码第三方模型名（非 OpenAI 端点必然
+        # 404 Model not exist，且确定性失败重试只是白烧预算）
+        prompt_name = str(kwargs.get("prompt_name") or "-")
+        resolved_model = model or self._resolve_model(prompt_name)
         if not resolved_model:
-            resolved_model = self.default_model
+            logger.error(
+                "LLM 模型未配置: prompt=%s（请设置对应 LLM_*_MODEL 或全局 LLM_MODEL）",
+                prompt_name,
+            )
+            return LLMCallResult(
+                model="",
+                error_code=LLMErrorCode.INVALID_REQUEST,
+                error_detail=(
+                    f"模型未配置（prompt={prompt_name}）："
+                    "请设置对应角色的 LLM_*_MODEL（如 LLM_REVISER_MODEL）"
+                    "或全局 LLM_MODEL"
+                ),
+            )
 
         # 注入 Schema 到 messages
         schema_json = json.dumps(
@@ -164,7 +182,6 @@ class OpenAICompatibleLLM(LLMClient):
         # 最近一次响应的 Retry-After（闭包捕获，重试时读取）
         retry_after: float | None = None
 
-        prompt_name = str(kwargs.get("prompt_name") or "-")
         logger.info(
             "LLM 调用开始: model=%s schema=%s prompt=%s max_tokens=%d timeout=%ds",
             resolved_model,
@@ -403,13 +420,18 @@ class OpenAICompatibleLLM(LLMClient):
             error_code = LLMErrorCode.RATE_LIMITED
             error_msg = "请求频率超限"
         elif status == 401 or status == 403:
-            error_code = LLMErrorCode.PROVIDER_ERROR
-            error_msg = f"认证失败 (HTTP {status})"
+            # 认证失败是确定性配置错误：重试必然同样失败（不进退避重试）
+            error_code = LLMErrorCode.INVALID_REQUEST
+            error_msg = f"认证失败 (HTTP {status})，请检查 LLM_API_KEY / LLM_API_BASE"
         elif status == 404:
-            error_code = LLMErrorCode.PROVIDER_ERROR
-            error_msg = "端点或模型不存在 (HTTP 404)"
+            # 端点/模型不存在是确定性配置错误（P0-1 事故：reviser 角色
+            # 未配置模型时兜底到不存在的模型名，404 被当可重试错误烧了 3 次）
+            error_code = LLMErrorCode.INVALID_REQUEST
+            error_msg = "端点或模型不存在 (HTTP 404)，请检查 LLM_*_MODEL / LLM_API_BASE"
         elif 400 <= status < 500:
-            error_code = LLMErrorCode.INVALID_OUTPUT
+            # 4xx 均为请求侧确定性错误（如 max_tokens 超模型上限），
+            # 不是模型输出问题，重试无意义
+            error_code = LLMErrorCode.INVALID_REQUEST
             error_msg = f"请求参数错误 (HTTP {status})"
         else:
             error_code = LLMErrorCode.PROVIDER_ERROR

@@ -68,6 +68,7 @@ async def _seed_action_with_run(
     )
     run = WorkflowRun(
         project_id=project.id, action="create_script", status="running",
+        attempt_count=1,  # 已被 Dispatcher 领取过一次
         config_snapshot={"options": {"user_input": "足球少年逆袭"}},
     )
     db_session.add_all([action, run])
@@ -117,7 +118,7 @@ async def test_failure_after_gate_pause_is_reported(db_session: AsyncSession) ->
         db_session, action_id=action.id, run=run, final_state=run.state_summary
     )
     assert finalized is not None and finalized.status == "needs_review"
-    assert finalized.last_synced_phase == "needs_review:outline"
+    assert finalized.last_synced_phase == "v2:needs_review:outline:a1"
     messages = await _result_messages(db_session, action)
     assert len(messages) == 1
     assert "等待确认后继续创作剧本" in messages[0].content
@@ -133,7 +134,7 @@ async def test_failure_after_gate_pause_is_reported(db_session: AsyncSession) ->
         db_session, action_id=action.id, run=run, final_state=run.state_summary
     )
     assert finalized is not None and finalized.status == "failed"
-    assert finalized.last_synced_phase == "failed"
+    assert finalized.last_synced_phase == "v2:failed:a1"
     assert finalized.result is not None
     assert finalized.result["goal_status"] == "blocked"
 
@@ -181,7 +182,7 @@ async def test_completion_after_gate_pause_finalizes_action(
         db_session, action_id=action.id, run=run, final_state=run.state_summary
     )
     assert finalized is not None and finalized.status == "completed"
-    assert finalized.last_synced_phase == "completed"
+    assert finalized.last_synced_phase == "v2:completed:a1"
 
     messages = await _result_messages(db_session, action)
     assert len(messages) == 2
@@ -205,4 +206,127 @@ async def test_legacy_row_without_phase_stays_frozen(db_session: AsyncSession) -
     )
     assert finalized is not None
     assert finalized.last_synced_phase is None, "存量行不回填幕次键"
+    assert len(await _result_messages(db_session, action)) == 0
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_needs_review_after_continue_reports_new_phase(
+    db_session: AsyncSession,
+) -> None:
+    """续跑后再次 needs_review（修订轮次用尽/下一批门）必须再次回写。
+
+    E2E 红的直接根因：needs_review→needs_review 不是状态机合法迁移，
+    transition 抛错后被"并发胜者已写入"分支静默吞掉——用户看到的
+    最后一句永远是门上那句"等待确认"（L-4 批次门两连停同样命中）。
+    """
+    action, run = await _seed_action_with_run(db_session)
+    lifecycle = AgentActionLifecycle()
+
+    # 第一幕（attempt=1）：大纲门暂停
+    run.status = "needs_review"
+    run.attempt_count = 1
+    run.state_summary = _gate_summary()
+    await db_session.commit()
+    await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert len(await _result_messages(db_session, action)) == 1
+
+    # 第二幕（attempt=2）：确认续跑 → 全部写完+评估 → 修订轮次用尽，
+    # Run 仍是 needs_review 但门字段已被 continue 剥离
+    run.attempt_count = 2
+    run.state_summary = {
+        "completed_nodes": ["normalize", "story_bible", "outline", "write_episodes"],
+        "needs_revision_decision": True,
+        "script_artifact_ids": {str(ep): str(uuid.uuid4()) for ep in (1, 2)},
+        "evaluation_artifact_ids": {str(ep): str(uuid.uuid4()) for ep in (1, 2)},
+    }
+    await db_session.commit()
+    finalized = await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert finalized is not None and finalized.status == "needs_review"
+    assert finalized.last_synced_phase == "v2:needs_review:paused:a2"
+    assert finalized.result is not None
+
+    messages = await _result_messages(db_session, action)
+    assert len(messages) == 2, "续跑后的结局必须追加，不能停在门上那句"
+    assert "等待确认" not in messages[-1].content
+    assert messages[-1].message_metadata["phase"] == "v2:needs_review:paused:a2"
+
+    # 同幕次重入（重复 reconciliation）不追加第三条
+    again = await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert again is not None and again.status == "needs_review"
+    assert len(await _result_messages(db_session, action)) == 2
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_retry_failure_after_failure_reports_again(
+    db_session: AsyncSession,
+) -> None:
+    """失败 → 用户「重试」→ 再次失败：第二次结局必须再次汇报。
+
+    真实环境实测：失败消息承诺"输入「重试」…完成后会在这里汇报"，
+    重试后再次失败却被同状态幂等守卫吞掉——会话沉默。幕次键必须带
+    attempt 维度，重试是新的幕次。
+    """
+    action, run = await _seed_action_with_run(db_session)
+    lifecycle = AgentActionLifecycle()
+
+    # 第一幕（attempt=1）：失败
+    run.status = "failed"
+    run.attempt_count = 1
+    run.error_code = "LLM_INVALID_OUTPUT"
+    run.error_detail = "Episode Writer LLM 调用失败: invalid_output"
+    run.state_summary = {"completed_nodes": ["normalize", "story_bible", "outline"]}
+    await db_session.commit()
+    finalized = await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert finalized is not None and finalized.status == "failed"
+    assert finalized.last_synced_phase == "v2:failed:a1"
+    assert len(await _result_messages(db_session, action)) == 1
+
+    # 第二幕（attempt=2）：断点重试后再次失败
+    run.attempt_count = 2
+    await db_session.commit()
+    finalized = await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert finalized is not None and finalized.status == "failed"
+    assert finalized.last_synced_phase == "v2:failed:a2"
+    messages = await _result_messages(db_session, action)
+    assert len(messages) == 2, "重试后的再次失败必须再次汇报（承诺过）"
+    assert "失败" in messages[-1].content
+    assert messages[-1].message_metadata["phase"] == "v2:failed:a2"
+
+    # 同幕次重入不追加第三条
+    await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert len(await _result_messages(db_session, action)) == 2
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_legacy_phase_format_stays_frozen(db_session: AsyncSession) -> None:
+    """旧格式幕次键（无 v2 前缀，0010 迁移期写入的行）冻结，不重复回写。"""
+    action, run = await _seed_action_with_run(db_session, status="needs_review")
+    action.result = {"goal_status": "partially_achieved", "remaining_constraints": []}
+    action.last_synced_phase = "needs_review:outline"  # 旧格式
+    await db_session.commit()
+
+    run.status = "needs_review"
+    run.attempt_count = 2
+    run.state_summary = {"completed_nodes": ["write_episodes"]}
+    await db_session.commit()
+    finalized = await AgentActionLifecycle().finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert finalized is not None
+    assert finalized.last_synced_phase == "needs_review:outline", "旧格式行保持冻结"
     assert len(await _result_messages(db_session, action)) == 0

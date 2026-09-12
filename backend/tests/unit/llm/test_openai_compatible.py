@@ -186,10 +186,24 @@ class TestResolveModel:
         assert model == "test-writer-model"
 
     def test_falls_back_to_default_when_writer_model_empty(self, llm: OpenAICompatibleLLM) -> None:
-        """writer 模型未配置时回退到 default_model。"""
+        """writer 模型未配置时回退到 default_model（构造时折叠的全局 LLM_MODEL）。"""
+        llm.default_model = "fallback-model"
         llm.settings.llm_writer_model = ""
         model = llm._resolve_model("unknown_prompt")
-        assert model == llm.default_model
+        assert model == "fallback-model"
+
+    def test_resolves_empty_when_nothing_configured(self) -> None:
+        """角色与全局均未配置 → 空串（由 generate_structured 快速失败）。"""
+        empty = OpenAICompatibleLLM(
+            Settings(
+                app_env="local",
+                llm_provider="openai_compatible",
+                llm_api_base="https://test-api.example.com",
+                llm_api_key="sk-test-key",
+            )
+        )
+        assert empty.default_model == ""
+        assert empty._resolve_model("write_episode") == ""
 
 
 # ========================================================================
@@ -310,13 +324,13 @@ class TestHandleErrorResponse:
         assert result.error_code == LLMErrorCode.RATE_LIMITED
 
     def test_unauthorized(self, llm: OpenAICompatibleLLM, mock_response: MagicMock) -> None:
-        """401 → PROVIDER_ERROR。"""
+        """401 → INVALID_REQUEST（确定性配置错误，不可重试）。"""
         mock_response.status_code = 401
         mock_response.json.return_value = {"error": "unauthorized"}
 
         result = llm._handle_error_response(mock_response, 500, "test")
 
-        assert result.error_code == LLMErrorCode.PROVIDER_ERROR
+        assert result.error_code == LLMErrorCode.INVALID_REQUEST
         assert "认证失败" in result.error_detail
 
     def test_server_error(self, llm: OpenAICompatibleLLM, mock_response: MagicMock) -> None:

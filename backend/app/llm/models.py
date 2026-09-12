@@ -22,6 +22,9 @@ class LLMErrorCode(StrEnum):
     OUTPUT_TRUNCATED = "output_truncated"
     RATE_LIMITED = "rate_limited"
     PROVIDER_ERROR = "provider_error"
+    # 确定性请求错误（401/403/404/400 等 4xx 或模型未配置）：
+    # 重试必然同样失败，不进入退避重试（P0-1 修订链路事故根因之一）
+    INVALID_REQUEST = "invalid_request"
 
 
 class LLMUsage(BaseModel):

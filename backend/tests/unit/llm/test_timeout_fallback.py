@@ -24,6 +24,7 @@ def _client(timeout: int) -> OpenAICompatibleLLM:
     return OpenAICompatibleLLM(
         Settings(app_env="local", llm_provider="openai_compatible",
                  llm_api_key="test-key", llm_api_base="http://test",
+                 llm_model="test-model",
                  llm_timeout_seconds=timeout)
     )
 

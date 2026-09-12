@@ -182,6 +182,10 @@ _FAILURE_CODE_TEXT: dict[str, str] = {
     "LLM_RATE_LIMITED": "模型调用频率受限",
     "LLM_PROVIDER_ERROR": "模型服务异常",
     "LLM_INVALID_OUTPUT": "模型输出未通过校验",
+    "LLM_INVALID_REQUEST": (
+        "模型请求被拒绝（模型名或鉴权配置有误，请检查 LLM_*_MODEL / LLM_API_KEY；"
+        "重试无效，需先修正配置）"
+    ),
     "RUN_BUDGET_EXCEEDED": "超出单次任务的调用/Token 预算",
     "WORKFLOW_RECOVERY_EXHAUSTED": "多次尝试后仍未完成（自动重试次数已用完）",
     "WORKFLOW_EXECUTOR_ERROR": "任务执行器异常",

@@ -55,7 +55,7 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 | 504 | `EXTERNAL_TOOL_TIMEOUT` | 外部 MCP 工具调用超时 | MCP |
 | 500 | `INTERNAL_ERROR` | 未分类错误 | 兜底 |
 
-**Run 失败时的 `error_code`**（落库到 WorkflowRun，`GET /runs/{id}` 返回）：`RUN_BUDGET_EXCEEDED` / `RUN_CANCELLED` / `LLM_TIMEOUT` / `LLM_RATE_LIMITED` / `LLM_PROVIDER_ERROR` / `LLM_INVALID_OUTPUT` / `EXTERNAL_TOOL_ERROR` 等，见 [backend/app/llm/retry.py](backend/app/llm/retry.py) 与 [backend/app/workflows/checkpoint.py](backend/app/workflows/checkpoint.py)。
+**Run 失败时的 `error_code`**（落库到 WorkflowRun，`GET /runs/{id}` 返回）：`RUN_BUDGET_EXCEEDED` / `RUN_CANCELLED` / `LLM_TIMEOUT` / `LLM_RATE_LIMITED` / `LLM_PROVIDER_ERROR` / `LLM_INVALID_OUTPUT` / `LLM_OUTPUT_TRUNCATED`（输出超过 max_tokens 上限被截断，调大 `LLM_MAX_TOKENS` 后重跑）/ `LLM_INVALID_REQUEST`（401/403/404/400 等请求侧确定性错误或模型未配置：重试无效，需检查 `LLM_*_MODEL` / `LLM_API_KEY` / `LLM_API_BASE` 后重新发起）/ `EXTERNAL_TOOL_ERROR` 等，见 [backend/app/llm/retry.py](backend/app/llm/retry.py) 与 [backend/app/workflows/checkpoint.py](backend/app/workflows/checkpoint.py)。
 
 ## 端点
 

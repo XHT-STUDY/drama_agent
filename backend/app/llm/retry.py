@@ -3,7 +3,8 @@
 将"可重试错误 → 退避重试"从具体客户端中抽出为统一机制：
 - RetryPolicy：退避策略（base / factor / max_retries / max_delay）
 - is_retryable：按 error_code 判定（429/timeout/5xx/连接失败 → 可重试；
-  invalid output → 不可重试，由 StructuredOutputParser 负责带反馈重试）
+  invalid output / invalid_request → 不可重试，前者由 StructuredOutputParser
+  负责带反馈重试，后者是请求侧确定性错误，重试必然同样失败）
 - parse_retry_after：解析 429/503 的 Retry-After 头（秒或 HTTP-date）
 - execute_with_retry：驱动重试循环；每次尝试由 attempt_fn 执行
 
@@ -33,6 +34,9 @@ logger = logging.getLogger(__name__)
 # INVALID_OUTPUT 不在其中：交给 StructuredOutputParser 带反馈重试。
 # OUTPUT_TRUNCATED 也不在其中：max_tokens 截断是确定性失败，重试同样截断，
 # 由调用方调大上限后重跑整个节点。
+# INVALID_REQUEST 也不在其中：401/403/404/400 等 4xx 与模型未配置都是
+# 请求侧确定性错误（P0-1 实测：404 model_not_exist 重试 3 次白烧预算），
+# 重试必然同样失败，应直接修复配置。
 RETRYABLE_CODES: frozenset[LLMErrorCode] = frozenset(
     {
         LLMErrorCode.RATE_LIMITED,
@@ -61,6 +65,7 @@ LLM_ERROR_RUN_CODES: dict[str, str] = {
     LLMErrorCode.PROVIDER_ERROR.value: "LLM_PROVIDER_ERROR",
     LLMErrorCode.INVALID_OUTPUT.value: "LLM_INVALID_OUTPUT",
     LLMErrorCode.OUTPUT_TRUNCATED.value: "LLM_OUTPUT_TRUNCATED",
+    LLMErrorCode.INVALID_REQUEST.value: "LLM_INVALID_REQUEST",
 }
 
 

@@ -530,3 +530,48 @@ if state.get("status") == "failed":
 1. 在 SQLAlchemy async 里，rollback 的副作用不只是撤销写入，还有"过期全部对象"；错误分支里拼消息用的字段也要在 rollback 前取好。
 2. MissingGreenlet 的堆栈经常指向"最后一条 SQL"而不是真正的触发点，先搜同函数内 rollback 之后的属性访问，再怀疑 IO 逃逸。
 3. 另一个变体：自引用统计（"连续 N 轮未解决"）要把当前实体从查询里显式排除——当前行永远是最新的 planning，不排除会让计数恒为 0，且单测直接调函数时测不出来（外部会话里没有当前行），只有走完整请求路径才暴露。
+
+## 2026-09-07 — story_bible 生成必失败：max_tokens=4096 静默截断大 JSON（真实模型实测）
+
+**症状**：真实模型（deepseek-v4-pro-0813）生成 StoryBible 时，`LLM 调用结束 … tokens=p2498+c4096 结果=ok schema校验=未通过`，随后 `Schema 校验重试耗尽: 尝试 3 次`，错误为 `Invalid JSON: EOF while parsing a string`；每次重试都精确消耗 4096 补全 token，3 次 ≈5 分钟白烧后 Run 失败。
+
+**产生原因**：`generate_structured` 的 `max_tokens` 硬编码默认 4096，story_bible 调用点未显式传参 → 大 JSON 输出被 provider 在 4096 处硬切（`finish_reason=length`）；客户端不读 `finish_reason`，截断的 JSON 到 Pydantic 层才报"格式错误"；parse 重试用同样的 4096 上限，截断是确定性的，重试必然同样失败。与 2026-08-23 outline `max_tokens 4096→8192` 修复是同一形态 bug——当时只修了 outline 一个调用点，没做全仓 sweep。
+
+**解决方案**：三层收口——① Settings 新增 `LLM_MAX_TOKENS`（默认 8192），客户端未显式传参时回退配置（调用链 base/parser/protocol/fake 默认值统一改 0 透传，中间层不再自带默认值，timeout 的同类遮挡一并修掉）；② 客户端检测 `finish_reason=length` 直接返回 `output_truncated`（run 层 `LLM_OUTPUT_TRUNCATED`），不进注定失败的 parse 重试；③ 显式小护栏（planner 1600 / outcome 1200）保留不动。
+
+修改文件：[openai_compatible.py](backend/app/llm/openai_compatible.py)、[structured_output.py](backend/app/llm/structured_output.py)、[agents/base.py](backend/app/agents/base.py)、[config.py](backend/app/core/config.py)、[retry.py](backend/app/llm/retry.py)
+
+**学习收获**：
+1. 中间层签名自带硬编码默认值 = 给配置埋雷：50edcd9 修 timeout 只改了客户端回退，base/parser 的 180 默认值仍把 `.env` 挡着；max_tokens 这次在同样位置再炸。约定"0/空 = 未指定，由最底层回退 Settings"。
+2. 修同型 bug 当下必须全仓 sweep：`grep -rn "generate_structured("` 逐点核对参数来源，否则每个调用点都是下一次事故的候补。
+3. provider 响应里的 `finish_reason` 是传输层明说的失败信号，必须在传输层消化；漏到解析层就变成"模型输出格式错误"，重试逻辑会做错误决策（对确定性截断做语义重试）。
+
+## 2026-09-07 — 分段创作续跑失败对用户完全不可见（门上消息吞掉终态）
+
+**症状**：真实使用中，创作停在大纲门（"等待确认后继续创作剧本"）→ 用户确认续跑 → 第 1 集写作失败（输出截断）。用户在对话里看不到任何失败信息，输入「继续」被 Planner 反问"想做什么"，输入「开始写剧本」又遇 Planner 截断报"未能理解本次请求"——连续三次交互全部碰壁。
+
+**产生原因**：J-09 的模型是"一个 Action 只有一次终态、一条结果消息"，L-3/L-4 的分段续跑打破了它——`finalize` 的幂等守卫把 `needs_review` 当终态、`result` 非空即返回，门上暂停写完消息后，同一 Action 后续的 failed/completed 永远不再回写；结果消息幂等键只看 action_id，也容不下第二条。同时短路层「继续」无目标时静默回落 Planner，Planner 对失败一无所知，产出"当前无法直接执行继续"的凭空澄清。三个层面各持一份互相矛盾的世界状态。
+
+**解决方案**：① Action 增加 `last_synced_phase` 幕次键（0010 迁移），`finalize` 按"同幕次"幂等——门上暂停与续跑后的终态各回写一次，`needs_review` 状态机放行到 completed/failed/cancelled；② 结果消息幂等键加 `run_status` 维度，失败追加独立消息（可读原因 + 「重试」入口）；③ 短路层新增失败感知（最新 Run 为 failed 时确定性答复）与「重试」短语直达 retry。
+
+修改文件：[agent_action_lifecycle.py](backend/app/application/agent_action_lifecycle.py)、[agent_command.py](backend/app/domain/agent_command.py)、[agent_shortcut.py](backend/app/skills/agent_shortcut.py)、[agent_command_service.py](backend/app/application/agent_command_service.py)
+
+**学习收获**：
+1. **幂等键的粒度必须与生命周期的真实结构对齐**："一个 Action 一条结果消息"在单段创作里成立，分段创作让一个 Action 跨多个 Run 幕次后，粗粒度幂等就从防重复变成了吞事实——凡是"只允许发生一次"的守卫，都要问一句"生命周期后来变长了吗"。
+2. **对话系统里每个承诺都要有可执行的后续**：门上消息承诺"等待确认"，但失败后既没有门也没有确认入口，承诺就成了谎言；确定性答复（失败原因 + 重试短语）比回落 LLM 澄清更可信。
+3. **评测 harness 与全局测试环境的配置隔离要在建 harness 当天验证**：`APP_ENV=test` 让 Settings 跳过 .env，eval_real 从未真正读过真实配置——第一次真跑才发现所有调用都打到空 base 上。
+
+## 2026-09-08 — 评估节点 3×360s 全超时，重试结局丢失 22 小时无人知晓
+
+**症状**：分段创作确认续跑后写剧本成功，评估节点连续打满 3 次 360s 读超时（两次尝试均为 ~17.5 分钟 = 3×360s-退避）；用户点「重试」后界面停在"已开始从断点重试"再无下文——重试再次超时，但终态没写进库，Run 以 running 僵死 22 小时；次日重启后端被标记 `WORKFLOW_RECOVERY_EXHAUSTED`，且该路径不回写 AgentAction，用户永远看不到结局。
+
+**产生原因**：三个独立缺陷叠加。① 评估 Prompt v1.3（Rubric v2 证据锚定 + 大纲兑现核对）要求 9 维明细 + 逐字证据 + 大纲逐项核对，报告轻松 6-10k token，实测模型有效速度 ~12 token/s，360s 只够 ~4k token——超时是结构性必然，不是偶发；② `_execute_workflow` 失败分支的 `except Exception: pass` 静默吞掉终态写入异常（或进程恰在此时停止），Run 僵死 running；③ 耗尽路径只标记 failed + 发事件，不调用 Action finalize——"失败不可见"家族的漏网分支。另：attempt_count 把大纲门续跑（正常分段流程）也计入恢复预算，创建(+1)+门续跑(+1)+用户重试(+1) 即达上限 3，用户实际只有一次真正的重试机会。
+
+**解决方案**：① 新增 `LLM_EVAL_TIMEOUT_SECONDS`（默认 900，.env 可覆盖），评估 skill 显式传参；② 耗尽路径在领取事务外独立提交 Action 回写 + 结果消息（消息指向"重新发起"）；③ 两处 `except: pass` 改为 logger.exception（reconciliation 在 GET Action 时补写已存在）；④ 对话短路对耗尽 Run 诚实拒绝重试。attempt 计数语义（门续跑不应耗预算）另行立项。
+
+修改文件：[config.py](backend/app/core/config.py)、[evaluator.py](backend/app/skills/evaluator.py)、[workflow_dispatcher.py](backend/app/application/workflow_dispatcher.py)、[agent_action_lifecycle.py](backend/app/application/agent_action_lifecycle.py)、[agent_command_service.py](backend/app/application/agent_command_service.py)、[agent_shortcut.py](backend/app/skills/agent_shortcut.py)
+
+**学习收获**：
+1. **输出预算和超时预算要一起看**：max_tokens 抬到 16384 解决了截断，却把同一个调用推向了超时——两道闸门只调一道，水从另一道溢出；大输出调用的参数要成对评估（tokens ÷ 实测速度 > 超时 = 必然失败）。
+2. **"except: pass" 是状态机的黑洞**：吞掉的不只是异常，还有 Run 的终态——用户的世界从此停在旧的一帧；宁可记日志 + 依赖 reconciliation，也不要静默。
+3. **每一条用户入口路径都要有对应的终态出口**：重试入口存在，但耗尽路径没有出口——入口/出口成对审计（发起/确认/续跑/重试/取消）才能保证对话状态诚实。

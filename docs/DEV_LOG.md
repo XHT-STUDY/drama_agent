@@ -4277,3 +4277,103 @@ Phase L（分阶段创作与集数自由）全部完成。用户完整旅程：�
 1. **给 LLM 输出加"机器可验证的门禁"比加"更详细的指令"有效**：Prompt 里要求"逐字引用"只是软约束，归一化子串匹配 + verified 标记才是硬保证；指令与门禁缺一不可。
 2. **快照回归测试是 Prompt 版本纪律的保险丝**：test_hash_snapshot_regression 在模板变化时立即失败，按其自述规则同步 version + 快照 key 即可——这次 evaluate_episode 1.1.0 → 1.2.0 一次走通。
 3. **前端常量与后端权威值的漂移会被静默容忍**：DEFAULT_EVALUATION_WEIGHTS 前后端不一致长期无人发现（仅用于排序/展示，不参与计算）。凡是"镜像常量"都应在注释里标注权威源，或尽早改为接口下发。
+
+## 对话丝滑化 H：失败可见性与对话状态诚实（2026-09-07，P0-P3，用户实测"三次交互三次碰壁"事故）
+
+### 做了什么
+
+真实事故链（DB 事件还原）：停大纲门（"等待确认后继续创作剧本"）→ 用户确认续跑 → 第 1 集写作被 8192 上限截断失败 → **对话里没有任何失败消息** → 用户发「继续」被短路层静默回落 Planner 反问澄清 → 发「开始写剧本」撞上 Planner 自身截断（1600）报"未能理解本次请求"。P0-P3 四段修复：
+
+1. **P0 失败必须被看见**：`finalize` 幂等改按幕次键 `last_synced_phase`（0010 迁移，`needs_review:outline` / `failed` / `completed`）——门上暂停与续跑后的终态各回写一次；`ACTION_TRANSITIONS` 放行 `needs_review→{completed,failed,cancelled}`；结果消息幂等键加 `run_status` 维度，失败追加独立消息（可读原因 + 「重试」入口），门上消息保留；存量行（phase=NULL）冻结语义，迁移零数据变更。
+2. **P1 短路失败感知**：`agent_shortcut` 新增 `retry` 类短语（重试/再试一次/retry）直达 failed Run 断点重试；「继续/确认」无目标时若最新 Run 为 failed，确定性答复失败原因与重试入口，绝不回落 Planner 凭空澄清；`describe_run_failure` 把错误码转可读文本（对话与结果消息共用）。
+3. **P2 Planner 真实模型契约**：max_tokens 1600→4096（推理型模型把 completion 烧在推理 token 上）；Prompt v1.3 输出纪律（第一个字符必须是 `{`，禁推理/解释/围栏）；**修复 eval_real harness 的配置隔离缺陷**（`APP_ENV=test` 使 Settings 跳过 .env——harness 自诞生从未读过真实配置），并完成**首次真实模型评测**（60 用例，0 解析失败，create_script F1 96.8%，澄清召回 87.5%，详见 AGENT_EVAL_REPORT §3.1）。
+4. **P3 写作预算**：`.env` `LLM_MAX_TOKENS=16384`（8192 不够写单集剧本），探针验证 provider 接受。
+
+修改文件：lifecycle/shortcut/command_service/domain/agent_action 模型与 repo/迁移 0010/planner skill+prompt+manifest/eval harness×2/.env；新增测试 `test_agent_action_phases.py`（3 例）+ shortcut 失败感知组（3 例）。
+
+### 为什么这么做
+
+- **幂等键粒度跟随生命周期结构**：J-09"一个 Action 一次终态"在单段创作成立，L-3/L-4 续跑打破了它——粗粒度幂等从防重复退化为吞事实。幕次键是最小改动：不引入新实体，让旧守卫学会区分"重入"与"新幕次"。
+- **确定性层负责说真话，Planner 负责理解语言**：用户明确表达意图（继续/重试）时，宁可确定性答复"失败了 + 怎么办"，也不回落一个对失败无知的 LLM——结果消息/短路/Planner 三个层面必须共享同一份世界状态，否则对话就是在演戏。
+- **评测欠账当天还**：eval_real 被标注"需 Key 未执行"已 15 天，真实可用性的第一手数据（而不是 FakeLLM 的 100%）今天才有——第一次跑就同时验证了 P2 修复并暴露 recall 短板，这笔投入立刻回本。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest（后端全量） | 全绿（含新增 6 例；既有 exit_gate 清库 flake 与本改动无关，见同日 TROUBLESHOOTING） |
+| ruff / mypy | 通过 |
+| EVAL_LLM_ENABLED=1 pytest -m eval_real（commands 60 条） | 0 调用/解析失败；create_script F1 96.8%、澄清召回 87.5%；revise_script/outline 召回 40%/20%（桩上下文局限，P=100%） |
+| provider 探针（max_tokens=16384） | 接受，正常返回 |
+
+### 学到了什么
+
+1. **"等待确认"是一种承诺，说出口就要养**：门上消息承诺的后续路径（确认/继续/修改）在 Run 死掉后全部消失，系统却没有收回承诺的机制——消息层与状态层的解耦必须以"共享事实源"为前提，否则每层都在各自的剧本里演出。
+2. **真实模型评测是唯一能暴露"推理 token 挤爆 completion 预算"这类问题的手段**：FakeLLM 永远输出合法小 JSON，1600 上限在 CI 里永远够用；今天 60 条真实用例一举验证输出纪律 + 预算两项修复，并给出 revise 召回的下一步调优方向。
+3. **迁移兼容语义要显式设计**：last_synced_phase=NULL 冻结存量行，避免新守卫对旧行触发重复回写——加列容易，"旧行在新逻辑下如何表现"才是迁移设计的主语。
+
+## LLM max_tokens 配置化 + 截断快速失败（2026-09-07，用户实测 story_bible 截断事故）
+
+### 做了什么
+
+真实模型跑 StoryBible 时输出在 4096 处被静默截断（`tokens=c4096`），JSON 不完整 → Pydantic "EOF while parsing" → parse 重试确定性失败，白烧 3 次调用 ≈5 分钟后 Run 失败。根因是 outline 当时修过的同一形态 bug（默认 4096 有截断风险），但当时只修了 outline 一个调用点。本次三处修复：
+
+1. **max_tokens 配置化**：Settings 新增 `llm_max_tokens`（默认 8192，outline 同值已生产验证）；`OpenAICompatibleLLM.generate_structured` 默认参数改 0、未传参时回退 Settings（与 llm_timeout_seconds 同模式），显式传参仍优先——planner 1600 / outcome 1200 等护栏不受影响。调用链上 `agents/base.py`、`structured_output.py`、`protocol.py`、`fake.py` 的硬编码默认值（4096 / 180）统一改为 0 透传，中间层不再自带默认值。
+2. **截断快速失败**：客户端 `_handle_success_response` 检测 `finish_reason=length`，命中立即返回新错误码 `output_truncated`（带 usage，预算照常计数），不再进入注定失败的 parse 重试；`LLM_ERROR_RUN_CODES` 映射为 run 层 `LLM_OUTPUT_TRUNCATED`（不进 RETRYABLE_CODES），API_CONTRACT 错误码表同步。
+3. **顺带补全 timeout 链路**：50edcd9 只修了客户端层回退，`agents/base.py`/`structured_output.py` 的 `timeout_seconds=180` 硬编码默认值仍会把 `.env` 的 `LLM_TIMEOUT_SECONDS` 挡住——本次随默认值统一改 0 一并修掉。
+
+修改文件：[config.py](backend/app/core/config.py)、[openai_compatible.py](backend/app/llm/openai_compatible.py)、[structured_output.py](backend/app/llm/structured_output.py)、[agents/base.py](backend/app/agents/base.py)、[protocol.py](backend/app/llm/protocol.py)、[fake.py](backend/app/llm/fake.py)、[models.py](backend/app/llm/models.py)、[retry.py](backend/app/llm/retry.py)、[checkpoint.py](backend/app/workflows/checkpoint.py)、[.env.example](.env.example)；新增测试 [test_max_tokens_fallback.py](backend/tests/unit/llm/test_max_tokens_fallback.py)（6 例）；顺带修正存量断言 [test_evaluations.py:136](backend/tests/integration/api/test_evaluations.py)（evaluate prompt 1.2.0→1.3.0，v1.3 改动漏更）。
+
+### 为什么这么做
+
+- **改默认值而不是逐调用点传参**：默认值只有客户端一处真正进 payload，其余层都是转发；改一处覆盖全部未显式传参的调用点（story_bible、outline_reviser、episode_writer 等同型风险点一次收口），显式传参的小护栏（planner/outcome）天然不受影响。
+- **finish_reason 检测是治「白烧重试」的那一刀**：调大 max_tokens 只是抬阈值，截断失败模式还在；截断是确定性失败，重试必然同样截断——快速失败把最坏 3×100s 的无意义等待变成一次明确报错，且错误码可区分"模型输出质量问题"与"配置上限问题"。
+- **不把 8192 直接拉到 32k**：OpenAI 兼容 API 普遍校验 max_tokens 不超过模型输出上限，超限是整批 400 而非截断；8192 是当前 provider 已验证的安全值，要更高先确认模型上限再改配置。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest tests/unit/llm/ | 67 passed / 0 failed（含新增 6 例） |
+| 新增测试 red-run（临时移除截断检测） | 截断 2 例按预期失败，日志逐字复现生产事故（"尝试 3 次…EOF while parsing"），恢复后全绿 |
+| uv run pytest（后端全量，1260 例） | 全绿（多次运行确认；其中 1 次遇既有 exit_gate 清库死锁 flake，见 TROUBLESHOOTING 2026-09-07 条目，与本改动无关） |
+| ruff / mypy（改动文件） | 通过 |
+
+### 学到了什么
+
+1. **"默认值"必须只存在于最终消费层**：中间层（agent/parser）自带硬编码默认值会把上游配置挡死——timeout 修过一次只改了客户端，这次 max_tokens 又在同样位置栽；链路上所有可选参数应统一"0/空 = 未指定，由最底层回退 Settings"的约定。
+2. **同型 bug 要在修的当下做全仓 sweep**：outline 截断修复只改了一个调用点，半年后 story_bible 以同样方式炸；`grep generate_structured` 逐点核对 max_tokens 来源，5 分钟就能收完全部同型点。
+3. **确定性失败要能被机器识别**：`finish_reason=length` 是 provider 明着告诉你的"输出没写完"，不读它就只能在 JSON 解析层猜测；传输层元数据里的失败信号，要在传输层消化掉，不要漏到语义层变成"模型输出格式错误"。
+
+## 对话丝滑化 I：评估超时预算 + 耗尽通知 + 终态不静默（2026-09-08，实测事故第二弹）
+
+### 做了什么
+
+前一轮 P0-P3 修复验证通过（失败消息/失败感知答复/重试短路全部按设计工作），但创作在评估节点遇到新墙：Rubric v2 + 大纲兑现核对的评估输出（6-10k token）在实测 ~12 token/s 的模型上 360s 跑不完，两次尝试各打满 3×360s 超时；重试的终态写入被 `except: pass` 吞掉，Run 僵死 22 小时后被标记恢复耗尽，且耗尽路径不通知用户。三项修复（用户批准的 1/2/3）：
+
+1. **评估独立超时**：Settings 新增 `llm_eval_timeout_seconds=900`（env 可覆盖），EvaluationSkill 显式传参——评估大 JSON 与普通调用分账，互不拖累。
+2. **耗尽路径通知**：`claim_next` 标记耗尽后，在领取事务**外**独立提交 AgentAction 回写 + 结果消息（指向"重新发起"而非必然失败的重试）；回写失败只记日志不回滚耗尽标记。对话短路对耗尽 Run 诚实拒绝「重试」（避免重试→秒败死循环）。
+3. **终态不静默**：`_execute_workflow` 取消/失败分支的 `except Exception: pass` → `logger.exception`；reconciliation（GET Action 补写）已有接线，日志补上排查入口。
+
+新增测试 6 例：评估超时透传 ×2（含 env 覆盖）、耗尽通知 ×2（含"回写失败不回滚标记"）、重试拒绝 ×2；全部完成红绿验证（禁用修复 → 4 红，恢复 → 全绿）。
+
+### 为什么这么做
+
+- **max_tokens 与 timeout 是一对闸门**：上一轮把 16384 打开解决了截断，同样的输出量在 12 token/s 下需要 500-800s——只调一道闸，水从另一道溢出。评估是全链路输出最大的调用（9 维明细+逐字证据+大纲核对），给它单独的 900s 预算，而不是全局抬超时（全局抬会让真正的故障等更久才被发现）。
+- **耗尽回写放事务外**：`_finalize` 内部异常会 rollback，若与领取同事务会把耗尽标记一起回滚——Run 永远僵死。"标记"与"通知"分离提交，通知失败可容忍（reconciliation 兜底），标记丢失不可容忍。
+- **诚实拒绝重试**：耗尽 Run 再排队会立刻再次耗尽，让用户重试等于让他撞墙——确定性答复"次数已用完 + 建议重新发起"，与"失败必须可见"同一家族的原则：每个入口都有诚实的出口。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| 新增 6 例（红绿验证） | 禁用修复 → 4 红；恢复 → 全绿 |
+| uv run pytest（后端全量） | 全绿（1272 例） |
+| ruff / mypy | 通过 |
+| 僵死 Run（26aa5af4 项目） | 用户 GET 该 Action 时 reconciliation 将补写耗尽结果消息（旧数据自愈） |
+
+### 学到了什么
+
+1. **调一个资源参数前先算另一道的账**：tokens ÷ 实测生成速度 = 最小耗时，超过 timeout 就是结构性失败；两道闸门的约束要一起解，否则修复只是把失败换了一种形态。
+2. **静默的 except 是对话系统的谎言温床**：连续两轮事故（吞终态/吞回写）都栽在"失败路径上的失败无人知晓"；失败路径上的每个动作要么成功、要么大声失败，没有第三种选择。
+3. **存量数据自愈靠 reconciliation 入口**：新逻辑上线后，旧的僵死 Action 不需要手工修数——只要查询入口会触发补写，坏数据在第一次被看见时就修复；设计补写入口比写数据修复脚本更值。
