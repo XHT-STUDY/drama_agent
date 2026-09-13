@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -235,3 +236,70 @@ async def test_list_uploads_order(async_client: AsyncClient) -> None:
         }
         for i in items
     )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestUploadRunLinkW106:
+    """W1-06：带 upload_id 的 Run 在排队前校验归属与解析状态。"""
+
+    async def _create_project(self, async_client: AsyncClient, title: str) -> str:
+        resp = await async_client.post("/api/v1/projects", json={"title": title})
+        assert resp.status_code == 201
+        return str(resp.json()["id"])
+
+    async def _upload(self, async_client: AsyncClient, project_id: str) -> str:
+        files = {
+            "file": ("scene.txt", "第1场 天台 夜\n少年独自加练。".encode("utf-8"), "text/plain")
+        }
+        resp = await async_client.post(
+            f"/api/v1/projects/{project_id}/uploads", files=files
+        )
+        assert resp.status_code == 201, resp.text
+        return str(resp.json()["id"])
+
+    async def test_import_run_with_valid_upload_accepted(
+        self, app: Any, async_client: AsyncClient
+    ) -> None:
+        project_id = await self._create_project(async_client, "导入校验")
+        upload_id = await self._upload(async_client, project_id)
+
+        resp = await async_client.post(
+            f"/api/v1/projects/{project_id}/runs",
+            json={"action": "import", "config": {"upload_id": upload_id}},
+        )
+        assert resp.status_code == 202, resp.text
+
+    async def test_import_run_cross_project_upload_404(
+        self, app: Any, async_client: AsyncClient
+    ) -> None:
+        """拿别项目的 upload_id 触发导入 → 404 UPLOAD_NOT_FOUND。"""
+        project_a = await self._create_project(async_client, "上传方")
+        project_b = await self._create_project(async_client, "借用方")
+        upload_id = await self._upload(async_client, project_a)
+
+        resp = await async_client.post(
+            f"/api/v1/projects/{project_b}/runs",
+            json={"action": "import", "config": {"upload_id": upload_id}},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "UPLOAD_NOT_FOUND"
+
+    async def test_create_script_run_with_upload_validated_too(
+        self, app: Any, async_client: AsyncClient
+    ) -> None:
+        """create_script + config.upload_id 同样过校验（G-06 路径）。"""
+        project_a = await self._create_project(async_client, "创作方")
+        project_b = await self._create_project(async_client, "别家")
+        upload_id = await self._upload(async_client, project_a)
+
+        resp = await async_client.post(
+            f"/api/v1/projects/{project_b}/runs",
+            json={
+                "action": "create_script",
+                "config": {"upload_id": upload_id},
+                "options": {"user_input": "基于材料创作"},
+            },
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "UPLOAD_NOT_FOUND"

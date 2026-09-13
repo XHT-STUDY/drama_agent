@@ -129,6 +129,11 @@ class RunResponse(BaseModel):
         description="本轮 Run 产出的结果 Artifact ID（W1-05：action=export "
         "完成后指向 export_file Artifact，供固定下载）",
     )
+    route: str | None = Field(
+        default=None,
+        description="导入分类的确定性路由（W1-06：create/evaluate/hold/"
+        "needs_user_input；非导入 Run 为空）",
+    )
     created_at: str = Field(..., description="创建时间")
     updated_at: str = Field(..., description="更新时间")
 
@@ -147,6 +152,9 @@ class RunResponse(BaseModel):
             stage_gate=(run.state_summary or {}).get("stage_gate"),
             stage_generation=run.stage_generation,
             result_artifact_ids=_service.result_artifact_ids(run),
+            route=(run.state_summary or {}).get("route")
+            if run.action == "import"
+            else None,
             created_at=run.created_at.isoformat() if run.created_at else "",
             updated_at=run.updated_at.isoformat() if run.updated_at else "",
         )

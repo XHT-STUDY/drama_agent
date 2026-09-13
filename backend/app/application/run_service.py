@@ -130,6 +130,27 @@ class RunService:
             raise RunAlreadyActiveError(detail=f"项目已有活跃 Run: {active.id}")
 
         # 创建 Run
+        # W1-06：带上传来源的 Run 在排队前校验 upload 归属与解析状态——
+        # 禁止前端传服务器 path 或拿别项目的 upload_id 触发生成
+        upload_id_raw = (config or {}).get("upload_id")
+        if upload_id_raw is not None:
+            from app.db.repositories.uploads import UploadRepository
+
+            upload = await UploadRepository(db).get_for_project(
+                project_id, uuid.UUID(str(upload_id_raw))
+            )
+            if upload is None:
+                raise NotFoundError(
+                    detail=f"上传记录不存在: {upload_id_raw}",
+                    code="UPLOAD_NOT_FOUND",
+                )
+            if upload.parse_status != "parsed":
+                raise AppError(
+                    detail=f"上传文件尚未解析成功（{upload.parse_status}），无法用于导入/创作",
+                    status_code=422,
+                    code="UPLOAD_NOT_PARSED",
+                )
+
         run = WorkflowRun(
             project_id=project_id,
             action=action,

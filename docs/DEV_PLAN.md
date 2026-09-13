@@ -3005,6 +3005,9 @@ Prompt 必须区分：
 
 | W1-02 | 同屏作品画布与 URL 状态 | 3d | W1-01..05 | DONE | AI Agent | 2026-09-13：三区布局（导航/画布/常驻会话，窄屏双 tab 不卸载）；use-workspace-location（artifact/scene/conversation/panel/compare/run，首载 replace 选稿/切稿 push/非法值清理+粘性提示）；ArtifactCanvas 复用五组件（评估按 source_script 匹配/跨版本禁跳转/diff/导出/资料面板/历史版本横幅）；active_context 从画布派生；草稿 sessionStorage 按 project+conversation + 会话切换清理；项目全部活跃 Run 状态区 + 终态失效；旧路由兼容重定向（/versions 保留——承载修订发起，决策见 DEV_LOG）；GET /artifacts/{id} 增 project_id 归属校验。测试：location 7/布局/草稿隔离/重定向/跨项目 404；前端 212 + 后端全量绿；详见 DEV_LOG 2026-09-13 |
 
+| W1-06 | 原稿附件入口接已有导入路径 | 1.5d | W1-02 | DONE | AI Agent | 2026-09-13：UploadInput 两步授权；分类结果卡按路由给动作（full_script→画布/转换失败如实提示；outline/idea→基于此材料创作；reference→知识库真实入库状态；unknown→说明+按想法重导/放弃）；create_run 排队前校验 upload_id（404/422，双路径）；导入幂等键按 upload 固定；RunResponse 增可选 route + 导入终态 result_artifact_ids。测试：uploads +3 + 前端 7 例；前端 219 + 后端全量绿；详见 DEV_LOG 2026-09-13 |
+| W1-02 | 同屏作品画布与 URL 状态 | 3d | W1-01..05 | DONE | AI Agent | 2026-09-13：三区布局（导航/画布/常驻会话，窄屏双 tab 不卸载）；use-workspace-location（artifact/scene/conversation/panel/compare/run，首载 replace/切稿 push/非法值清理+粘性提示）；ArtifactCanvas 复用五组件（评估按 source_script 匹配/跨版本禁跳转/diff/导出/资料/历史版本横幅）；active_context 从画布派生；草稿 sessionStorage + 会话切换清理；项目活跃 Run 状态区；旧路由兼容重定向（/versions 保留，决策见 DEV_LOG）；GET /artifacts/{id} 增 project_id 归属校验。测试：location 7/布局/草稿隔离/重定向/跨项目 404；前端 212 + 后端全量绿；详见 DEV_LOG 2026-09-13 |
+
 ### 13.3 阶段验收记录
 
 | Gate | 计划日期 | 实际日期 | 结果 | 验收人 | 证据 | 遗留问题 |

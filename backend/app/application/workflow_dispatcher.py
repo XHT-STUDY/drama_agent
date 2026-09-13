@@ -899,6 +899,21 @@ async def _execute_workflow(
             elif action == "import":
                 # action=import 且无拦截标志 → 导入分类完成。
                 # route=needs_user_input（unknown）已在上方 needs_user_input 分支拦截。
+                # W1-06：结果 Artifact ID 持久化到 state_summary——刷新/错过
+                # SSE 的客户端从 result_artifact_ids 恢复分类与转换稿入口。
+                import_result_ids = [
+                    str(aid)
+                    for aid in (
+                        final_state.get("classification_artifact_id"),
+                        final_state.get("script_artifact_id"),
+                    )
+                    if aid
+                ]
+                run.state_summary = {
+                    **(run.state_summary or {}),
+                    "result_artifact_ids": import_result_ids,
+                }
+                await db.flush()
                 await run_svc.transition_status(db, run_id, "completed", lease_owner=lease_owner)
                 await publisher.publish(
                     db,

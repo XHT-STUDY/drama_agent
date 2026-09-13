@@ -201,6 +201,8 @@ export interface Run {
   stage_generation: number;
   /** 本轮 Run 产出的结果 Artifact（W1-05：export 完成后指向 export_file，固定下载） */
   result_artifact_ids?: string[];
+  /** 导入分类的确定性路由（W1-06：create/evaluate/hold/needs_user_input） */
+  route?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -213,10 +215,25 @@ export interface CreateScriptOptions {
 }
 
 export interface CreateRunRequest {
-  action: "create_script" | "evaluate" | "revise" | "platform_smoke";
+  action: "create_script" | "evaluate" | "revise" | "platform_smoke" | "import";
   options?: CreateScriptOptions;
   config?: Record<string, unknown>;
   idempotency_key?: string;
+}
+
+/** 上传记录（W1-06）：TXT/DOCX 解析结果 */
+export interface UploadRecord {
+  id: string;
+  project_id: string;
+  path: string;
+  sha256: string;
+  mime_type: string;
+  size_bytes: number;
+  original_name: string;
+  parse_status: "parsed" | string;
+  char_count: number;
+  warnings: string[];
+  created_at: string;
 }
 
 // ============================================================

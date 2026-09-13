@@ -30,10 +30,11 @@ import {
 import { ActionPlanCard } from "./ActionPlanCard";
 import { AgentComposer } from "./AgentComposer";
 import { ArtifactCanvas } from "./ArtifactCanvas";
+import { UploadInput } from "./UploadInput";
 import { ConversationPanel } from "./ConversationPanel";
 import { MessageList } from "./MessageList";
 import { RunProgress } from "@/features/runs/RunProgress";
-import type { ActiveArtifactContext, Artifact, Project } from "@/types/api";
+import type { ActiveArtifactContext, Project } from "@/types/api";
 
 interface Props {
   projectId: string;
@@ -327,6 +328,15 @@ export function AgentWorkspace({ projectId, project }: Props) {
           focusSignal={composerFocusSignal}
         />
       </div>
+
+      {/* W1-06：原稿附件入口（解析存档 → 识别并导入 → 分类动作） */}
+      <UploadInput
+        projectId={projectId}
+        onOpenArtifact={(id) => {
+          location.openArtifact(id);
+          setMobileTab("work");
+        }}
+      />
 
       {/* 兜底计划卡：消息流尚未刷新的刚产出计划 */}
       {focusActionId && !planMessageActionIds.has(focusActionId) && (

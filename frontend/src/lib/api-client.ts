@@ -407,6 +407,34 @@ export const knowledgeApi = {
 };
 
 // ============================================================
+// 上传（W1-06：TXT/DOCX 附件 → 导入分类）
+// ============================================================
+
+export const uploadsApi = {
+  /** 上传并解析 TXT/DOCX（≤10MB；只解析存档，不调模型） */
+  async create(projectId: string, file: File): Promise<import("@/types/api").UploadRecord> {
+    const form = new FormData();
+    form.append("file", file);
+    const url = `${API_BASE}/projects/${projectId}/uploads`;
+    const response = await fetch(url, { method: "POST", body: form });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const detail = (data as { detail?: string } | null)?.detail ?? "上传失败";
+      const code = (data as { code?: string } | null)?.code ?? "UPLOAD_FAILED";
+      throw new Error(`${detail}（${code}）`);
+    }
+    return data as import("@/types/api").UploadRecord;
+  },
+
+  /** 项目上传记录（恢复附件卡） */
+  list(projectId: string, offset = 0, limit = 10): Promise<PaginatedList<import("@/types/api").UploadRecord>> {
+    return request(
+      `/projects/${projectId}/uploads?offset=${offset}&limit=${limit}`,
+    );
+  },
+};
+
+// ============================================================
 // 导出（W1-05：固定版本后端导出 + 服务端历史）
 // ============================================================
 

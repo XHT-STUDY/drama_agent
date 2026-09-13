@@ -4,6 +4,89 @@
 
 ---
 
+## 2026-09-13 — W1-06 原稿附件入口接已有导入路径
+
+**任务 ID：** W1-06（AGENT_NATIVE 阶段一）  
+**状态：** DONE  
+**日期：** 2026-09-13
+
+### 做了什么
+
+作者可在工作台附加 TXT/DOCX 单集原稿、大纲或参考资料，看到解析/分类结果并进入阅读、评估或分阶段创作——无需把长文复制进 4000 字输入框。
+
+1. **两步授权流**（UploadInput 新组件，挂在常驻会话区）：选文件 → `POST /uploads`（只解析存档，无模型调用）→ 附件卡展示原名/字数/警告；用户点「识别并导入」才创建 `action=import` Run（模型分类 + 可能入库创作管线）。
+2. **分类结果与路由动作**：`full_script` →「打开第 1 集剧本」进画布（转换失败如实提示"结构不足"，不伪造成功稿件）；`outline/idea_or_notes` →「基于此材料创作」（既有 `create_script + config.upload_id` 路径，大纲类说明"先生成大纲再确认写剧本"）；`reference` → 真实查询知识库展示入库状态（不把"分类完成"当"检索可用"）；`unknown` → 如实说明 + "按想法创作（重新导入）"与"放弃"，不自动生成。
+3. **后端加固**：`create_run` 排队前校验 `config.upload_id`——归属当前项目（404 `UPLOAD_NOT_FOUND`）且 `parse_status=parsed`（422 `UPLOAD_NOT_PARSED`），import 与 create_script 双路径；导入终态把 `[classification, script?]` 写入 `result_artifact_ids`；`RunResponse` 新增可选 `route` 字段。
+4. **幂等**：导入幂等键按 upload 固定（`import:{upload_id}`），同文件重发/重试复用同一 Run；创作键 `create-from-upload:{upload_id}` 同理。
+5. **刷新恢复**：上传记录经 `GET /uploads` 恢复附件卡；导入 Run 在项目 Run 状态区可见。
+
+### 为什么这么做
+
+- **两步授权**：解析存档无害，模型分类+入库是真实动作——分开让用户始终知道下一步会花什么。
+- **幂等键跟着来源走**：同一份文件重发"识别并导入"语义上是同一件事，键随 upload 固定后重试安全且不重复付费。
+- **route 上 API 而不是塞 state_summary 给前端**：前端读不到响应里没有的字段——首版 route"看起来能拿到"实际恒空（双轴审查抓出），契约必须诚实。
+
+### 修改文件
+
+后端：`application/run_service.py`、`application/workflow_dispatcher.py`、`api/v1/runs.py`；前端：`features/agent/UploadInput.tsx`（新增）、`AgentWorkspace.tsx`、`lib/api-client.ts`、`types/api.ts`；测试 `tests/integration/api/test_uploads.py` +3、`tests/upload-input.test.tsx` 7 例。
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `uv run pytest`（后端全量） | 全绿 |
+| `pnpm test`（前端 219 例）+ lint + tsc | 通过 |
+| `ruff` + `mypy`（改动文件） | 通过 |
+
+### 学到了什么
+
+1. **"看起来能拿到"的字段要实测**：契约要覆盖"字段真的在响应里"，而不是前端类型写没写。
+2. **幂等键的作用域跟着业务重试单元走**：用户语义里的"重试识别这份文件"是一个单元，键就绑定 upload。
+
+---
+
+## 2026-09-13 — W1-02 同屏作品画布与 URL 状态
+
+**任务 ID：** W1-02（AGENT_NATIVE 阶段一）  
+**状态：** DONE  
+**日期：** 2026-09-13
+
+### 做了什么
+
+工作台从"聊天 + 产物索引"改为以作品为中心的三区布局：左侧作品导航 / 中央作品画布（正文最大面积）/ 右侧常驻 Agent 会话；窄屏「作品 / Agent」双 tab（两区保持挂载，切换不卸载会话数据）。
+
+1. **URL 是导航事实**（`use-workspace-location` 新 hook）：固定字段 `artifact/scene/conversation/panel/compare/run`——首载未带 artifact 时选最新可读作品并 **replace** 到确切 ID；切稿 **push**（后退回到上一篇）；面板/场景/基线/会话 **replace**；非法 UUID/非正整数场景/未知面板清除对应字段并给**粘性提示**——绝不"猜最新稿"替代用户输入。消息与任务事件不改阅读选择：新稿完成只出现「打开本轮新稿」按钮。
+2. **画布复用零复制**（`ArtifactCanvas` 新组件）：正文直接用 StoryBibleView/OutlineListView/ScriptView/EvaluationPanel/DiffView；工具面板 read/evaluation/diff/exports/sources。评估按 `source_script_artifact_id` 精确匹配；跨版本评估同屏展示并禁场景跳转；历史版本阅读时显示"修改请基于最新稿"横幅。
+3. **打开作品即上下文**：active_context 从画布正在阅读的稿件派生（含 scene_number），删除旧的"选中上下文"面板。
+4. **输入草稿不丢**：Composer 按 project+conversation 存 sessionStorage；会话切换清空上一会话的失败内容/发送中状态/活动计划。
+5. **项目 Run 状态区**：全部 queued/running Run（含导入/导出）真实进度；任一 Run 终态失效作品/消息/导出/计数缓存。
+6. **旧路由兼容**：/story-bible、/outline、/scripts/[episode]、/exports replace 到工作台 URL（不留跳板历史）；/versions 保留（承载修订发起——画布未复制的功能，决策记录在此）。
+7. **后端归属校验**：`GET /artifacts/{id}` 支持可选 `project_id`，跨项目一律 404。
+
+### 为什么这么做
+
+- **导航事实放 URL，服务端事实放 Query 缓存**：两层状态各有权威来源后，"消息不改阅读"变成结构性事实（画布只读 URL），不需要在事件回调里写防御代码。
+- **粘性提示不是琐碎细节**：非法参数清理（replace）会让派生 notice 立即归空——用户永远看不到"已清除"的告知；提示必须在清理动作之外存活。
+- **/versions 不强行重定向**：该页承载修订发起与全量 Diff 工作台（工作台只复用了查看能力），强行重定向会丢功能。
+
+### 修改文件
+
+前端新增：`hooks/use-workspace-location.ts`、`features/agent/ArtifactCanvas.tsx`、`features/exports/load-exportable.ts`、`lib/artifact-latest.ts`；重写 `AgentWorkspace.tsx` 与四个兼容入口页；修改 `AgentComposer`（draftKey）、`use-agent-conversation`（切换清理）、`api-client`（getById 归属）、项目页（Suspense）；删除 `ArtifactContextPanel`。后端：`api/v1/artifacts.py`（project_id 校验）。e2e dramaagent.spec 适配重定向语义。
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm test`（前端 212 例）+ lint + tsc | 通过 |
+| `uv run pytest`（后端全量） | 通过 |
+
+### 学到了什么
+
+1. **导航事实放 URL**：刷新/后退/分享天然正确，事件驱动状态做不到。
+2. **提示要在清理动作之外存活**：派生自被清理对象的 UI 会闪现即失。
+
+---
+
 ## 2026-09-13 — W1-03 明确目标直达与有原文的解释
 
 **任务 ID：** W1-03（AGENT_NATIVE 阶段一）  
