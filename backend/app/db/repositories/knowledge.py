@@ -50,21 +50,43 @@ class KnowledgeRepository(BaseRepository):
 
     # ---- 查询 ----
 
-    async def get_by_hash(self, document_hash: str) -> KnowledgeDocument | None:
-        """按 document_hash 查找（幂等判定）。"""
+    async def get_by_hash(
+        self,
+        document_hash: str,
+        project_id: uuid.UUID | None = None,
+    ) -> KnowledgeDocument | None:
+        """按 document_hash 查找（幂等判定，W1-06 项目作用域版）。
+
+        幂等范围 = 同项目（或全局语料 project_id IS NULL）且未软删除。
+        此前跨项目全局查询：不同项目上传相同内容会被幂等"复用"给别的
+        项目（REPEAT=5 抓出）；被用户删除的文档也不应阻止重新上传入库。
+        """
         stmt = select(KnowledgeDocument).where(
-            KnowledgeDocument.document_hash == document_hash
+            KnowledgeDocument.document_hash == document_hash,
+            KnowledgeDocument.deleted_at.is_(None),
+            or_(
+                KnowledgeDocument.project_id == project_id,
+                KnowledgeDocument.project_id.is_(None),
+            ),
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_by_category_title(
-        self, category: str, title: str
+        self,
+        category: str,
+        title: str,
+        project_id: uuid.UUID | None = None,
     ) -> KnowledgeDocument | None:
-        """按 (category, title) 查找（变更重建的定位依据）。"""
+        """按 (category, title) 查找（变更重建的定位依据；项目作用域同 get_by_hash）。"""
         stmt = select(KnowledgeDocument).where(
             KnowledgeDocument.category == category,
             KnowledgeDocument.title == title,
+            KnowledgeDocument.deleted_at.is_(None),
+            or_(
+                KnowledgeDocument.project_id == project_id,
+                KnowledgeDocument.project_id.is_(None),
+            ),
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -181,12 +203,12 @@ class KnowledgeRepository(BaseRepository):
         - (category, title) 相同但 hash 不同 → 更新元数据，按 chunk_hash 只重建变化的块；
         - 否则 → 新建文档 + 全部块。
         """
-        existing_by_hash = await self.get_by_hash(loaded.document_hash)
+        existing_by_hash = await self.get_by_hash(loaded.document_hash, project_id)
         if existing_by_hash is not None:
             return existing_by_hash, False, False
 
         existing = await self.get_by_category_title(
-            loaded.metadata.category.value, loaded.metadata.title
+            loaded.metadata.category.value, loaded.metadata.title, project_id
         )
         if existing is not None:
             self._apply_metadata(existing, loaded, corpus_version)

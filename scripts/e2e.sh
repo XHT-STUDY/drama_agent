@@ -39,13 +39,17 @@ STARTED=0
 
 cleanup() {
   echo "=== 清理 E2E 进程 ==="
-  [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null || true
-  if [ -n "$FRONTEND_PID" ]; then
-    kill -- "-$FRONTEND_PID" 2>/dev/null || kill "$FRONTEND_PID" 2>/dev/null || true
+  if [ -f "$ROOT/.e2e-process/frontend.pid" ]; then
+    # e2e_process.py 启动：按记录的进程组 TERM→限时 KILL（只清本轮进程）
+    (cd "$ROOT" && python3 scripts/e2e_process.py stop frontend --timeout 10)
+  else
+    [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null || true
+    if [ -n "$FRONTEND_PID" ]; then
+      kill -- "-$FRONTEND_PID" 2>/dev/null || kill "$FRONTEND_PID" 2>/dev/null || true
+    fi
+    wait "$BACKEND_PID" 2>/dev/null || true
+    wait "$FRONTEND_PID" 2>/dev/null || true
   fi
-  # 等待子进程退出
-  wait "$BACKEND_PID" 2>/dev/null || true
-  wait "$FRONTEND_PID" 2>/dev/null || true
   echo "=== 清理 E2E 基础设施 ==="
   docker compose -f "$COMPOSE_FILE" down -v 2>/dev/null || true
 }
@@ -105,14 +109,23 @@ else
 fi
 
 echo "=== [5/6] 启动前端（端口 $FRONTEND_PORT） ==="
-# setsid 独立进程组：cleanup 组杀 pnpm→node→next-server 整棵树，
-# 否则 kill 包装进程后 next-server 孤儿继续占用端口（EADDRINUSE 连环失败）。
-setsid bash -c '
-  cd frontend
-  NEXT_PUBLIC_API_BASE="http://localhost:'"$BACKEND_PORT"'/api/v1" \
-  NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED=true exec pnpm exec next start -p "'"$FRONTEND_PORT"'"
-' &
-FRONTEND_PID=$!
+# 独立进程组：cleanup 组杀 pnpm→node→next-server 整棵树，否则 kill 包装
+# 进程后 next-server 孤儿继续占用端口（EADDRINUSE 连环失败）。
+# W1-07：setsid 在 macOS 不存在——有 setsid 用原快路径，否则回退
+# scripts/e2e_process.py（Python 标准库 start_new_session，语义等价）。
+if command -v setsid >/dev/null 2>&1; then
+  setsid bash -c '
+    cd frontend
+    NEXT_PUBLIC_API_BASE="http://localhost:'"$BACKEND_PORT"'/api/v1" \
+    NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED=true exec pnpm exec next start -p "'"$FRONTEND_PORT"'"
+  ' &
+  FRONTEND_PID=$!
+else
+  echo "  （无 setsid——使用 e2e_process.py 跨平台进程组管理）"
+  (cd "$ROOT" && python3 scripts/e2e_process.py start frontend -- \
+    bash -c 'cd frontend && NEXT_PUBLIC_API_BASE="http://localhost:'"$BACKEND_PORT"'/api/v1" NEXT_PUBLIC_AGENT_WORKSPACE_ENABLED=true exec pnpm exec next start -p "'"$FRONTEND_PORT"'"')
+  FRONTEND_PID=$(cat "$ROOT/.e2e-process/frontend.pid")
+fi
 
 # 等待前端就绪
 for i in $(seq 1 60); do

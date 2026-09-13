@@ -149,15 +149,21 @@ describe("EpisodeNav", () => {
     expect(btn1?.className).not.toContain("bg-blue-100");
   });
 
-  it("点击集数触发 onSelect", () => {
+  it("点击集数触发 onSelect；未写集禁用（W1-07）", () => {
     render(React.createElement(EpisodeNav, {
-      episodes: [],
+      episodes: [
+        { episode_number: 7, hasScript: true, hasEvaluation: false },
+        { episode_number: 8, hasScript: false, hasEvaluation: false },
+      ],
       currentEpisode: 1,
       targetCount: 10,
       onSelect,
     }));
     fireEvent.click(screen.getByText("第 7 集"));
     expect(onSelect).toHaveBeenCalledWith(7);
+    // 未写集 disabled：点击无反应（无可看内容）
+    fireEvent.click(screen.getByText("第 8 集"));
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it("已完成剧本且有评估的集显示 ✓", () => {

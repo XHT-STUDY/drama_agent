@@ -55,7 +55,7 @@ async function waitCardTerminal(page: Page, timeout = 90_000): Promise<void> {
 }
 
 test.describe("J-12 Agent Workspace", () => {
-  test("首次创作：计划→确认→完成，刷新恢复消息与进行中的 Run", async ({ page }) => {
+  test("首次创作：计划→确认→完成（W1-07：结果自动回写，不依赖刷新）", async ({ page }) => {
     await createProjectViaWorkspace(page);
 
     await page.getByLabel("输入创作指令").fill(IDEA_TEXT);
@@ -67,28 +67,61 @@ test.describe("J-12 Agent Workspace", () => {
     const continueAll = page.getByTestId("continue-all");
     await expect(continueAll).toBeVisible({ timeout: 90_000 });
     await continueAll.click();
-    // 续跑启动信号：门按钮消失（FakeLLM 执行窗口极短，不断言瞬时进度）
     await expect(continueAll).toBeHidden({ timeout: 30_000 });
-    await page.reload();
-    await expect(page.getByLabel("输入创作指令")).toBeVisible();
-    // 用户消息与计划消息在刷新后仍可见（服务端是事实源）
-    await expect(page.locator(".message-body", { hasText: IDEA_TEXT.slice(0, 12) }).first()).toBeVisible({
-      timeout: 30_000,
+
+    // W1-07 主断言：结果消息自动回写——不刷新页面，等 SSE/轮询追平
+    await expect(page.getByTestId("result-message").first()).toBeVisible({
+      timeout: 120_000,
     });
 
-    await waitCardTerminal(page);
-    // 结果消息由 Worker 在 Turn 终态后追加：再次刷新取回完整消息
-    // （同时验证消息以服务端为事实源、刷新后可恢复）
+    // 额外恢复验收：刷新后消息仍可见（服务端是事实源）
     await page.reload();
-    await expect(
-      page.getByTestId("result-message").first(),
-    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("result-message").first()).toBeVisible({
+      timeout: 30_000,
+    });
   });
 
-  test("模糊修改→澄清且无 Run", async ({ page }) => {
-    await openProject(page);
-    // 新会话避免上一计划的卡片干扰
-    await page.getByTestId("new-conversation").click();
+  test("W1-01 分批续写：写 1 集 → 再写一批，每批各有结果消息", async ({ page }) => {
+    await createProjectViaWorkspace(page);
+
+    await page.getByLabel("输入创作指令").fill(IDEA_TEXT);
+    await page.getByTestId("composer-send").click();
+    await expect(page.getByTestId("confirm-action")).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId("confirm-action").click();
+
+    // 大纲门：写 1 集（批模式）
+    const continueOne = page.getByTestId("continue-batch-1");
+    await expect(continueOne).toBeVisible({ timeout: 90_000 });
+    await continueOne.click();
+    await expect(continueOne).toBeHidden({ timeout: 30_000 });
+
+    // 第一批 scripts 门消息自动回写（不刷新）。门消息渲染为最小化阶段卡
+    // （stage_gate metadata，无 result-message testid）——按文本断言
+    await expect(
+      page.locator(".message-body", { hasText: "本批剧本已完成（共 1/10 集）" }),
+    ).toBeVisible({ timeout: 120_000 });
+
+    // scripts 门复现 → 再写一批（连续批门不吞消息：W1-01 幕次世代）
+    await expect(continueOne).toBeVisible({ timeout: 120_000 });
+    await continueOne.click();
+    await expect(continueOne).toBeHidden({ timeout: 30_000 });
+
+    // 第二批门消息追加（共 2/10）——连续两个 scripts 门各一条结果消息
+    await expect(
+      page.locator(".message-body", { hasText: "本批剧本已完成（共 2/10 集）" }),
+    ).toBeVisible({ timeout: 120_000 });
+  });
+
+  test("模糊修改→澄清且无 Run（W1-02 后在无稿项目上测）", async ({ request, page }) => {
+    // W1-02 起 active_context 从画布派生——有稿项目上"这里"有指代不澄清。
+    // 澄清语义改在空项目上验证（同时覆盖"空项目直接对话"验收）。
+    const resp = await request.post(
+      `${process.env.E2E_API_BASE || "http://localhost:8010/api/v1"}/projects`,
+      { data: { title: `澄清-空项目-${Date.now()}`, target_episode_count: 10 } },
+    );
+    expect(resp.ok()).toBeTruthy();
+    const { id: pid } = await resp.json();
+    await page.goto(`/projects/${pid}`);
     await page.getByLabel("输入创作指令").fill("帮我改一下这里");
     await page.getByTestId("composer-send").click();
 
@@ -102,8 +135,10 @@ test.describe("J-12 Agent Workspace", () => {
 
   test("重复发送不重复消息", async ({ page }) => {
     await openProject(page);
-    // 独立会话：消息计数断言不受前序用例消息影响
+    // 独立会话：消息计数断言不受前序用例消息影响——等新会话落 URL
+    //（Composer remount 完成）再输入，避免发到旧会话
     await page.getByTestId("new-conversation").click();
+    await page.waitForURL(/conversation=/, { timeout: 15_000 });
     const composer = page.getByLabel("输入创作指令");
     await composer.fill("解释一下当前项目的大纲");
     // 同一逻辑动作的重复提交：同一 tick 双 Enter（Hook in-flight 守卫拦截）
@@ -117,14 +152,18 @@ test.describe("J-12 Agent Workspace", () => {
   test("script_revision_from_chat_produces_version_diff", async ({ page }) => {
     const pid = await openProject(page);
     await page.getByTestId("new-conversation").click();
-    // 修订请求需要活动上下文（Planner preflight：无上下文的修改请求先澄清）
-    await page.getByTestId("context-script_draft-3").click();
-    await sendAndConfirmPlan(page, "修改第 3 集剧本，增加主角与教练的正面冲突");
+    // W1-02：活动上下文从画布派生——在作品导航打开第 2 集（"这里"即第 2 集；
+    // ctx 项目由分批续写用例写了 1+1 集，第 2 集已存在）
+    const ep2 = page.getByRole("button", { name: "第 2 集" }).first();
+    await expect(ep2).toBeEnabled({ timeout: 30_000 });
+    await ep2.click();
+    await expect(page.getByTestId("canvas-artifact-meta")).toContainText("第 2 集");
+    await sendAndConfirmPlan(page, "修改第 2 集剧本，增加主角与教练的正面冲突");
 
     await waitCardTerminal(page);
-    // 对话式修订产生新版本：versions 页切到第 3 集 → v1 → v2 Diff
+    // 对话式修订产生新版本：versions 页切到第 2 集 → v1 → v2 Diff
     await page.goto(`/projects/${pid}/versions`);
-    await page.locator("select").first().selectOption("3");
+    await page.locator("select").first().selectOption("2");
     await expect(page.getByText("版本 Diff（原稿 v1 → 修订稿 v2）").first()).toBeVisible({
       timeout: 30_000,
     });
@@ -132,15 +171,30 @@ test.describe("J-12 Agent Workspace", () => {
 
   test("partial_outcome_proposes_one_confirmable_follow_up", async ({ page }) => {
     await openProject(page);
+    // 前置：ctx 项目停在 scripts 门（分批用例写了 1+1 集）——写完剩余集，
+    // 让大纲修订（fixture 固定变化第 3 集）能命中第 3 集剧本 → 部分达成
+    const continueAll = page.getByTestId("continue-all");
+    await expect(continueAll).toBeVisible({ timeout: 30_000 });
+    await continueAll.click();
+    await expect(continueAll).toBeHidden({ timeout: 30_000 });
+    await expect(page.getByTestId("result-message").first()).toBeVisible({
+      timeout: 120_000,
+    });
     await page.getByTestId("new-conversation").click();
-    await page.getByTestId("context-episode_outline_set-1").click();
+    // W1-02：打开大纲画布即活动上下文（替代旧 context-* 手动选中按钮）
+    await page.getByRole("button", { name: "分集大纲" }).click();
+    await expect(page.getByTestId("canvas-artifact-meta")).toContainText("分集大纲");
+    await sendAndConfirmPlan(page, "修改大纲，第 3 集节奏太慢，冲突提前");
+    await expect(page.getByTestId("canvas-artifact-meta")).toContainText("分集大纲");
     await sendAndConfirmPlan(page, "修改大纲，第 3 集节奏太慢，冲突提前");
 
     await waitCardTerminal(page);
-    // 部分达成：状态术语 + 一个后续计划（约束/产物明细已降噪，不再渲染）
+    // W1-04 契约：部分达成 + 已知影响如实列出（仍引用旧大纲的剧本）+
+    // 本轮证据入口（带角色锚点）可见——不再"降噪"到隐藏事实
     await expect(page.getByText("部分达成").first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("remaining-constraints")).toHaveCount(0);
-    await expect(page.getByTestId("evidence-links")).toHaveCount(0);
+    await expect(page.getByTestId("remaining-constraints").first()).toBeVisible();
+    await expect(page.getByTestId("evidence-refs").first()).toBeVisible();
+    await expect(page.getByTestId("evidence-link-outline").first()).toBeVisible();
 
     // 后续计划：proposed、可确认、恰好一个
     const followUpConfirm = page.getByTestId("confirm-action");

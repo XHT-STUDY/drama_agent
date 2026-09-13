@@ -68,6 +68,21 @@ export function AgentWorkspace({ projectId, project }: Props) {
   const createConversation = useMutation({
     mutationFn: () => conversationsApi.create(projectId, { title: "新会话" }),
     onSuccess: (created) => {
+      // Composer 按会话 remount（草稿按会话隔离）——把用户在创建点击
+      // 前后已输入的未发送草稿迁移到新会话，避免 remount 丢字
+      if (typeof window !== "undefined") {
+        const oldKey = `draft:${projectId}:${currentConversationId ?? "new"}`;
+        const newKey = `draft:${projectId}:${created.id}`;
+        try {
+          const draft = window.sessionStorage.getItem(oldKey);
+          if (draft) {
+            window.sessionStorage.setItem(newKey, draft);
+            window.sessionStorage.removeItem(oldKey);
+          }
+        } catch {
+          // sessionStorage 不可用时静默跳过
+        }
+      }
       location.setConversation(created.id);
       void queryClient.invalidateQueries({ queryKey: ["agent-conversations", projectId] });
     },
@@ -173,6 +188,21 @@ export function AgentWorkspace({ projectId, project }: Props) {
       ? gatedRunId
       : null;
   const runEvents = useRunEvents(activeRunId);
+
+  // W1-07：Run 到达门/终态时失效消息缓存——门上结果消息与终态消息由
+  // Worker 回写，SSE 事件先于消息落库或被错过时，靠 Run 状态变化驱动
+  // 消息刷新（正常完成不依赖用户刷新页面）
+  const runStatusSignal = gatedRun.data?.status;
+  useEffect(() => {
+    if (
+      runStatusSignal === "needs_review" ||
+      runStatusSignal === "completed" ||
+      runStatusSignal === "failed"
+    ) {
+      void queryClient.invalidateQueries({ queryKey: ["agent-messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-action"] });
+    }
+  }, [runStatusSignal, queryClient]);
 
   // 终态自愈（bda1302）：SSE 重放补收错过的 agent_action.updated
   const onActionUpdated = useCallback(
@@ -319,7 +349,7 @@ export function AgentWorkspace({ projectId, project }: Props) {
         <AgentComposer
           key={currentConversationId ?? "new"}
           draftKey={`draft:${projectId}:${currentConversationId ?? "new"}`}
-          sending={conversation.sending}
+          sending={conversation.sending || createConversation.isPending}
           sendError={conversation.sendError}
           failedContent={conversation.lastFailedContent}
           onSend={handleSend}
@@ -475,6 +505,22 @@ export function AgentWorkspace({ projectId, project }: Props) {
             compareId={location.compareId}
             onOpenArtifact={(id, panel) => location.openArtifact(id, panel)}
             onSetPanel={(p: WorkspacePanel) => location.setPanel(p)}
+            onSetScene={location.setScene}
+            onSetCompare={location.setCompare}
+          />
+        </div>
+      ) : (location.panel === "exports" || location.panel === "sources") ? (
+        // W1-06/W1-02：/exports 等工具面板重定向无 artifact——导出与资料
+        // 不依赖具体稿件，直接渲染画布面板（读稿区为空）
+        <div className="min-h-0 flex-1">
+          <ArtifactCanvas
+            projectId={projectId}
+            artifactId=""
+            scene={null}
+            panel={location.panel}
+            compareId={null}
+            onOpenArtifact={(id, panel) => location.openArtifact(id, panel)}
+            onSetPanel={(p) => location.setPanel(p)}
             onSetScene={location.setScene}
             onSetCompare={location.setCompare}
           />

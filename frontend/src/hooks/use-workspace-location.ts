@@ -155,8 +155,13 @@ export function useWorkspaceLocation(): WorkspaceLocation {
   );
 
   const replaceArtifact = useCallback(
-    (artifactId: string | null, panel: WorkspacePanel = "read") => {
-      navigate({ artifact: artifactId, scene: null, compare: null, panel }, "replace");
+    (artifactId: string | null, panel?: WorkspacePanel) => {
+      // panel 缺省时保留当前面板（W1-07：/exports 等 panel-only 入口
+      // 重定向后，首载补 artifact 不得把用户带入的 panel 冲掉）
+      navigate(
+        { artifact: artifactId, scene: null, compare: null, ...(panel ? { panel } : {}) },
+        "replace",
+      );
     },
     [navigate],
   );

@@ -8,19 +8,24 @@ import { IDEA_TEXT, EXPECTED } from "./data";
  * 不依赖网络时序，保证可重复运行稳定。
  */
 
-/** 工作台首页内容入口链接的定位器（Agent 工作台导航，J-11） */
+/**
+ * 工作台首页内容入口的定位器（W1-02 三区改造后）：
+ * 作品导航栏的「故事设定」按钮打开画布最新设定。
+ */
 export const workbenchEntry = (page: Page) =>
-  page.getByRole("link", { name: "Story Bible", exact: true });
+  page.getByRole("button", { name: "故事设定" });
 
 /**
  * 等待创作 Run 到达终态（低分场景下会停在「需人工复核」）。
  * Agent 工作台：计划卡状态徽标到达 已完成 / 需人工复核 即视为终态。
  */
 export async function waitForRunTerminal(page: Page): Promise<void> {
+  // .first()：页面上可能同时有多张已达终态的卡（如先写完剩余集、
+  // 再发起修订的场景），等待任一终态标记即可
   await expect(
     page.getByText("已完成", { exact: true }).or(
       page.getByText("需人工复核", { exact: true }),
-    ),
+    ).first(),
   ).toBeVisible({ timeout: 90_000 });
 }
 

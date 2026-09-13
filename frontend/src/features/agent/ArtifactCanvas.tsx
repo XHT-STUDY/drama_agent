@@ -60,9 +60,12 @@ function contentAs<T>(artifact: Artifact): T {
 
 export function ArtifactCanvas(props: Props) {
   const { projectId, artifactId, scene, panel, compareId } = props;
+  // panel-only 模式（exports/sources 不依赖稿件）：跳过稿件渲染与校验
+  const panelOnly = artifactId === "";
 
   const artifactQuery = useQuery({
     queryKey: ["artifact", artifactId, projectId],
+    enabled: artifactId !== "",
     queryFn: () => artifactsApi.getById(artifactId, projectId),
     retry: false,
   });
@@ -99,20 +102,22 @@ export function ArtifactCanvas(props: Props) {
 
   // 历史版本提示：该 (type, episode) 存在更新的 valid 版本
   const latestVersion = useMemo(() => {
+    if (panelOnly) return null;
     const versions = versionsQuery.data ?? [];
     const valid = versions.filter((v) => v.status === "valid");
     return valid.length > 0 ? valid[valid.length - 1] : null;
-  }, [versionsQuery.data]);
+  }, [panelOnly, versionsQuery.data]);
   const isStaleRead =
+    !panelOnly &&
     artifact != null &&
     latestVersion != null &&
-    latestVersion.id !== artifact.id &&
+    latestVersion.id !== artifact!.id &&
     artifact.status === "valid";
 
-  if (artifactQuery.isLoading) {
+  if (!panelOnly && artifactQuery.isLoading) {
     return <Loading text="正在载入稿件…" />;
   }
-  if (artifactQuery.isError || !artifact) {
+  if (!panelOnly && (artifactQuery.isError || !artifact)) {
     return (
       <ErrorMessage
         error={(artifactQuery.error || new Error("稿件读取失败")) as Error}
@@ -122,16 +127,18 @@ export function ArtifactCanvas(props: Props) {
   }
 
   const matchedEvaluation =
-    artifact.type === "script_draft"
+    !panelOnly && artifact!.type === "script_draft"
       ? (evaluationsQuery.data ?? []).find(
           (e) =>
-            (e.content as unknown as EvaluationReportContent).script_artifact_id === artifact.id,
+            (e.content as unknown as EvaluationReportContent).script_artifact_id ===
+            artifact!.id,
         ) ?? null
       : null;
   const otherEvaluation =
-    artifact.type === "script_draft" && !matchedEvaluation
+    !panelOnly && artifact!.type === "script_draft" && !matchedEvaluation
       ? (evaluationsQuery.data ?? []).find(
-          (e) => e.episode_number === artifact.episode_number && e.status === "valid",
+          (e) =>
+            e.episode_number === artifact!.episode_number && e.status === "valid",
         ) ?? null
       : null;
 
@@ -142,11 +149,17 @@ export function ArtifactCanvas(props: Props) {
     <div className="flex h-full min-h-0 flex-col" data-testid="artifact-canvas">
       {/* 稿件标题条：类型/集数/版本 + 工具面板切换 */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-[var(--text-muted)]" data-testid="canvas-artifact-meta">
-          {TYPE_LABEL[artifact.type] ?? artifact.type}
-          {artifact.type === "script_draft" ? ` · 第 ${artifact.episode_number} 集` : ""} ·
-          v{artifact.version}
-        </span>
+        {!panelOnly && (
+          <span
+            className="text-xs text-[var(--text-muted)]"
+            data-testid="canvas-artifact-meta"
+          >
+            {TYPE_LABEL[artifact!.type] ?? artifact!.type}
+            {artifact!.type === "script_draft"
+              ? ` · 第 ${artifact!.episode_number} 集`
+              : ""}{" "}· v{artifact!.version}
+          </span>
+        )}
         <nav className="ml-auto flex flex-wrap gap-1 text-xs" aria-label="画布工具">
           {(["read", "evaluation", "diff", "exports", "sources"] as WorkspacePanel[]).map(
             (p) => (
@@ -174,7 +187,7 @@ export function ArtifactCanvas(props: Props) {
           data-testid="stale-read-banner"
         >
           <span>
-            你正在看历史版本 v{artifact.version}（最新有效版本 v{latestVersion!.version}）。
+            你正在看历史版本 v{artifact!.version}（最新有效版本 v{latestVersion!.version}）。
             历史版本可阅读与解释；修改请基于最新稿。
           </span>
           <button
@@ -188,9 +201,9 @@ export function ArtifactCanvas(props: Props) {
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-        {panel === "read" && (
+        {panel === "read" && !panelOnly && artifact != null && (
           <>
-            {artifact.type === "story_bible" && (
+            {artifact?.type === "story_bible" && (
               <StoryBibleView
                 content={contentAs<StoryBibleContent>(artifact)}
                 artifact={artifact}
@@ -198,7 +211,7 @@ export function ArtifactCanvas(props: Props) {
                 onVersionChange={onVersionChange}
               />
             )}
-            {artifact.type === "episode_outline_set" && (
+            {artifact?.type === "episode_outline_set" && (
               <OutlineListView
                 content={contentAs<EpisodeOutlineSetContent>(artifact)}
                 artifact={artifact}
@@ -206,7 +219,7 @@ export function ArtifactCanvas(props: Props) {
                 onVersionChange={onVersionChange}
               />
             )}
-            {artifact.type === "script_draft" && (
+            {artifact?.type === "script_draft" && (
               <div>
                 <ScriptView content={contentAs<ScriptDraftContent>(artifact)} />
                 {scene != null && (
@@ -216,7 +229,7 @@ export function ArtifactCanvas(props: Props) {
                 )}
               </div>
             )}
-            {artifact.type === "evaluation_report" && (
+            {artifact!.type === "evaluation_report" && (
               <EvaluationPanel
                 report={contentAs<EvaluationReportContent>(artifact)}
                 isLoading={false}
@@ -228,7 +241,7 @@ export function ArtifactCanvas(props: Props) {
 
         {panel === "evaluation" && (
           <div>
-            {artifact.type !== "script_draft" ? (
+            {panelOnly || artifact!.type !== "script_draft" ? (
               <p className="text-sm text-[var(--text-muted)]">
                 评估面板针对剧本——请在左侧选择某一集剧本后查看。
               </p>
@@ -245,7 +258,7 @@ export function ArtifactCanvas(props: Props) {
                   className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700"
                   data-testid="cross-version-evaluation-hint"
                 >
-                  这份 v{artifact.version} 还没有绑定的评估——下面展示 v
+                  这份 v{artifact!.version} 还没有绑定的评估——下面展示 v
                   {otherEvaluation.version} 稿的评估（来源版本不同，场景定位已禁用）。
                 </p>
                 <EvaluationPanel
@@ -273,7 +286,7 @@ export function ArtifactCanvas(props: Props) {
 
         {panel === "diff" && (
           <div>
-            {artifact.type !== "script_draft" ? (
+            {panelOnly || artifact!.type !== "script_draft" ? (
               <p className="text-sm text-[var(--text-muted)]">
                 版本对比针对剧本——请选择某一集剧本后对比。
               </p>
@@ -289,7 +302,7 @@ export function ArtifactCanvas(props: Props) {
                   >
                     <option value="">选择基线版本…</option>
                     {(versionsQuery.data ?? [])
-                      .filter((v) => v.id !== artifact.id)
+                      .filter((v) => v.id !== artifact!.id)
                       .map((v) => (
                         <option key={v.id} value={v.id}>
                           v{v.version}（{v.status === "valid" ? "有效" : v.status}）
@@ -305,7 +318,7 @@ export function ArtifactCanvas(props: Props) {
                 </div>
                 {compareId == null ? (
                   <p className="text-sm text-[var(--text-muted)]">
-                    选择一个基线版本，与当前 v{artifact.version} 对比。
+                    选择一个基线版本，与当前 v{artifact!.version} 对比。
                   </p>
                 ) : diffQuery.data ? (
                   <DiffView diff={diffQuery.data} />

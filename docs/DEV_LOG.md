@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-09-13 — W1-07 E2E 环境兼容、流程实测与阶段一收口
+
+**任务 ID：** W1-07（AGENT_NATIVE 阶段一收尾）  
+**状态：** DONE  
+**日期：** 2026-09-13
+
+### 做了什么
+
+1. **E2E 进程管理跨平台**：新增 `scripts/e2e_process.py`（Python 标准库 `start_new_session=True`，语义等价 setsid）——macOS 无 setsid 时 e2e.sh 自动回退；`stop` 按记录的进程组 TERM→限时 KILL，只清本轮进程。4 例自校验单测（进程树整组退出/无记录 noop/陈旧 PID 清理/不误杀无关进程）。
+2. **E2E 正常完成不依赖刷新**：首次创作用例主断言改为结果消息自动回写（不 reload）；刷新降级为额外恢复验收。**产品级修复**：Run 到达门/终态时失效消息与计划缓存（此前消息落库晚于 Run 状态翻转时，UI 只能靠用户刷新追平）。
+3. **用户路径实测（诊断驱动的修复）**：按 diagnosing 纪律建 API 级秒级回路（/tmp/loop-batch.sh：建项目→Turn→确认→写1集→等终态→断言门消息在会话中），证明后端分批链路正确，E2E 失败全是测试侧问题，逐一修复：
+   - spec 断言用 `result-message` testid，但门消息按 W1-04 设计渲染为无该 testid 的最小化阶段卡 → 改按门消息文本断言（"本批剧本已完成（共 1/10、2/10 集）"）；
+   - `context-*` 手动选上下文按钮随 ArtifactContextPanel 删除 → 改为作品导航打开对应集/大纲（active 自动派生）；
+   - "部分达成/证据不渲染"断言是 W1-04 前的降噪契约 → 反转为"剩余约束如实列出 + 本轮证据入口可见"；
+   - **产品级竞态**：new-conversation in-flight 期间 Composer 可发送 → 用户消息发进旧会话后"消失"；修复为创建期间禁用 Composer，并把未发送草稿迁移到新会话 key；
+   - **产品级 UX**：EpisodeNav 未写集可点击但无反应 → 禁用 + title 提示；
+   - dramaagent/响应式 spec 适配 W1-02 重定向语义与新布局（workbenchEntry 改导航按钮、panel=exports 无 artifact 时画布渲染导出面板、三视口+键盘用例）。
+4. **诊断环境教训**：e2e.sh 曾被 `head -30` 截断管道杀死，trap cleanup 未执行泄漏 8010 后端（旧代码）——诊断时"回路测的是哪个版本的进程"必须先确认；LD_LIBRARY_PATH 相对路径在错误 cwd 下静默失效，须用绝对路径。
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `bash scripts/e2e.sh REPEAT=1` | **13/13 passed**（34.6s） |
+| `bash scripts/e2e.sh REPEAT=5` | **65/65 passed**（约 3 分钟，零 flake） |
+| `pnpm test`（前端 219）+ lint + tsc | 通过 |
+| `uv run pytest`（后端全量，含 e2e_process 4 例） | 通过 |
+
+### 学到了什么
+
+1. **E2E 失败先分"产品 bug / 断言过时 / 环境泄漏"三类**：本轮 6 处失败中 3 处是断言基于被删除的旧 UI（context-* 按钮、result-message testid 语义）、2 处是环境（泄漏进程占端口、相对 LD_LIBRARY_PATH）、只有 3 处是真产品问题（消息刷新竞态、Composer 发送竞态、未写集可点）。
+2. **API 级回路是 E2E 失败的分光镜**：先证明后端对（回路绿），失败空间立刻收缩到前端渲染/断言——比盲读前端代码快一个量级。
+3. **管道截断会杀死带 trap 的脚本**：`bash x.sh | head` 让脚本收 SIGPIPE，EXIT trap 可能不执行——编排脚本泄漏的经典来源；调试运行应重定向到文件。
+
+---
+
 ## 2026-09-13 — W1-06 原稿附件入口接已有导入路径
 
 **任务 ID：** W1-06（AGENT_NATIVE 阶段一）  

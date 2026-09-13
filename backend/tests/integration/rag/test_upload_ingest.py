@@ -336,3 +336,55 @@ class TestUploadIngest:
             )
         ).scalars().all()
         assert len(events) >= 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_ingest_dedup_is_project_scoped_w106(test_engine: Any) -> None:
+    """W1-06/REPEAT=5 回归：同内容资料跨项目不串用幂等——
+    A 项目摄取后删除，B 项目上传同内容应重新入库（而非命中 A 的旧文档）。"""
+    import uuid as _uuid
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.application.knowledge_service import KnowledgeService
+    from app.db.models.project import Project
+    from app.db.repositories.knowledge import KnowledgeRepository
+    from app.rag.embedder import load_embedder
+
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    projects = []
+    for i in range(2):
+        p = Project(title=f"知识隔离{i}", target_episode_count=3)
+        session_f = async_sessionmaker(test_engine, expire_on_commit=False)
+        async with session_f() as s:
+            s.add(p)
+            await s.commit()
+        projects.append(p.id)
+
+    async with factory() as db:
+        repo = KnowledgeRepository(db)
+        svc = KnowledgeService()
+        text = "林峰的战术视野是天赋。"
+        title = "reference-material.txt"
+        embedder = load_embedder()
+        # A 项目入库
+        r1 = await svc.ingest_upload(
+            db, project_id=projects[0], upload_id=_uuid.uuid4(),
+            title=title, text=text,
+            embedder=embedder,
+        )
+        await db.commit()
+        assert r1.created
+        # A 项目删除（软删除）
+        await repo.soft_delete_document(projects[0], r1.document_id)
+        await db.commit()
+        # B 项目上传同内容：必须新建，而不是命中 A 的（已删）文档
+        r2 = await svc.ingest_upload(
+            db, project_id=projects[1], upload_id=_uuid.uuid4(),
+            title=title, text=text,
+            embedder=embedder,
+        )
+        await db.commit()
+        assert r2.created, "B 项目同内容必须新建文档"
+        assert r2.document_id != r1.document_id

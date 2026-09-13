@@ -87,8 +87,10 @@ export function EpisodeNav({ episodes, currentEpisode, targetCount, onSelect }: 
                   isActive
                     ? "bg-blue-100 text-blue-700 font-semibold"
                     : "text-gray-600 hover:bg-gray-100"
-                }`}
+                } ${ep.hasScript ? "" : "cursor-not-allowed opacity-50"}`}
                 onClick={() => onSelect(ep.episode_number)}
+                disabled={!ep.hasScript}
+                title={ep.hasScript ? undefined : "该集尚未生成剧本"}
               >
                 <StatusIcon hasScript={ep.hasScript} hasEvaluation={ep.hasEvaluation} />
                 <span className="flex-1 text-left">
