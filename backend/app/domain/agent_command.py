@@ -71,15 +71,39 @@ ACTION_TRANSITIONS: dict[str, frozenset[str]] = {
 
 
 class ActiveArtifactContext(BaseModel):
-    """用户发起 Turn 时显式选中的页面上下文。"""
+    """用户发起 Turn 时显式选中的页面上下文。
+
+    scene_number（W1-03）：仅 script_draft 合法，表示用户正在看/选中
+    的场；服务端校验其存在于该确切版本。纳入 request_hash。
+    """
 
     model_config = {"extra": "forbid"}
 
     artifact_id: UUID
     artifact_type: str = Field(..., min_length=1, max_length=50)
     episode_number: int | None = Field(default=None, ge=1)
+    scene_number: int | None = Field(
+        default=None, ge=1,
+        description="剧本内的场景锚点（仅 script_draft 合法，服务端校验存在）",
+    )
     version: int | None = Field(default=None, ge=1)
     checksum: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+class ArtifactCitation(BaseModel):
+    """解释引文的服务端结构（W1-03，Message.metadata.explanation_citations）。
+
+    服务端回填 artifact_id/version/checksum（模型只输出 source_index）；
+    引文必须经原文归一化匹配验证，否则不进入该结构。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    artifact_id: UUID
+    version: int
+    scene_number: int | None = Field(default=None, ge=1)
+    quote: str = Field(..., min_length=1, max_length=200)
+    checksum: str = Field(..., min_length=64, max_length=64)
 
 
 class ActionTarget(BaseModel):

@@ -3001,6 +3001,8 @@ Prompt 必须区分：
 
 | W1-04+05 | 诚实性三连：Outcome unverified 语义 / 固定版本导出 / input_hash 项目隔离 | 2d | W1-01 | DONE | AI Agent | 2026-09-13：AgentOutcome 增 verification_status/constraint_checks/evidence_refs，服务端退出无正文语义判断（零模型调用，自然语言要求一律 unverified 待作者判断，不混入 remaining、不触发改稿计划）；结果消息分离"未完成/待判断"，前端 OutcomeEvidenceView 共享组件 + MessageList 完整内容渲染；导出选择接受时冻结为显式 Artifact ID（ExportService.resolve_selection，显式缺项/空/跨项目/同集多版本 422 EXPORT_SELECTION_INVALID，错配评估剔除+警告），result_artifact_ids 指向 export_file，GET /projects/{id}/exports 服务端历史，前端导出中心切后端（轮询 Run+固定下载，删浏览器序列化 ~450 行，转义回归转后端 test_export_markdown）；find_by_input_hash 加项目过滤。测试：exports API +3（冻结/字节一致/422 四连/错配/历史）、outcome 单测重写、repository 跨项目、export_markdown 转义、前端 exports 重写；后端全量 exit 0 + 前端 202 passed；详见 DEV_LOG 2026-09-13 |
 
+| W1-03 | 明确目标直达与有原文的解释 | 2.5d | W1-01,W1-04 | DONE | AI Agent | 2026-09-13：预检 v1.4（明确对象/集数含中文数字直达，多目标追问，优先级=文本>上下文）；ArtifactExplainerSkill + artifact_explainer v1.0.0（模型仅 source_index，服务端回填 ArtifactCitation 并以共用 text_evidence 算法验证引文，伪造剔除/跨场纠正/无有效引文→有限答复/模型失败降级）；build_explanation_context（短只读事务/按场景组装/超预算窄化/历史版本只读允许）；Turn 级预算包住 Planner+解释；修 [:12000] 二次截断；ActiveArtifactContext.scene_number（校验+request_hash）；前端引文卡片。测试：planner 6/explainer 7/集成 11/evals+5/前端 1；全量绿；详见 DEV_LOG 2026-09-13 |
+
 ### 13.3 阶段验收记录
 
 | Gate | 计划日期 | 实际日期 | 结果 | 验收人 | 证据 | 遗留问题 |

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
@@ -54,6 +55,7 @@ from app.db.repositories.artifacts import ArtifactRepository
 from app.domain.agent_command import (
     ActionStep,
     ActionTarget,
+    ActiveArtifactContext,
     AgentActionPlan,
     AgentActionResponse,
     AgentActionStatus,
@@ -73,6 +75,7 @@ from app.domain.agent_command import (
 )
 from app.domain.agent_planner import AgentPlannerInput, AgentPlannerOutput
 from app.domain.conversation import ConversationCreate, MessageCreate
+from app.llm.budget import enter_run, exit_run
 from app.prompts.loader import PromptLoader
 from app.skills.agent_command_planner import (
     DEFAULT_AVAILABLE_INTENTS,
@@ -90,6 +93,10 @@ from app.skills.agent_shortcut import (
 )
 
 logger = get_logger(__name__)
+
+# 单 Turn 模型调用护栏（W1-03）：Planner + 解释共用一个预算上下文
+_TURN_SOFT_CALLS = 4
+_TURN_HARD_CALLS = 6
 
 # intent → WorkflowRun action 的固定映射;explain 不创建 Run(DESIGN §6.2)。
 INTENT_RUN_ACTION: dict[str, str] = {
@@ -421,41 +428,66 @@ class AgentCommandService:
             target_episode_count=max(1, project.target_episode_count),
             available_intents=await self._available_intents(db, project),
             active_context=active_context,
-            project_context=context_text[:12000],
+            # W1-03：builder 已按 token 预算裁剪（受保护段超限即抛错），
+            # 不再做第二次字符截断——那会把受保护目标切掉
+            project_context=context_text,
             unresolved_turn_count=unresolved,
         )
 
-        # ---- Planner(唯一无事务段) ----
+        # ---- Planner + 内容解释（无事务段；共用单 Turn 预算，W1-03） ----
+        budget_key = f"turn:{turn_id}"
+        # Planner（含其内部重试）+ 解释（一次）合计的调用护栏；token
+        # 上限是权威约束（agent_turn_max_tokens），调用数为防失控兜底
+        enter_run(
+            budget_key,
+            soft_calls=_TURN_SOFT_CALLS,
+            hard_calls=_TURN_HARD_CALLS,
+            hard_tokens=self._settings.agent_turn_max_tokens,
+        )
         try:
-            output = await self._planner_skill.execute(
-                {
-                    "input": planner_input,
-                    "agent": self._planner_agent,
-                    "prompt_loader": self._prompt_loader,
-                }
-            )
-        except Exception as exc:
-            logger.exception("Planner 执行失败: turn=%s", turn_id)
-            return await self._fail_turn(db, turn_id, conv_id, lease_owner, exc)
+            try:
+                output = await self._planner_skill.execute(
+                    {
+                        "input": planner_input,
+                        "agent": self._planner_agent,
+                        "prompt_loader": self._prompt_loader,
+                    }
+                )
+            except Exception as exc:
+                logger.exception("Planner 执行失败: turn=%s", turn_id)
+                return await self._fail_turn(db, turn_id, conv_id, lease_owner, exc)
 
-        # ---- 事务 B:写入终态并终结 Turn ----
-        try:
-            final_turn = await self._finalize_turn(
-                db, turn_id, conv_id, lease_owner, output, project, content,
-                target_episode_count=target_episode_count,
-                staged=staged,
-            )
-        except AgentStateTransitionError:
-            # 租约被接管(超期后他人完成):放弃本次结果,返回持久化胜者。
-            await db.rollback()
-            return await self._duplicate_outcome(db, turn_id)
-        except Exception as exc:
-            # 事务 B 失败(如 revise_script 目标集无有效剧本):
-            # Turn 不能停留在 planning,统一落 failed 终态。
-            logger.exception("Turn 终态写入失败: turn=%s", turn_id)
-            await db.rollback()
-            return await self._fail_turn(db, turn_id, conv_id, lease_owner, exc)
-        return await self._turn_response(db, final_turn), 200
+            # W1-03：内容性解释读取确切原文作答（覆盖 Planner 的泛化答复），
+            # 无解释目标（None）时保留 Planner 答复（项目级状态类问题）
+            explanation_citations: list[dict[str, Any]] | None = None
+            if output.turn_type == "answer" and output.intent == "explain":
+                composed = await self._explain_content(
+                    db, project, content, active_context
+                )
+                if composed is not None:
+                    output, explanation_citations = composed
+
+            # ---- 事务 B:写入终态并终结 Turn ----
+            try:
+                final_turn = await self._finalize_turn(
+                    db, turn_id, conv_id, lease_owner, output, project, content,
+                    target_episode_count=target_episode_count,
+                    staged=staged,
+                    explanation_citations=explanation_citations,
+                )
+            except AgentStateTransitionError:
+                # 租约被接管(超期后他人完成):放弃本次结果,返回持久化胜者。
+                await db.rollback()
+                return await self._duplicate_outcome(db, turn_id)
+            except Exception as exc:
+                # 事务 B 失败(如 revise_script 目标集无有效剧本):
+                # Turn 不能停留在 planning,统一落 failed 终态。
+                logger.exception("Turn 终态写入失败: turn=%s", turn_id)
+                await db.rollback()
+                return await self._fail_turn(db, turn_id, conv_id, lease_owner, exc)
+            return await self._turn_response(db, final_turn), 200
+        finally:
+            exit_run(budget_key)
 
     async def get_turn(self, db: AsyncSession, turn_id: uuid.UUID) -> AgentTurnResponse:
         """查询 Turn 的持久化快照(含关联 Action)。"""
@@ -745,6 +777,131 @@ class AgentCommandService:
             intents.append("continue")
         return intents
 
+    @staticmethod
+    def _limited_answer(
+        text: str,
+    ) -> tuple[AgentPlannerOutput, list[dict[str, Any]]]:
+        """解释路径的有限答复（窄化/无正文/失败/无引文共用）：不带引文。"""
+        return (
+            AgentPlannerOutput(turn_type="answer", intent="explain", answer=text),
+            [],
+        )
+
+    async def _explain_content(
+        self,
+        db: AsyncSession,
+        project: Project,
+        user_request: str,
+        active_context: ActiveArtifactContext | None,
+    ) -> tuple[AgentPlannerOutput, list[dict[str, Any]]] | None:
+        """内容性解释（W1-03）：读确切原文 → 模型作答 → 验证引文回填。
+
+        读取在只读事务内完成并先提交（模型调用期间零事务）；引文必须
+        在指定版本/场景的原文中出现，服务端回填 artifact_id/version/
+        checksum（模型只输出 source_index）。无解释目标返回 None（回落
+        Planner 的项目级答复）。解释无 Run/Action/Artifact 写入。
+        """
+        from app.domain.agent_planner import (
+            ArtifactExplanationInput,
+            ExplanationSourceText,
+        )
+        from app.skills.artifact_explainer import ArtifactExplainerSkill
+
+        try:
+            ctx = await self._context_service.build_explanation_context(
+                db, project, user_request, active_context
+            )
+            await db.commit()  # 成功路径：关闭只读事务（模型调用期间零事务）
+        except Exception:
+            # 读取失败回滚（不留半开事务），降级为有限答复——解释是辅助
+            # 能力，不应让整个 Turn 失败
+            with contextlib.suppress(Exception):
+                await db.rollback()
+            logger.exception("解释上下文构建失败，降级为有限答复")
+            return self._limited_answer("原文读取暂时失败，稍后再试一次。")
+        if ctx is None:
+            return None
+
+        if ctx.status == "narrow":
+            return self._limited_answer(
+                "要准确回答这个问题，我需要更具体的范围——"
+                "请告诉我具体哪一集，或先在剧本页选中某一场再问；"
+                "我不会在没读完正文的情况下猜测剧情。"
+            )
+        if ctx.status == "no_text":
+            return self._limited_answer(
+                "这份稿件还没有可阅读的正文（可能只有标题），暂时无法回答剧情问题。"
+            )
+
+        exp_input = ArtifactExplanationInput(
+            question=ctx.question[:4000],
+            target_label=(
+                f"第 {ctx.target.episode} 集 v{ctx.target.version}"
+                if ctx.target.type == "script_draft"
+                else f"{ctx.target.type} v{ctx.target.version}"
+            ),
+            sources=[
+                ExplanationSourceText(
+                    source_index=src.source_index,
+                    kind=src.kind,
+                    label=src.label,
+                    scene_number=src.scene_number,
+                    text=src.text[:60000],
+                )
+                for src in ctx.sources
+            ],
+        )
+        try:
+            result = await ArtifactExplainerSkill().execute(
+                {
+                    "input": exp_input,
+                    "agent": self._planner_agent,
+                    "prompt_loader": self._prompt_loader,
+                }
+            )
+        except Exception as exc:
+            # 解释是辅助能力（最多一次生成、无自定义重试）：任何失败
+            # 都不炸 Turn，降级为"暂不可用"的有限答复
+            logger.warning("解释模型调用失败，降级为有限答复: %s", exc)
+            return self._limited_answer(
+                "原文解释暂时不可用；你可以先看稿件原文，或稍后再问一次。"
+            )
+
+        if not result.citations:
+            # 诚实性：没有可验证引文 = 原文不足以确认——不附带未核实的解释
+            return self._limited_answer(
+                "我读了这份稿件，但没能从原文中确认这个问题的答案"
+                "（引用的原文无法定位）。换个问法，或直接告诉我你"
+                "在正文里看到的位置。"
+            )
+
+        # 引文回填：source_index → 目标 Artifact 的 UUID/version/checksum
+        target_id = ctx.target.artifact_id
+        target_version = ctx.target.version
+        target_checksum = ctx.target.checksum
+        citations_meta = [
+            {
+                "artifact_id": target_id,
+                "version": target_version,
+                "scene_number": c["scene_number"],
+                "quote": c["quote"],
+                "checksum": target_checksum,
+            }
+            for c in result.citations
+        ]
+        # 引用行附在答复后，读者可直接核对原文
+        citation_lines = "\n".join(
+            f"> 引文（第 {c['scene_number']} 场）：{c['quote']}"
+            if c["scene_number"] is not None
+            else f"> 引文：{c['quote']}"
+            for c in citations_meta
+        )
+        answer = f"{result.answer}\n\n{citation_lines}"
+        return (
+            AgentPlannerOutput(turn_type="answer", intent="explain", answer=answer),
+            citations_meta,
+        )
+
     async def _try_shortcut(
         self,
         db: AsyncSession,
@@ -942,6 +1099,7 @@ class AgentCommandService:
         user_request: str,
         target_episode_count: int | None = None,
         staged: bool = True,
+        explanation_citations: list[dict[str, Any]] | None = None,
     ) -> AgentTurn:
         """事务 B:按 Planner 输出写入 clarification/answer/plan 并终结 Turn。"""
         turn_repo = AgentTurnRepository(db)
@@ -965,15 +1123,20 @@ class AgentCommandService:
                 response_message_id=msg.id,
             )
         elif output.turn_type == "answer" or output.intent == "explain":
-            # explain 归一化为只读答复,不落 AgentAction。
+            # explain 归一化为只读答复,不落 AgentAction。W1-03：内容性解释
+            # 的引文（已验证的原文 ArtifactCitation）随消息 metadata 回放。
             content = output.answer or self._render_explain_answer(output)
+            answer_metadata: dict[str, Any] = {"agent_turn_id": str(turn_id)}
+            if explanation_citations:
+                answer_metadata["explanation_citations"] = explanation_citations
+                answer_metadata["message_type"] = "explanation"
             msg = await self._append_message(
                 db,
                 conversation_id,
                 role="assistant",
                 content=content,
                 kind="text",
-                metadata={"agent_turn_id": str(turn_id)},
+                metadata=answer_metadata,
             )
             turn = await turn_repo.transition(
                 turn_id,

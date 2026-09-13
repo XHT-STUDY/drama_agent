@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
+  "version": "2",
   "cases": [
     {
       "id": "cmd-001",
@@ -1158,6 +1158,101 @@
       },
       "preflight_deterministic": false,
       "note": ""
+    },
+    {
+      "id": "cmd-061",
+      "user_request": "修改第3集剧本",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 3
+      },
+      "preflight_deterministic": false,
+      "note": "W1-03 明确集数无 active 直达（不再要求先选上下文）"
+    },
+    {
+      "id": "cmd-062",
+      "user_request": "修改第2集和第5集",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": "W1-03 多目标并改：一次只改一个，追问选择"
+    },
+    {
+      "id": "cmd-063",
+      "user_request": "改第三集",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "plan",
+        "intent": "revise_script",
+        "episode_number": 3
+      },
+      "preflight_deterministic": false,
+      "note": "W1-03 中文数字集数解析"
+    },
+    {
+      "id": "cmd-064",
+      "user_request": "第三集这场翻脸为什么这么突然",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "answer",
+        "intent": "explain"
+      },
+      "preflight_deterministic": false,
+      "note": "W1-03 内容性问题路由 explain（服务端读原文作答）"
+    },
+    {
+      "id": "cmd-065",
+      "user_request": "当前稿这场为什么突然翻脸",
+      "active_context": null,
+      "available_intents": [
+        "create_script",
+        "explain",
+        "evaluate",
+        "revise_script",
+        "revise_outline"
+      ],
+      "target_episode_count": 10,
+      "expected": {
+        "turn_type": "clarification"
+      },
+      "preflight_deterministic": true,
+      "note": "W1-03 指代无上下文仍澄清（内容问题也不例外）"
     }
   ]
 }

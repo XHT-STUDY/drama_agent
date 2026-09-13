@@ -1171,6 +1171,13 @@ def _register_fake_fixtures(llm: Any) -> None:
 
     llm.register("normalize_requirement", NormalizedRequirement.model_validate(_load("requirement_football")))
     llm.register("story_bible", StoryBible.model_validate(_load("story_bible_football")))
+    # 原文解释 fixture（W1-03）：引文须能在 script_draft_valid 场景文本中溯源
+    from app.domain.agent_planner import ArtifactExplanationOutput
+
+    llm.register(
+        "artifact_explainer",
+        ArtifactExplanationOutput.model_validate(_load("artifact_explanation_valid")),
+    )
     llm.register("outline", EpisodeOutlineSet.model_validate(_load("outline_set_valid")))
     llm.register("write_episode", ScriptDraft.model_validate(_load("script_draft_valid")))
     # 评估 fixture：默认 golden 高分报告（服务端回填 need_revision=False → 走 finalize/completed）。

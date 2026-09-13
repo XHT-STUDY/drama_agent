@@ -307,6 +307,42 @@ describe("ActionPlanCard", () => {
     expect(screen.queryByTestId("result-goal-status")).toBeNull();
   });
 
+  it("W1-03 解释消息渲染引文链接（锚定解释时版本）", () => {
+    const messages = [
+      msg({
+        content: "这场是林峰被淘汰后的不甘爆发。\n> 引文（第 2 场）：……五年。",
+        kind: "text",
+        metadata: {
+          message_type: "explanation",
+          explanation_citations: [
+            {
+              artifact_id: "00000000-0000-0000-0000-000000000010",
+              version: 2,
+              scene_number: 2,
+              quote: "……五年。从十四岁到现在。",
+              checksum: "0".repeat(64),
+            },
+          ],
+        },
+        sequence: 5,
+      }),
+    ];
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: qc() },
+        React.createElement(MessageList, { messages, projectId: "p1" }),
+      ),
+    );
+    const block = screen.getByTestId("explanation-citations");
+    expect(block.textContent).toContain("第 2 场");
+    expect(block.textContent).toContain("v2");
+    const link = block.querySelector("a");
+    expect(link?.getAttribute("href")).toContain(
+      "/projects/p1/versions?artifact=00000000-0000-0000-0000-000000000010",
+    );
+  });
+
   it("W1-04 旧结果消息（无核验字段）标注历史未记录逐项核验", () => {
     const messages = [
       msg({

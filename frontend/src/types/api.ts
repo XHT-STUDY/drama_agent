@@ -672,8 +672,19 @@ export interface ActiveArtifactContext {
   artifact_id: string;
   artifact_type: string;
   episode_number?: number | null;
+  /** 剧本内的场景锚点（W1-03）：仅 script_draft 合法，服务端校验存在 */
+  scene_number?: number | null;
   version?: number | null;
   checksum?: string | null;
+}
+
+/** 解释引文（W1-03）：服务端验证原文后回填，锚定解释时的确切稿件版本 */
+export interface ExplanationCitation {
+  artifact_id: string;
+  version: number;
+  scene_number?: number | null;
+  quote: string;
+  checksum: string;
 }
 
 /** 来源 Artifact 的版本与 checksum 快照（confirm 过期检测依据） */

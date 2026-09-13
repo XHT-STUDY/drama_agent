@@ -13,7 +13,12 @@
  */
 
 import type { ReactNode } from "react";
-import type { AgentOutcome, ChatMessage, ConstraintCheck } from "@/types/api";
+import type {
+  AgentOutcome,
+  ChatMessage,
+  ConstraintCheck,
+  ExplanationCitation,
+} from "@/types/api";
 import { OutcomeEvidenceView } from "./OutcomeEvidenceView";
 
 interface Props {
@@ -122,6 +127,8 @@ export function MessageList({ messages, projectId, renderPlanCard, pendingConten
           );
         }
         const isUser = message.role === "user";
+        const citations = (message.metadata as { explanation_citations?: ExplanationCitation[] })
+          .explanation_citations;
         return (
           <div key={message.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
             <div
@@ -132,6 +139,21 @@ export function MessageList({ messages, projectId, renderPlanCard, pendingConten
               }`}
             >
               <p className="message-body whitespace-pre-wrap">{message.content}</p>
+              {/* W1-03 解释引文：锚定解释时的确切版本（新稿生成不改变引用） */}
+              {citations && citations.length > 0 && projectId && (
+                <div className="mt-1 space-y-1" data-testid="explanation-citations">
+                  {citations.map((c, i) => (
+                    <a
+                      key={`${c.artifact_id}-${i}`}
+                      href={`/projects/${projectId}/versions?artifact=${c.artifact_id}`}
+                      className="block rounded border border-[var(--border)] bg-[var(--surface-muted)] px-2 py-1 text-xs text-[var(--text-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                    >
+                      {c.scene_number != null ? `第 ${c.scene_number} 场 · ` : ""}
+                      v{c.version}：「{c.quote}」
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         );

@@ -174,3 +174,77 @@ def test_planner_output_rejects_extra_fields() -> None:
         AgentPlannerOutput.model_validate(
             {"turn_type": "answer", "answer": "ok", "requires_confirmation": True}
         )
+
+
+# ========================================================================
+# W1-03：明确目标直达与集数解析
+# ========================================================================
+
+
+class TestExplicitTargetDirectW103:
+    """明确对象/集数的修改请求不再因缺少活动上下文而澄清。"""
+
+    @staticmethod
+    def _input(request: str, *, episodes: int = 10, active: Any = None) -> Any:
+        from app.domain.agent_planner import AgentPlannerInput
+
+        return AgentPlannerInput(
+            user_request=request,
+            project_title="测试",
+            target_episode_count=episodes,
+            available_intents=[
+                "create_script", "explain", "evaluate", "revise_script", "revise_outline",
+            ],
+            active_context=active,
+        )
+
+    def test_extract_episode_numbers_arabic_and_chinese(self) -> None:
+        from app.skills.agent_command_planner import extract_episode_numbers
+
+        assert extract_episode_numbers("修改第3集剧本") == [3]
+        assert extract_episode_numbers("改第三集") == [3]
+        assert extract_episode_numbers("第二十五集怎么样") == [25]
+        assert extract_episode_numbers("EP12 和 ep3") == [12, 3]
+        assert extract_episode_numbers("第十集") == [10]
+        assert extract_episode_numbers("随便改改") == []
+
+    def test_explicit_episode_without_active_passes_preflight(self) -> None:
+        """明确第 3 集、无活动上下文 → 不澄清（服务端解析目标）。"""
+        from app.skills.agent_command_planner import _preflight_clarification
+
+        assert _preflight_clarification(self._input("修改第3集剧本")) is None
+        assert _preflight_clarification(self._input("改第三集")) is None
+
+    def test_explicit_object_without_active_passes_preflight(self) -> None:
+        from app.skills.agent_command_planner import _preflight_clarification
+
+        assert _preflight_clarification(self._input("修改大纲，节奏快一点")) is None
+
+    def test_explicit_episode_beats_mismatched_active(self) -> None:
+        """当前看第 2 集但明确说改第 3 集 → 明确目标优先，不澄清。"""
+        from app.domain.agent_command import ActiveArtifactContext
+        from app.skills.agent_command_planner import _preflight_clarification
+
+        active = ActiveArtifactContext(
+            artifact_id=uuid4(),
+            artifact_type="script_draft",
+            episode_number=2,
+        )
+        assert _preflight_clarification(self._input("修改第3集", active=active)) is None
+
+    def test_multi_episode_revision_clarifies(self) -> None:
+        """一次改多集不偷偷选第一集——追问选择。"""
+        from app.skills.agent_command_planner import _preflight_clarification
+
+        output = _preflight_clarification(self._input("修改第2集和第5集"))
+        assert output is not None
+        assert output.turn_type == "clarification"
+        assert "一次修改一个目标" in (output.clarification_question or "")
+
+    def test_pure_reference_without_active_still_clarifies(self) -> None:
+        """仅"改这里"且无上下文 → 仍澄清（指代无法服务端解析）。"""
+        from app.skills.agent_command_planner import _preflight_clarification
+
+        output = _preflight_clarification(self._input("帮我改一下这里"))
+        assert output is not None
+        assert output.turn_type == "clarification"

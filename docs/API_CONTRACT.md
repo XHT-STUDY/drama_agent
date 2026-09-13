@@ -209,7 +209,8 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
   "content": "把第三集男女主冲突提前（1..4000 字）",
   "active_context": {
     "artifact_id": "uuid", "artifact_type": "script_draft",
-    "episode_number": 3, "version": 2, "checksum": "64-hex"
+    "episode_number": 3, "version": 2, "checksum": "64-hex",
+    "scene_number": 2
   },
   "idempotency_key": "client-generated-key（必填）"
 }
@@ -219,7 +220,9 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **`staged`（L-2，**默认 true**）**：分阶段创作是默认体验——create_script 计划带 `stop_after=outline`，Run 在 StoryBible 与分集大纲产出后转 `needs_review`（`run.needs_review` 事件 payload 含 `stage_gate=outline` 与 Artifact ID），不写剧本；用户在门上选择写 1 集 / 5 集 / 全部（L-4）。`staged=false` 为确认计划后一口气写完（legacy 直连 API 行为不变）。参与幂等 request_hash。
 
-**Planner v1.2**：典型创作请求（"我想写/帮我写一个 XX 故事"）直接判 `create_script` 不澄清；"先搭建设定和大纲""分阶段来"与默认流程一致，同样判 `create_script`（不是新意图）。白名单动态生成：项目存在停在确认门的 Run 时注入 `continue` 意图（"大纲可以了，开始写吧"→ continue 计划，`batch_size` 可选 1-50，缺省写剩余全部）；无门上 Run 时 `continue` 不可用，Planner 不会产出该意图（漂移防御：`GATED_RUN_NOT_FOUND`）。
+**Planner v1.4（W1-03 明确目标直达）**：典型创作请求（"我想写/帮我写一个 XX 故事"）直接判 `create_script` 不澄清；"先搭建设定和大纲""分阶段来"与默认流程一致，同样判 `create_script`（不是新意图）。白名单动态生成：项目存在停在确认门的 Run 时注入 `continue` 意图（"大纲可以了，开始写吧"→ continue 计划，`batch_size` 可选 1-50，缺省写剩余全部）；无门上 Run 时 `continue` 不可用，Planner 不会产出该意图（漂移防御：`GATED_RUN_NOT_FOUND`）。**预检只在真多义时澄清**：文本明确写出对象（大纲/剧本/设定）或集数（阿拉伯与中文数字，"第3集""第三集"）时不再因缺少活动上下文追问——目标由服务端解析；多目标并改（"修改第2集和第5集"）追问选择（一次只改一个）；目标优先级固定：明确文本指定 > 活动上下文 > 无目标。
+
+**内容解释（W1-03 有原文的解释）**：剧情/场景/人物动机等正文问题由 Planner 判 `answer + intent=explain`，服务端读取**确切稿件原文**作答（`AgentContextService.build_explanation_context`：目标优先级同上；活动上下文的历史版本允许只读解释；正文按场景组装并沿用 `agent_context_budget_tokens` 预算，超预算且未选定单场时提示缩小范围而非截断后假装读完）。解释经 `artifact_explainer` v1.0.0（模型只输出 source_index + 逐字引文），引文用与评估 evidence 共用的原文归一化算法验证（`tools/text_evidence`），服务端回填 `Message.metadata.explanation_citations`（`{artifact_id, version, scene_number, quote, checksum}`）——引文锚定解释时的确切版本，之后的新稿不改变引用。全部引文无法溯源 → 返回"原文不足以确认"的有限答复（不附带未核实解释）；解释模型失败降级为"解释暂不可用"（Turn 不失败）。解释无 Run/Action/Artifact 写入，同 Turn 重放返回原结果不二次调用；Planner 与解释共用单 Turn 预算（`agent_turn_max_tokens`）。`active_context.scene_number`（仅 script_draft 合法且须存在于该确切版本，否则 409 `INVALID_ACTIVE_CONTEXT`）参与 request_hash。
 
 **续跑（L-3，W1-01 幂等收据版）**：`POST /runs/{id}/continue`——仅 `needs_review` 且 `stage_gate=outline/scripts` 的 Run 可续（否则 409 `RUN_NOT_RETRYABLE`；活跃中不同键重复续跑 409 `RUN_ALREADY_ACTIVE`）。**请求体必填 `expected_stage_generation`（客户端所见 Run 世代，`GET /runs/{id}` 返回）与 `idempotency_key`（≥8 字符）；旧客户端裸请求返回 422（版本化升级，防止旧请求重放多写一批）**。语义：
 

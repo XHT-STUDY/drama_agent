@@ -38,6 +38,13 @@ from app.domain.rubric import Rubric, load_rubric
 from app.prompts.loader import PromptLoader
 from app.skills.protocol import Skill, SkillMetadata
 from app.tools.script_structure import ScriptStructureTool
+from app.tools.text_evidence import (
+    normalize_text as _normalize_text,  # noqa: F401 — 评估引用匹配共用（W1-03）
+)
+from app.tools.text_evidence import (
+    scene_texts_from_content,
+    verify_quote,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +52,6 @@ logger = logging.getLogger(__name__)
 _EVIDENCE_MAX_LENGTH = 200
 # 低分维度自动补 issue 的阈值
 _LOW_DIMENSION_THRESHOLD = 70
-# 归一化时移除的字符：所有空白 + 中英文标点（引用漂移最常见的差异来源）
-_NORMALIZE_STRIP_RE = re.compile(r"[\s，。！？；：、“”‘’（）《》〈〉【】—…·,.\!?;:\"'()\[\]<>{}]")
-
-
-def _normalize_text(text: str) -> str:
-    """归一化文本用于引用匹配：去空白与标点、转小写。
-
-    LLM 摘抄常伴随标点改写或换行差异，归一化后做子串匹配
-    可以容忍这类无关差异，只惩罚实质性的内容改写。
-    """
-    return _NORMALIZE_STRIP_RE.sub("", text).lower()
 
 
 class EvaluationSkillValidationError(Exception):
@@ -234,14 +230,10 @@ class EvaluationSkill(Skill):
 
     @staticmethod
     def _scene_texts(ev_input: EvaluationInput) -> dict[int, str]:
-        """按场次汇总可检索文本（动作描写 + 对白）。"""
-        texts: dict[int, str] = {}
-        for scene in ev_input.script_draft.scenes:
-            parts = [scene.action or ""]
-            for line in scene.dialogue or []:
-                parts.append(line.text or "")
-            texts[scene.scene_number] = "".join(parts)
-        return texts
+        """按场次汇总可检索文本（动作描写 + 对白；共用纯函数）。"""
+        return scene_texts_from_content(
+            ev_input.script_draft.model_dump(mode="json")
+        )
 
     def _verify_evidence(
         self,
@@ -253,7 +245,7 @@ class EvaluationSkill(Skill):
     ) -> None:
         """对单维度评估明细的 evidence 逐条溯源校验（原地修改）。
 
-        策略（软校验，不阻断）：
+        策略（软校验，不阻断，算法在 tools/text_evidence.py 与解释引文共用）：
         - 场次有效且引用能在该场匹配 → verified=True；
         - 所引场次匹配失败但能在其他场找到 → 自动纠正场次号并记录日志；
         - 全文都无法匹配 → verified=False（前端呈现"未验证引用"）。
@@ -261,18 +253,8 @@ class EvaluationSkill(Skill):
         for cite in assessment.evidence:
             if len(cite.quote) > _EVIDENCE_MAX_LENGTH:
                 cite.quote = cite.quote[:_EVIDENCE_MAX_LENGTH]
-            norm_quote = _normalize_text(cite.quote)
-            if not norm_quote:
-                cite.verified = False
-                continue
-
-            if cite.scene_number is not None:
-                scene_text = _normalize_text(scene_texts.get(cite.scene_number, ""))
-                if norm_quote in scene_text:
-                    cite.verified = True
-                    continue
-                # 跨场漂移：全文检索，命中则纠正场次号
-                corrected = self._find_scene(norm_quote, scene_texts)
+            verified, corrected = verify_quote(cite.quote, cite.scene_number, scene_texts)
+            if verified:
                 if corrected is not None:
                     logger.warning(
                         "第 %d 集 %s 维度 evidence 场次漂移: %s → %s，已纠正",
@@ -280,29 +262,13 @@ class EvaluationSkill(Skill):
                         cite.scene_number, corrected,
                     )
                     cite.scene_number = corrected
-                    cite.verified = True
-                    continue
+                cite.verified = True
             else:
-                # 全集性证据：与全文匹配即可
-                if norm_quote in full_text:
-                    cite.verified = True
-                    continue
-
-            cite.verified = False
-            logger.warning(
-                "第 %d 集 %s 维度 evidence 无法在剧本原文中溯源，标记未验证",
-                report.episode_number, dim.value,
-            )
-
-    @staticmethod
-    def _find_scene(
-        norm_quote: str, scene_texts: dict[int, str]
-    ) -> int | None:
-        """在全部场次中检索引用，返回命中的场次号。"""
-        for scene_number, text in scene_texts.items():
-            if norm_quote in _normalize_text(text):
-                return scene_number
-        return None
+                cite.verified = False
+                logger.warning(
+                    "第 %d 集 %s 维度 evidence 无法在剧本原文中溯源，标记未验证",
+                    report.episode_number, dim.value,
+                )
 
     # ---- 大纲兑现缺口软门禁 ----
 

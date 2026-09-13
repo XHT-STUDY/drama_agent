@@ -1,0 +1,17 @@
+{
+  "expected_output": {
+    "answer": "这一场的冲突核心是林峰被淘汰后的不甘——深夜独自加练，遇到神秘老者。原文依据如下。",
+    "citations": [
+      {
+        "source_index": 2,
+        "scene_number": 2,
+        "quote": "……五年。从十四岁到现在。"
+      },
+      {
+        "source_index": 3,
+        "scene_number": null,
+        "quote": "被青训队抛弃的足球少年林峰"
+      }
+    ]
+  }
+}

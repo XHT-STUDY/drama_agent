@@ -14,8 +14,15 @@ from typing import Any, cast
 from app.agents.base import BaseAgent
 from app.core.errors import AppError
 from app.domain.agent_planner import (
+    TARGET_KEYWORDS,
     AgentPlannerInput,
     AgentPlannerOutput,
+)
+from app.domain.agent_planner import (
+    TARGET_OUTLINE_RE as _TARGET_OUTLINE_RE,
+)
+from app.domain.agent_planner import (
+    TARGET_STORY_BIBLE_RE as _TARGET_STORY_BIBLE_RE,
 )
 from app.prompts.loader import PromptLoader
 from app.skills.protocol import Skill, SkillMetadata
@@ -30,9 +37,62 @@ DEFAULT_AVAILABLE_INTENTS = (
 
 _REVISION_RE = re.compile(r"(修改|修订|改写|重写|调整|润色|删掉|增加|替换)")
 _CONTEXT_REFERENCE_RE = re.compile(r"(这里|此处|这个版本|当前稿|当前剧本|上面)")
+# 集数解析（W1-03）：阿拉伯数字与常见中文数字（一~九十九），如"第3集/第3集剧本/第三集/EP3"
 _EPISODE_RE = re.compile(
-    r"(?:第\s*|ep(?:isode)?[\s_-]*)(\d+)\s*(?:[集话回期])?", re.IGNORECASE
+    r"(?:第\s*|ep(?:isode)?[\s_-]*)(\d+|[一二两三四五六七八九十]+)\s*(?:[集话回期])?",
+    re.IGNORECASE,
 )
+# 明确写出的业务对象（有明确目标时不因缺少活动上下文而澄清，W1-03）。
+# 关键词表与 AgentContextService 的目标解析共用（domain/agent_planner.py）
+_EXPLICIT_OBJECT_RE = re.compile(
+    r"(" + "|".join(TARGET_KEYWORDS["outline"] + TARGET_KEYWORDS["story_bible"] + ["剧本"]) + r")",
+    re.IGNORECASE,
+)
+
+
+def _explicit_objects(request: str) -> set[str]:
+    """请求中明确点名的目标对象类别（outline / story_bible / script）。"""
+    objects: set[str] = set()
+    if _TARGET_OUTLINE_RE.search(request):
+        objects.add("outline")
+    if _TARGET_STORY_BIBLE_RE.search(request):
+        objects.add("story_bible")
+    if re.search(r"剧本", request):
+        objects.add("script")
+    return objects
+
+_CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _parse_cn_int(raw: str) -> int | None:
+    """中文数字（一~九十九）→ 整数；非法返回 None。"""
+    if raw.isdigit():
+        return int(raw)
+    if not raw:
+        return None
+    if raw == "十":
+        return 10
+    if "十" in raw:
+        high, _, low = raw.partition("十")
+        tens = _CN_DIGITS.get(high, 1) if high else 1
+        ones = _CN_DIGITS.get(low, 0) if low else 0
+        if (high and high not in _CN_DIGITS) or (low and low not in _CN_DIGITS):
+            return None
+        return tens * 10 + ones
+    if raw in _CN_DIGITS:
+        return _CN_DIGITS[raw]
+    return None
+
+
+def extract_episode_numbers(request: str) -> list[int]:
+    """提取请求中的全部集数（阿拉伯/中文），按出现顺序去重。"""
+    episodes: list[int] = []
+    for match in _EPISODE_RE.finditer(request):
+        value = _parse_cn_int(match.group(1))
+        if value is not None and value >= 1 and value not in episodes:
+            episodes.append(value)
+    return episodes
 _CONFLICT_RE = re.compile(
     r"(?:既[^。！？!?]{0,80}又|同时[^。！？!?]{0,80}(?:保留|删除|改为)|"
     r"(?:保留|删除)[^。！？!?]{0,50}(?:又|同时))"
@@ -77,13 +137,18 @@ def _clarification(question: str, unresolved_turn_count: int) -> AgentPlannerOut
 def _preflight_clarification(
     planner_input: AgentPlannerInput,
 ) -> AgentPlannerOutput | None:
-    """在调用模型前处理确定性歧义，避免模型猜测目标。"""
+    """在调用模型前处理确定性歧义，避免模型猜测目标（W1-03 收紧）。
+
+    只对真正缺目标/多义/冲突/越界的请求追问：文本明确写出对象
+    （大纲/剧本/设定）或集数（阿拉伯/中文数字）时直接放行——目标
+    解析是服务端能力，不应让用户学习"先选上下文"的操作规则。
+    """
 
     request = planner_input.user_request.strip()
     active = planner_input.active_context
-    episode_match = _EPISODE_RE.search(request)
-    if episode_match is not None:
-        episode_number = int(episode_match.group(1))
+    episodes = extract_episode_numbers(request)
+
+    for episode_number in episodes:
         if episode_number > planner_input.target_episode_count:
             return _clarification(
                 f"项目只有 {planner_input.target_episode_count} 集，"
@@ -98,17 +163,35 @@ def _preflight_clarification(
         )
 
     revision_requested = _REVISION_RE.search(request) is not None
-    if revision_requested and active is None:
-        return _clarification(
-            "你希望修改哪一个目标：大纲、剧本，还是指定集数？",
-            planner_input.unresolved_turn_count,
-        )
+    if revision_requested:
+        # 一次只改一个目标（W1-03）：多集并改、或同时点名大纲与剧本等
+        # 两类对象，都不偷偷选第一个
+        objects = _explicit_objects(request)
+        if len(episodes) > 1 or len(objects) > 1:
+            return _clarification(
+                "本阶段一次修改一个目标；请先告诉我这次要改哪一个"
+                "（你提到了多个目标），其他目标可以之后再改。",
+                planner_input.unresolved_turn_count,
+            )
+        # 明确对象（大纲/设定）或集数时不再追问（服务端解析目标）。
+        # 裸"剧本"不算明确目标——剧本是每集一份，还差集数或活动上下文
+        has_explicit_target = bool(episodes) or bool(objects - {"script"})
+        if not has_explicit_target and active is None:
+            return _clarification(
+                "你希望修改哪一个目标：大纲、剧本，还是指定集数？",
+                planner_input.unresolved_turn_count,
+            )
 
     if _CONTEXT_REFERENCE_RE.search(request) and active is None:
-        return _clarification(
-            "你提到“这里/当前稿”，但当前没有活动上下文；请先选择大纲、剧本或集数？",
-            planner_input.unresolved_turn_count,
-        )
+        # 指代（"这里/当前稿"）仍需要活动上下文；但若同句给了明确对象/集数，
+        # 明确目标优先（W1-03 优先级），不因缺少上下文追问
+        objects = _explicit_objects(request)
+        has_explicit_target = bool(episodes) or bool(objects - {"script"})
+        if not has_explicit_target:
+            return _clarification(
+                "你提到“这里/当前稿”，但当前没有活动上下文；请先选择大纲、剧本或集数？",
+                planner_input.unresolved_turn_count,
+            )
 
     if revision_requested and not (
         {"revise_outline", "revise_script"} & set(planner_input.available_intents)

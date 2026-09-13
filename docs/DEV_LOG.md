@@ -4,6 +4,61 @@
 
 ---
 
+## 2026-09-13 — W1-03 明确目标直达与有原文的解释
+
+**任务 ID：** W1-03（AGENT_NATIVE 阶段一）  
+**状态：** DONE  
+**日期：** 2026-09-13
+
+### 做了什么
+
+"修改第 3 集剧本"不再要求先选上下文；"这场为什么突然翻脸"读取确切稿件原文作答并逐条引用可核对的原文。
+
+1. **明确目标直达**：Planner 预检（v1.4）只在真多义时澄清——文本明确写出对象（大纲/剧本/设定）或集数（阿拉伯与中文数字，新增 `extract_episode_numbers` 支持"第三集/第二十五集/EP12"）时直接放行，目标由服务端解析；多目标并改（"修改第2集和第5集"）追问选择（一次只改一个，不偷偷选第一集）；指代（"这里/当前稿"）无上下文仍澄清。目标优先级固定：明确文本指定 > 活动上下文 > 无目标。
+2. **有原文的解释**：新增 `ArtifactExplainerSkill`（prompt `artifact_explainer` v1.0.0）——服务端把目标稿件正文按场景组装为带编号的原文来源，模型只输出 answer + source_index + 逐字引文；引文用与评估 evidence **共用**的原文归一化算法验证（`tools/text_evidence`：normalize/scene_texts/find_scene/verify_quote，自 Evaluator 私有实现提取，Evaluator 改为调用共用函数，不复制第二份算法），伪造引文剔除、跨场引文纠正场次；服务端回填 `Message.metadata.explanation_citations`（artifact_id/version/scene_number/quote/checksum——锚定解释时的确切版本，之后新稿不改变引用）。无有效引文 → "原文不足以确认"有限答复；模型失败降级"解释暂不可用"（Turn 不失败）。
+3. **解释上下文**：`AgentContextService.build_explanation_context`——短只读事务读正文后关闭再调模型；正文按场景组装并沿用 `agent_context_budget_tokens` 预算，超预算且未选定单场 → 提示缩小范围（不截断后假装读完）；剧本解释附带设定辅助来源。
+4. **API/Schema**：`ActiveArtifactContext.scene_number`（仅 script_draft 合法、须存在于确切版本、纳入 request_hash）；`ArtifactCitation` 服务端结构；Planner 与解释共用单 Turn 预算（`enter_run("turn:{id}")` 包住两次调用，hard_tokens=agent_turn_max_tokens，finally 清理）；修复 Planner 输入的 `[:12000]` 二次字符截断（builder 已按 token 预算裁剪且受保护段超限即抛错，二次截断会切掉受保护目标）。
+5. **前端**：解释消息渲染引文卡片（场次/版本/引文原文，链接锚定该 Artifact）；类型同步。
+
+### 为什么这么做
+
+- **明确目标不该被追问**：用户写了"第 3 集"，系统再问"改哪个目标"是在要求用户学习系统规则；集数解析（含中文数字）是确定性能力，放预检比指望模型稳定更可靠。
+- **解释必须读原文**：从标题和字数推断剧情是对读者的欺骗；解释器只拿服务端组装的原文来源，模型输出的每个 source_index 都能映射回确切 Artifact，引文逐字可核——与评估 evidence 共用同一验证算法，"引用是否真在剧本里"只有一个答案。
+- **诚实降级**：引文全部无法溯源时丢弃模型解释、给有限答复；正文太大时请用户缩小范围——两种情况都不假装完成了回答。
+- **预算归一**：Planner 与解释是同一次用户请求的两个模型调用，共享 turn 级 token 上限，不能因为多了一次调用而翻倍消耗。
+
+### 修改文件
+
+后端：`tools/text_evidence.py`（新增共用纯函数）、`skills/evaluator.py`（改调共用函数）、`skills/agent_command_planner.py`（预检 + 集数解析）、`skills/artifact_explainer.py`（新增）、`prompts/templates/agent_command_planner.md`（v1.4）+ `artifact_explainer.md`（新增）+ `manifest.yaml`、`prompts/loader.py`、`llm/openai_compatible.py`（模型路由）、`domain/agent_command.py`（scene_number/ArtifactCitation）、`domain/agent_planner.py`（解释 input/output schema + project_context 上限）、`application/agent_context_service.py`（build_explanation_context + scene 校验）、`application/agent_command_service.py`（explain 接线 + Turn 预算 + 截断修复）、`application/workflow_dispatcher.py`（FakeLLM fixture）；前端：`types/api.ts`、`MessageList.tsx`；golden：`artifact_explanation_valid.json`。
+
+测试：planner 预检 6 例（中文集数/明确对象/优先级/多目标/指代）、explainer 单测 7 例（验证/伪造/跨场/去重/越权 schema）、解释集成 11 例（上下文优先级/历史版本/单场窄化/无目标/超预算/scene 校验/Turn 引文回填/重放幂等/伪造降级/request_hash）、evals +5 例、前端引文渲染 1 例；全量后端与前端 205 例全绿。
+
+### 双轴审查后的追加修复
+
+- 解释上下文读取失败改为 rollback + 降级有限答复（原先 finally 里 commit 会提交失败读事务）；解释模型异常兜底从 AppError 扩到 Exception（LLM 超时不再让 Turn 停在 planning）。
+- 预检补多对象并改澄清（"大纲和第 2 集都改"）与裸"剧本"不算明确目标（剧本是每集一份，仍需集数或上下文）；目标关键词表收敛到 domain/agent_planner.py（Planner 预检与解释解析共用同一词表）。
+- 辅助来源（设定）纳入预算：总量超限优先丢辅助来源，正文不因辅助内容被挤掉。
+- 有限答复降级块提取 `_limited_answer`；Turn 预算调用数护栏提为常量；解释上下文 target 由 dict 改为 typed `ExplanationTarget`；application 层镜像的 ExplanationSource dataclass 删除、直接复用 domain 的 ExplanationSourceText。
+- 修复重放测试的空断言（`_calls` 不存在恒真 → 改用 FakeLLM 真实 `_attempt_count`）；补齐任务卡样例：超预算 narrow、title-only no_text（直插 ORM 模拟存量行）、中文集数端到端、解释后新稿生成引用仍锚定 v1。
+- 已知取舍：内容性 answer 未带 intent=explain 时仍走 Planner 泛化答复（服务端无法可靠识别"内容性"，依赖 prompt v1.4 路由 + 后续阶段引入正文证据链后收紧）；答复正文附带引文行（终端/纯文本消费者可读，前端另有链接卡片）。
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| 目标测试（planner/explainer/explanation/context/turns/evals/prompts/contract） | 全绿 |
+| `uv run pytest`（后端全量） | 全绿 |
+| `pnpm test`（前端 205 例）+ lint + tsc | 通过 |
+| `ruff` + `mypy`（改动文件） | 通过 |
+
+### 学到了什么
+
+1. **确定性解析要放在信任边界内**：中文集数解析放服务端预检而非 prompt 指望模型——白名单与越界检查也在这层，规则一处收敛。
+2. **共用算法提取的时机是第二个使用方出现时**：评估的引文溯源跑了很久才出现第二个消费者（解释），此时提取 `text_evidence` 恰好避免了两套"引用验证"各自漂移。
+3. **辅助能力失败不该拖垮主流程**：解释是增强不是关键路径——模型失败降级为有限答复，Turn 仍然成功；只有创作类失败才值得让用户看到 failed。
+
+---
+
 ## 2026-09-13 — 诚实性三连：Outcome unverified 语义、固定版本导出与 input_hash 项目隔离
 
 **任务 ID：** W1-04 + W1-05 + input_hash 项目过滤（AGENT_NATIVE 阶段一）  

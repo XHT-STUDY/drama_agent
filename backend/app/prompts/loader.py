@@ -85,7 +85,12 @@ def _auto_register_domain_schemas() -> None:
         AgentOutcomeEvaluatorInput,
         AgentOutcomeEvaluatorOutput,
     )
-    from app.domain.agent_planner import AgentPlannerInput, AgentPlannerOutput  # noqa: F401
+    from app.domain.agent_planner import (  # noqa: F401
+        AgentPlannerInput,
+        AgentPlannerOutput,
+        ArtifactExplanationInput,
+        ArtifactExplanationOutput,
+    )
     from app.domain.continuity import (  # noqa: F401
         CharacterState,
         ContinuityState,
@@ -171,6 +176,8 @@ def _auto_register_domain_schemas() -> None:
     register_schema("ImportClassification", ImportClassification)
     register_schema("AgentPlannerInput", AgentPlannerInput)
     register_schema("AgentPlannerOutput", AgentPlannerOutput)
+    register_schema("ArtifactExplanationInput", ArtifactExplanationInput)
+    register_schema("ArtifactExplanationOutput", ArtifactExplanationOutput)
     register_schema("OutlineRevisionInput", OutlineRevisionInput)
     register_schema("AgentOutcomeEvaluatorInput", AgentOutcomeEvaluatorInput)
     register_schema("AgentOutcomeEvaluatorOutput", AgentOutcomeEvaluatorOutput)
