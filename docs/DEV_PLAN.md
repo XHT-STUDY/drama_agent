@@ -3003,6 +3003,8 @@ Prompt 必须区分：
 
 | W1-03 | 明确目标直达与有原文的解释 | 2.5d | W1-01,W1-04 | DONE | AI Agent | 2026-09-13：预检 v1.4（明确对象/集数含中文数字直达，多目标追问，优先级=文本>上下文）；ArtifactExplainerSkill + artifact_explainer v1.0.0（模型仅 source_index，服务端回填 ArtifactCitation 并以共用 text_evidence 算法验证引文，伪造剔除/跨场纠正/无有效引文→有限答复/模型失败降级）；build_explanation_context（短只读事务/按场景组装/超预算窄化/历史版本只读允许）；Turn 级预算包住 Planner+解释；修 [:12000] 二次截断；ActiveArtifactContext.scene_number（校验+request_hash）；前端引文卡片。测试：planner 6/explainer 7/集成 11/evals+5/前端 1；全量绿；详见 DEV_LOG 2026-09-13 |
 
+| W1-02 | 同屏作品画布与 URL 状态 | 3d | W1-01..05 | DONE | AI Agent | 2026-09-13：三区布局（导航/画布/常驻会话，窄屏双 tab 不卸载）；use-workspace-location（artifact/scene/conversation/panel/compare/run，首载 replace 选稿/切稿 push/非法值清理+粘性提示）；ArtifactCanvas 复用五组件（评估按 source_script 匹配/跨版本禁跳转/diff/导出/资料面板/历史版本横幅）；active_context 从画布派生；草稿 sessionStorage 按 project+conversation + 会话切换清理；项目全部活跃 Run 状态区 + 终态失效；旧路由兼容重定向（/versions 保留——承载修订发起，决策见 DEV_LOG）；GET /artifacts/{id} 增 project_id 归属校验。测试：location 7/布局/草稿隔离/重定向/跨项目 404；前端 212 + 后端全量绿；详见 DEV_LOG 2026-09-13 |
+
 ### 13.3 阶段验收记录
 
 | Gate | 计划日期 | 实际日期 | 结果 | 验收人 | 证据 | 遗留问题 |

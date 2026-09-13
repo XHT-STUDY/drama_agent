@@ -9,7 +9,7 @@
  * - 页面刷新后恢复活跃 Run
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { Suspense, useState, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -136,7 +136,9 @@ export default function ProjectDetailPage() {
 
       {/* 对话式工作台（默认）或旧版输入 + 进度（回滚开关） */}
       {AGENT_WORKSPACE_ENABLED ? (
-        <AgentWorkspace projectId={projectId} project={project} />
+        <Suspense fallback={<Loading text="正在载入工作台…" />}>
+          <AgentWorkspace projectId={projectId} project={project} />
+        </Suspense>
       ) : (
         <div className="mb-6">
           <ChatInput

@@ -14,8 +14,31 @@ vi.mock("next/link", () => ({
   default: ({ children, href }: { children: React.ReactNode; href: string }) =>
     React.createElement("a", { href }, children),
 }));
+// W1-02：工作台使用 URL 导航事实——mock 提供 router/params 三件套。
+// URL 状态由测试用 pushUrl 模拟（searchParams 随之变化）
+const routerState = {
+  pathname: "/projects/p1",
+  search: "?artifact=00000000-0000-0000-0000-000000000001",
+  pushed: [] as string[],
+  replaced: [] as string[],
+};
+function pushUrl(url: string): void {
+  routerState.search = url.includes("?") ? url.slice(url.indexOf("?")) : "";
+}
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "p1" }),
+  usePathname: () => routerState.pathname,
+  useRouter: () => ({
+    push: (u: string) => {
+      routerState.pushed.push(u);
+      pushUrl(u);
+    },
+    replace: (u: string) => {
+      routerState.replaced.push(u);
+      pushUrl(u);
+    },
+  }),
+  useSearchParams: () => new URLSearchParams(routerState.search),
 }));
 
 import { AgentWorkspace } from "@/features/agent/AgentWorkspace";
@@ -187,6 +210,88 @@ describe("AgentWorkspace 澄清轮", () => {
 // ============================================================
 
 describe("空会话命令示例", () => {
+  it("W1-02 输入草稿按会话隔离：sessionStorage 存取、发送清除", async () => {
+    // 会话 A 的 Composer 输入未发送草稿
+    const { unmount } = render(
+      React.createElement(
+        QueryClientProvider,
+        { client: qc() },
+        React.createElement(AgentComposer, {
+          sending: false,
+          sendError: null,
+          failedContent: null,
+          onSend: () => {},
+          draftKey: "draft:p1:cA",
+        }),
+      ),
+    );
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "去看下 Diff 再回来" } });
+    await waitFor(() => {
+      expect(window.sessionStorage.getItem("draft:p1:cA")).toBe("去看下 Diff 再回来");
+    });
+    unmount();
+
+    // 会话 B 的 Composer 不串 A 的草稿
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: qc() },
+        React.createElement(AgentComposer, {
+          sending: false,
+          sendError: null,
+          failedContent: null,
+          onSend: () => {},
+          draftKey: "draft:p1:cB",
+        }),
+      ),
+    );
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+
+    window.sessionStorage.removeItem("draft:p1:cA");
+    window.sessionStorage.removeItem("draft:p1:cB");
+  });
+
+  it("W1-02 三区布局：导航/画布/常驻会话同屏，画布复用正文组件", async () => {
+    // 画布稿件（mock searchParams 默认指向 0000…0001）
+    route("GET", /\/artifacts\/00000000-0000-0000-0000-000000000001/, () => ({
+      id: "00000000-0000-0000-0000-000000000001",
+      project_id: "p1",
+      type: "script_draft",
+      version: 1,
+      episode_number: 1,
+      status: "valid",
+      content: {
+        title: "第一集",
+        scenes: [
+          {
+            scene_number: 1,
+            location: "天台",
+            time: "夜",
+            action: "少年独自加练。",
+            dialogue: [{ speaker: "林峰", text: "我还会回来的。" }],
+          },
+        ],
+      },
+      content_schema_version: "1.2",
+      prompt_version: "1.2.0",
+      created_at: NOW,
+      updated_at: NOW,
+    }));
+    setupWorkspace();
+
+    // 三区同屏：导航 + 画布 + 会话（Agent tab 存在于窄屏 tab 栏）
+    expect(await screen.findByTestId("work-nav")).toBeTruthy();
+    expect(await screen.findByTestId("artifact-canvas")).toBeTruthy();
+    expect(screen.getByTestId("canvas-artifact-meta").textContent).toContain("第 1 集");
+    // 正文复用 ScriptView（不复制第二套渲染；对白原文可见）
+    expect(screen.getByText("我还会回来的。")).toBeTruthy();
+    expect(screen.getByTestId("tab-agent")).toBeTruthy();
+    expect(screen.getByTestId("tab-work")).toBeTruthy();
+    // 消息区在 Agent pane 内（隐藏但仍挂载，切换不卸载）
+    await screen.findByTestId("empty-conversation", undefined, { timeout: 2000 });
+  });
+
   it("展示四个可点击示例，点击后可发送", async () => {
     setupWorkspace();
     route("POST", /\/projects\/p1\/agent\/turns$/, () => [
@@ -205,6 +310,16 @@ describe("空会话命令示例", () => {
       200,
     ]);
 
+    // W1-02 三区布局：Composer 随工作台立即渲染，但发送要等会话列表
+    // 就绪（conversationId 从 URL/列表解析）——以会话请求已发出且完成等待
+    await waitFor(
+      () => {
+        expect(calls.some((c) => c.url.includes("/projects/p1/conversations"))).toBe(true);
+      },
+      { timeout: 3000 },
+    );
+    // 会话请求已返回（mock 同步 resolve），给 React 状态一拍
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const examples = await screen.findAllByTestId("command-examples");
     expect(examples.length).toBeGreaterThan(0);
     const buttons = examples[0].querySelectorAll("button");

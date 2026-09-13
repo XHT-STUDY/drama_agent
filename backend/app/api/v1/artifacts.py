@@ -68,10 +68,25 @@ async def list_artifacts(
 async def get_artifact(
     artifact_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: Annotated[
+        uuid.UUID | None,
+        Query(description="归属校验（W1-02）：工作台固定传当前项目，跨项目 404"),
+    ] = None,
 ) -> dict[str, Any]:
-    """获取指定版本的 Artifact。"""
+    """获取指定版本的 Artifact。
+
+    project_id 提供时校验归属——工作台画布只渲染当前项目的稿件，
+    跨项目 Artifact 一律 404（不渲染正文、不区分"不存在"与"别人的"）。
+    """
     result = await _service.get_version(db, artifact_id)
+    if project_id is not None and str(result.project_id) != str(project_id):
+        from app.core.errors import NotFoundError
+
+        raise NotFoundError(
+            detail=f"Artifact 不存在: {artifact_id}", code="ARTIFACT_NOT_FOUND"
+        )
     return result.to_dict()
+
 
 
 @router.get("/artifacts/{artifact_id}/versions")

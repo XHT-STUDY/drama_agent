@@ -1,13 +1,15 @@
 "use client";
 
-/** AgentWorkspace — 对话式创作工作台（J-11，DESIGN §13）。
+/** AgentWorkspace — 同屏共创工作台（J-11 → W1-02 三区改造）。
  *
- * 双栏布局：左栏会话（选择/消息/Composer/内嵌 RunProgress），
- * 右栏项目上下文（产物索引 + active context + ActionPlanCard）。
- * 平板以下右栏收进抽屉；移动端单栏 + Composer 常驻底部。
+ * 布局：左侧作品导航 / 中央作品画布（正文最大面积）/ 右侧常驻 Agent
+ * 会话。窄屏用「作品 / Agent」两个原生 tab 切换（两区都保持挂载，
+ * 切换不卸载会话数据）。
  *
- * 两种模式共用后端 API 与 Artifact——本组件不复制任何状态，
- * Run 进度复用 useRunEvents，计划卡复用 useAgentAction。
+ * 导航事实在 URL（useWorkspaceLocation）：刷新/后退恢复确切稿件与
+ * 工具面板；消息与任务事件不改阅读选择——新稿完成只出现「打开本轮
+ * 新稿」按钮，点击才切换。活动上下文从正在阅读的稿件派生（打开作品
+ * 即上下文），不再有单独的"选中上下文"操作。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -15,41 +17,57 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { artifactsApi, conversationsApi, runsApi } from "@/lib/api-client";
+import { latestValidPerEpisode } from "@/lib/artifact-latest";
+import { EpisodeNav } from "@/features/episodes/EpisodeNav";
+import type { EpisodeNavItem } from "@/features/episodes/EpisodeNav";
 import { useAgentConversation } from "@/hooks/use-agent-conversation";
 import { useAgentActionEvents } from "@/hooks/use-agent-action";
 import { useRunEvents } from "@/hooks/use-run-events";
+import {
+  useWorkspaceLocation,
+  type WorkspacePanel,
+} from "@/hooks/use-workspace-location";
 import { ActionPlanCard } from "./ActionPlanCard";
 import { AgentComposer } from "./AgentComposer";
-import { ArtifactContextPanel } from "./ArtifactContextPanel";
+import { ArtifactCanvas } from "./ArtifactCanvas";
 import { ConversationPanel } from "./ConversationPanel";
 import { MessageList } from "./MessageList";
 import { RunProgress } from "@/features/runs/RunProgress";
-import type { ActiveArtifactContext, Project } from "@/types/api";
+import type { ActiveArtifactContext, Artifact, Project } from "@/types/api";
 
 interface Props {
   projectId: string;
   project: Project;
 }
 
+const RUN_ACTION_LABEL: Record<string, string> = {
+  create_script: "创作",
+  evaluate: "评估",
+  revise: "修订",
+  revise_script: "剧本修订",
+  revise_outline: "大纲修订",
+  import: "导入",
+  export: "导出",
+};
+
 export function AgentWorkspace({ projectId, project }: Props) {
   const queryClient = useQueryClient();
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [activeContext, setActiveContext] = useState<ActiveArtifactContext | null>(null);
+  const location = useWorkspaceLocation();
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileTab, setMobileTab] = useState<"work" | "agent">("work");
 
-  // 会话列表（选择/新建）
+  // ---- 会话：URL conversation 是恢复事实；未带时选第一个 ----
   const conversationsQuery = useQuery({
     queryKey: ["agent-conversations", projectId],
     queryFn: () => conversationsApi.list(projectId, 0, 50),
   });
   const currentConversationId =
-    selectedConversationId ?? conversationsQuery.data?.items[0]?.id ?? null;
+    location.conversationId ?? conversationsQuery.data?.items[0]?.id ?? null;
 
   const createConversation = useMutation({
     mutationFn: () => conversationsApi.create(projectId, { title: "新会话" }),
     onSuccess: (created) => {
-      setSelectedConversationId(created.id);
+      location.setConversation(created.id);
       void queryClient.invalidateQueries({ queryKey: ["agent-conversations", projectId] });
     },
   });
@@ -61,7 +79,28 @@ export function AgentWorkspace({ projectId, project }: Props) {
 
   const focusComposer = useCallback(() => {
     setComposerFocusSignal((n) => n + 1);
+    setMobileTab("agent");
   }, []);
+
+  // ---- 活动上下文：从正在阅读的稿件派生（打开作品即上下文，W1-02） ----
+  const readingArtifact = useQuery({
+    queryKey: ["artifact", location.artifactId, projectId],
+    enabled: location.artifactId !== null,
+    queryFn: () => artifactsApi.getById(location.artifactId!, projectId),
+    retry: false,
+  });
+  const activeContext: ActiveArtifactContext | null = useMemo(() => {
+    const a = readingArtifact.data;
+    if (!a) return null;
+    return {
+      artifact_id: a.id,
+      artifact_type: a.type,
+      episode_number: a.episode_number,
+      scene_number: a.type === "script_draft" ? location.scene : null,
+      version: a.version,
+      checksum: a.checksum ?? null,
+    };
+  }, [readingArtifact.data, location.scene]);
 
   const handleSend = useCallback(
     (content: string, options?: { episodeCount?: number }) => {
@@ -70,7 +109,27 @@ export function AgentWorkspace({ projectId, project }: Props) {
     [conversation, activeContext],
   );
 
-  // 待确认/执行中的计划：最近一条 action_plan 消息或刚产出的 Turn Action
+  // ---- 首载默认选稿：未带 artifact 时选最新可读作品并 replace 到确切 ID ----
+  const scriptsIndex = useQuery({
+    queryKey: ["project-scripts-index", projectId],
+    queryFn: () => artifactsApi.listAllByType(projectId, "script_draft"),
+  });
+  const defaultResolvedRef = useRef(false);
+  useEffect(() => {
+    if (location.artifactId !== null || defaultResolvedRef.current) return;
+    if (scriptsIndex.isLoading) return;
+    // 最新可读作品 = 已写集中集号最大的最新 valid 剧本
+    const picks = latestValidPerEpisode(scriptsIndex.data ?? []);
+    const pick = picks.length > 0 ? picks[picks.length - 1] : null;
+    defaultResolvedRef.current = true;
+    if (pick) {
+      location.replaceArtifact(pick.id);
+    }
+    // 无任何可读作品：保持无 artifact（空项目态，会话为主）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.artifactId, scriptsIndex.isLoading, scriptsIndex.data]);
+
+  // ---- 焦点计划卡（与消息流去重） ----
   const focusActionId = useMemo(() => {
     if (conversation.activeActionId) return conversation.activeActionId;
     const planMessages = conversation.messages.filter((m) => m.kind === "action_plan");
@@ -85,7 +144,7 @@ export function AgentWorkspace({ projectId, project }: Props) {
     if (lastTurnStatus === "needs_input") focusComposer();
   }, [lastTurnStatus, focusComposer]);
 
-  // 计划执行中（queued/running 且有 run_id）→ 内嵌 RunProgress
+  // ---- 焦点 Run（计划的执行段）：SSE 进度仍只订阅这一个 ----
   const actionForRun = useQuery({
     queryKey: ["agent-action", focusActionId],
     enabled: focusActionId !== null,
@@ -98,8 +157,6 @@ export function AgentWorkspace({ projectId, project }: Props) {
       return status === "queued" || status === "running" ? 2000 : false;
     },
   });
-  // L-3/L-4：Action 在门后停在 needs_review 不再变——执行中判定改由 Run 驱动
-  //（gated-run 查询与 ActionPlanCard 共享缓存；续跑后 RunProgress 随之出现）。
   const gatedRunId = actionForRun.data?.run_id ?? null;
   const gatedRun = useQuery({
     queryKey: ["gated-run", gatedRunId],
@@ -116,10 +173,7 @@ export function AgentWorkspace({ projectId, project }: Props) {
       : null;
   const runEvents = useRunEvents(activeRunId);
 
-  // 终态自愈：页面刷新可能落在「Run 终态已提交、结果消息尚未提交」的
-  // 竞态窗口内，此时 Run/Action 轮询都已停止且无实时事件——SSE 对新连接
-  // 始终重放历史，靠它补收错过的 agent_action.updated 并失效缓存追平
-  //（无新事件时重放只会触发一次无害的刷新）。
+  // 终态自愈（bda1302）：SSE 重放补收错过的 agent_action.updated
   const onActionUpdated = useCallback(
     (payload: { agent_action_id?: string; status?: string; goal_status?: string }) => {
       if (payload.agent_action_id && payload.agent_action_id !== focusActionId) return;
@@ -130,38 +184,62 @@ export function AgentWorkspace({ projectId, project }: Props) {
   );
   useAgentActionEvents(gatedRunId, onActionUpdated);
 
-  // 右栏产物索引随 Run 状态变化自动刷新（门上生成 SB/大纲后立即可见）
-  const [contextRefresh, setContextRefresh] = useState(0);
+  // ---- 项目 Run 状态区（W1-02）：全部 queued/running（含导入/导出） ----
+  const projectRuns = useQuery({
+    queryKey: ["project-runs", projectId],
+    queryFn: () => runsApi.listByProject(projectId),
+    refetchInterval: (query) => {
+      const items = (query.state.data?.items ?? []) as Array<{ status: string }>;
+      return items.some((r) => r.status === "queued" || r.status === "running")
+        ? 2500
+        : false;
+    },
+  });
+  const activeRuns = useMemo(
+    () =>
+      ((projectRuns.data?.items ?? []) as Array<{
+        run_id: string;
+        action: string;
+        status: string;
+      }>).filter((r) => r.status === "queued" || r.status === "running"),
+    [projectRuns.data],
+  );
+  // 任一 Run 到终态：刷新作品索引/当前稿/项目计数（新稿可见性）
+  const activeRunIds = activeRuns.map((r) => r.run_id).join(",");
   useEffect(() => {
-    setContextRefresh((n) => n + 1);
-  }, [gatedRun.data?.status, conversation.activeActionId]);
+    if (!activeRunIds) return;
+    return () => {
+      // 活跃集合变化（有 Run 结束）时失效相关缓存：作品/当前稿/
+      // 消息/导出内容与历史/项目计数
+      void queryClient.invalidateQueries({ queryKey: ["project-scripts-index", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["artifact"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["export-data", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["server-exports", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["project-runs", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    };
+  }, [activeRunIds, projectId, queryClient]);
 
-  // 大纲门：自动把最新大纲设为活动上下文——用户可直接在对话里
-  // 提修改意见（如"把第 2 集冲突提前"），无需先去右栏手动选中。
-  const outlineAtGate = useQuery({
-    queryKey: ["gate-outline", projectId],
-    queryFn: () => artifactsApi.getLatest(projectId, "episode_outline_set"),
-    enabled: gatedRun.data?.stage_gate === "outline",
+  // ---- 新稿提示：不改阅读选择，只给入口（W1-02） ----
+  const reading = readingArtifact.data ?? null;
+  const latestOfReading = useQuery({
+    queryKey: ["latest-for-reading", projectId, reading?.type, reading?.episode_number],
+    enabled: reading != null,
+    queryFn: () =>
+      artifactsApi.getLatest(projectId, reading!.type, reading!.episode_number),
     retry: false,
   });
-  useEffect(() => {
-    if (
-      gatedRun.data?.stage_gate === "outline" &&
-      outlineAtGate.data &&
-      !activeContext
-    ) {
-      setActiveContext({
-        artifact_id: outlineAtGate.data.id,
-        artifact_type: "episode_outline_set",
-        episode_number: outlineAtGate.data.episode_number,
-        version: outlineAtGate.data.version,
-        checksum: outlineAtGate.data.checksum ?? null,
-      });
-    }
-  }, [gatedRun.data?.stage_gate, outlineAtGate.data, activeContext]);
+  const [newDraftDismissedFor, setNewDraftDismissedFor] = useState<string | null>(null);
+  const newDraftAvailable =
+    reading != null &&
+    latestOfReading.data != null &&
+    latestOfReading.data.id !== reading.id &&
+    newDraftDismissedFor !== latestOfReading.data.id
+      ? latestOfReading.data
+      : null;
 
-  // 消息流里已经内嵌的计划卡不在右栏重复渲染；右栏只兜底展示
-  // 刚由 Turn 产出、消息列表尚未刷新的计划。
+  // ---- 会话区（右栏；窄屏 Agent tab） ----
   const planMessageActionIds = useMemo(() => {
     const ids = new Set<string>();
     for (const m of conversation.messages) {
@@ -173,31 +251,8 @@ export function AgentWorkspace({ projectId, project }: Props) {
     return ids;
   }, [conversation.messages]);
 
-  const rightPanel = (
-    <>
-      <ArtifactContextPanel
-        projectId={projectId}
-        activeContext={activeContext}
-        onActiveContextChange={setActiveContext}
-        refreshSignal={contextRefresh}
-      />
-      {focusActionId && !planMessageActionIds.has(focusActionId) && (
-        <ActionPlanCard
-          actionId={focusActionId}
-          projectId={projectId}
-          onAskAgain={() => {
-            setDrawerOpen(false);
-            focusComposer();
-          }}
-        />
-      )}
-    </>
-  );
-
-  // 首条消息发送中也要渲染消息流（乐观气泡），不能落在空状态占位上
   const emptyConversation =
     conversation.messages.length === 0 && !conversation.pendingContent;
-  // 新消息/发送中自动滚动到底部（loadMore 前拼页不改变最后一条 id，不触发）
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessageId = conversation.messages[conversation.messages.length - 1]?.id;
   useEffect(() => {
@@ -205,126 +260,377 @@ export function AgentWorkspace({ projectId, project }: Props) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [lastMessageId, conversation.pendingContent]);
 
-  return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-      {/* 左栏：会话（桌面 7 列 / 1024-1279 8 列） */}
-      <div className="lg:col-span-7 xl:col-span-7">
-        <ConversationPanel
-          conversations={conversationsQuery.data?.items ?? []}
-          currentId={currentConversationId}
-          onSelect={setSelectedConversationId}
-          onCreate={() => createConversation.mutate()}
-          creating={createConversation.isPending}
-        >
-          {/* 消息流 */}
-          <div
-            ref={scrollRef}
-            className="max-h-[52vh] min-h-48 overflow-y-auto rounded-lg bg-[var(--surface-muted)] p-3"
-          >
-            {conversation.isLoading ? (
-              <p className="text-xs text-[var(--text-muted)]">正在加载消息…</p>
-            ) : emptyConversation ? (
-              <div className="py-8 text-center" data-testid="empty-conversation">
-                <p className="message-body text-[var(--text-muted)]">
-                  和 Agent 对话完成创作：点击下方示例或直接输入需求。
-                </p>
-                <p className="mt-1 text-xs text-[var(--text-muted)]">
-                  支持创建剧本、解释项目、评估、修改剧本与大纲。
-                </p>
-              </div>
-            ) : (
-              <MessageList
-                messages={conversation.messages}
+  const agentPane = (
+    <ConversationPanel
+      conversations={conversationsQuery.data?.items ?? []}
+      currentId={currentConversationId}
+      onSelect={(id) => location.setConversation(id)}
+      onCreate={() => createConversation.mutate()}
+      creating={createConversation.isPending}
+    >
+      <div
+        ref={scrollRef}
+        className="max-h-[38vh] min-h-36 flex-1 overflow-y-auto rounded-lg bg-[var(--surface-muted)] p-3 lg:max-h-none"
+      >
+        {conversation.isLoading ? (
+          <p className="text-xs text-[var(--text-muted)]">正在加载消息…</p>
+        ) : emptyConversation ? (
+          <div className="py-8 text-center" data-testid="empty-conversation">
+            <p className="message-body text-[var(--text-muted)]">
+              和 Agent 对话完成创作：直接输入想法或修改要求。
+            </p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              支持创建剧本、解释项目、评估、修改剧本与大纲。
+            </p>
+          </div>
+        ) : (
+          <MessageList
+            messages={conversation.messages}
+            projectId={projectId}
+            pendingContent={conversation.pendingContent}
+            renderPlanCard={(actionId) => (
+              <ActionPlanCard
+                actionId={actionId}
                 projectId={projectId}
-                pendingContent={conversation.pendingContent}
-                renderPlanCard={(actionId) => (
-                  <ActionPlanCard
-                    actionId={actionId}
-                    projectId={projectId}
-                    onAskAgain={focusComposer}
-                  />
-                )}
+                onAskAgain={focusComposer}
               />
             )}
-          </div>
-
-          {/* 内嵌 Run 进度（计划执行中） */}
-          {activeRunId && (
-            <RunProgress
-              runId={activeRunId}
-              overallProgress={runEvents.overallProgress}
-              nodes={runEvents.nodes}
-              eventCount={runEvents.events.length}
-              connected={runEvents.connected}
-              runStatus={runEvents.runStatus}
-              lastError={runEvents.lastError}
-              onReconnect={runEvents.reconnect}
-              stageGate={gatedRun.data?.stage_gate ?? null}
-            />
-          )}
-
-          {/* Composer（移动端 sticky 底部） */}
-          <div className="sticky bottom-0 z-10 lg:static">
-            <AgentComposer
-              sending={conversation.sending}
-              sendError={conversation.sendError}
-              failedContent={conversation.lastFailedContent}
-              onSend={handleSend}
-              examples={emptyConversation ? undefined : []}
-              defaultEpisodeCount={project.target_episode_count}
-              focusSignal={composerFocusSignal}
-            />
-          </div>
-        </ConversationPanel>
-      </div>
-
-      {/* 右栏：桌面 5 列；平板以下抽屉 */}
-      <div className="hidden lg:col-span-5 lg:block xl:col-span-5">
-        <aside aria-label="上下文与计划">{rightPanel}</aside>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => setDrawerOpen(true)}
-        className="touch-target fixed bottom-24 right-4 z-30 rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 text-xs shadow lg:hidden"
-        data-testid="open-context-drawer"
-        aria-label="打开上下文面板"
-      >
-        📋 上下文/计划
-      </button>
-
-      {drawerOpen && (
-        <div className="fixed inset-0 z-40 flex lg:hidden" role="dialog" aria-modal="true" aria-label="上下文与计划">
-          <div
-            className="flex-1 bg-black/30"
-            onClick={() => setDrawerOpen(false)}
           />
-          <div className="transition-drawer h-full w-[85%] max-w-sm overflow-y-auto bg-[var(--surface)] p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">上下文与计划</h2>
-              <button
-                type="button"
-                onClick={() => setDrawerOpen(false)}
-                className="touch-target px-2 text-sm text-[var(--text-muted)]"
-                aria-label="关闭"
-              >
-                ✕
-              </button>
-            </div>
-            {rightPanel}
-          </div>
+        )}
+      </div>
+
+      {activeRunId && (
+        <RunProgress
+          runId={activeRunId}
+          overallProgress={runEvents.overallProgress}
+          nodes={runEvents.nodes}
+          eventCount={runEvents.events.length}
+          connected={runEvents.connected}
+          runStatus={runEvents.runStatus}
+          lastError={runEvents.lastError}
+          onReconnect={runEvents.reconnect}
+          stageGate={gatedRun.data?.stage_gate ?? null}
+        />
+      )}
+
+      {/* Composer：按会话 remount（各自草稿），sticky 底部 */}
+      <div className="sticky bottom-0 z-10 lg:static">
+        <AgentComposer
+          key={currentConversationId ?? "new"}
+          draftKey={`draft:${projectId}:${currentConversationId ?? "new"}`}
+          sending={conversation.sending}
+          sendError={conversation.sendError}
+          failedContent={conversation.lastFailedContent}
+          onSend={handleSend}
+          examples={emptyConversation ? undefined : []}
+          defaultEpisodeCount={project.target_episode_count}
+          focusSignal={composerFocusSignal}
+        />
+      </div>
+
+      {/* 兜底计划卡：消息流尚未刷新的刚产出计划 */}
+      {focusActionId && !planMessageActionIds.has(focusActionId) && (
+        <ActionPlanCard
+          actionId={focusActionId}
+          projectId={projectId}
+          onAskAgain={focusComposer}
+        />
+      )}
+    </ConversationPanel>
+  );
+
+  // ---- 作品导航（左栏）：剧集区复用 EpisodeNav 的导航表现（W1-02） ----
+  const episodeNav = useMemo(() => {
+    const latest = latestValidPerEpisode(scriptsIndex.data ?? []);
+    const byEp = new Map(latest.map((a) => [a.episode_number, a]));
+    const episodes: EpisodeNavItem[] = [];
+    for (let ep = 1; ep <= project.target_episode_count; ep += 1) {
+      episodes.push({
+        episode_number: ep,
+        hasScript: byEp.has(ep),
+        hasEvaluation: false,
+      });
+    }
+    // 目标集数之外的已写集（超出目标的项目）也要可达
+    for (const a of latest) {
+      if (a.episode_number > project.target_episode_count) {
+        episodes.push({
+          episode_number: a.episode_number,
+          hasScript: true,
+          hasEvaluation: false,
+        });
+      }
+    }
+    return { items: episodes, byEpisode: byEp };
+  }, [scriptsIndex.data, project.target_episode_count]);
+  const currentEpisode =
+    reading?.type === "script_draft" ? reading.episode_number : 0;
+  const openEpisode = useCallback(
+    (episode: number) => {
+      const target = episodeNav.byEpisode.get(episode);
+      if (target) location.openArtifact(target.id);
+    },
+    [episodeNav, location],
+  );
+  const currentReadingId = location.artifactId;
+
+  const navPane = (
+    <nav aria-label="作品导航" className="space-y-3 text-sm" data-testid="work-nav">
+      <WorkNavLinks
+        projectId={projectId}
+        onOpen={(id) => location.openArtifact(id)}
+        episodeItems={episodeNav.items}
+        currentEpisode={currentEpisode}
+        targetCount={project.target_episode_count}
+        onSelectEpisode={openEpisode}
+        currentReadingId={currentReadingId}
+      />
+    </nav>
+  );
+
+  // ---- 画布区（中央；窄屏作品 tab） ----
+  const workPane = (
+    <div className="flex h-full min-h-0 flex-col gap-2" data-testid="work-pane">
+      {/* 项目 Run 状态区：全部活跃 Run（不依赖计划卡） */}
+      {activeRuns.length > 0 && (
+        <div
+          className="flex flex-wrap gap-2 text-xs"
+          data-testid="project-runs-strip"
+          aria-live="polite"
+        >
+          {activeRuns.map((r) => (
+            <span
+              key={r.run_id}
+              className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-0.5 text-[var(--text-muted)]"
+            >
+              <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
+              {RUN_ACTION_LABEL[r.action] ?? r.action} · {r.status === "queued" ? "排队中" : "执行中"}
+            </span>
+          ))}
         </div>
       )}
 
-      {/* 次级导航 */}
-      <nav className="col-span-full mt-2 flex flex-wrap gap-3 text-xs">
-        <Link href={`/projects/${projectId}/story-bible`} className="text-[var(--accent)] underline">Story Bible</Link>
-        <Link href={`/projects/${projectId}/outline`} className="text-[var(--accent)] underline">分集大纲</Link>
-        <Link href={`/projects/${projectId}/scripts/1`} className="text-[var(--accent)] underline">剧本</Link>
-        <Link href={`/projects/${projectId}/versions`} className="text-[var(--accent)] underline">修订与版本</Link>
-        <Link href={`/projects/${projectId}/exports`} className="text-[var(--accent)] underline">导出中心</Link>
-        <Link href={`/projects/${projectId}/knowledge`} className="text-[var(--accent)] underline">知识库</Link>
-      </nav>
+      {location.notice && (
+        <p
+          className="flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700"
+          data-testid="workspace-notice"
+        >
+          <span>{location.notice}</span>
+          <button
+            type="button"
+            onClick={() => location.clearNotice()}
+            className="text-[var(--text-muted)]"
+            aria-label="关闭提示"
+          >
+            ✕
+          </button>
+        </p>
+      )}
+
+      {newDraftAvailable && (
+        <div
+          className="flex items-center justify-between gap-2 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent)]/5 px-3 py-1.5 text-xs"
+          data-testid="new-draft-banner"
+        >
+          <span>
+            本轮任务产生了新版本（v{newDraftAvailable.version}）——你仍在看 v{reading?.version}。
+          </span>
+          <span className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => location.openArtifact(newDraftAvailable.id)}
+              className="rounded border border-[var(--accent)] px-2 py-0.5 text-[var(--accent)]"
+            >
+              打开本轮新稿
+            </button>
+            <button
+              type="button"
+              onClick={() => setNewDraftDismissedFor(newDraftAvailable.id)}
+              className="text-[var(--text-muted)]"
+              aria-label="暂不切换"
+            >
+              稍后
+            </button>
+          </span>
+        </div>
+      )}
+
+      {location.artifactId ? (
+        <div className="min-h-0 flex-1">
+          <ArtifactCanvas
+            projectId={projectId}
+            artifactId={location.artifactId}
+            scene={location.scene}
+            panel={location.panel}
+            compareId={location.compareId}
+            onOpenArtifact={(id, panel) => location.openArtifact(id, panel)}
+            onSetPanel={(p: WorkspacePanel) => location.setPanel(p)}
+            onSetScene={location.setScene}
+            onSetCompare={location.setCompare}
+          />
+        </div>
+      ) : scriptsIndex.isLoading ? (
+        <p className="p-6 text-center text-sm text-[var(--text-muted)]">正在载入作品…</p>
+      ) : (
+        <div
+          className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed border-[var(--border)] p-8 text-center"
+          data-testid="empty-project-workspace"
+        >
+          <div>
+            <p className="text-sm text-[var(--text-muted)]">
+              这个项目还没有可阅读的稿件。
+            </p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              在右侧对话里输入想法开始创作；产出会出现在这里。
+            </p>
+            <button
+              type="button"
+              onClick={focusComposer}
+              className="mt-3 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs text-white"
+            >
+              输入创作想法
+            </button>
+          </div>
+        </div>
+      )}
     </div>
+  );
+
+  return (
+    <div>
+      {/* 窄屏 tab（两区保持挂载，只切换可见性） */}
+      <div className="mb-3 flex gap-2 lg:hidden" role="tablist" aria-label="工作台视图">
+        {(["work", "agent"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            aria-selected={mobileTab === tab}
+            onClick={() => setMobileTab(tab)}
+            className={
+              mobileTab === tab
+                ? "rounded-lg border border-[var(--accent)] bg-[var(--accent)]/10 px-3 py-1 text-xs text-[var(--accent)]"
+                : "rounded-lg border border-[var(--border)] px-3 py-1 text-xs text-[var(--text-muted)]"
+            }
+            data-testid={`tab-${tab}`}
+          >
+            {tab === "work" ? "📖 作品" : "💬 Agent"}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:h-[calc(100vh-13rem)] lg:grid-cols-12">
+        {/* 左：作品导航 */}
+        <div className={`${mobileTab === "work" ? "" : "hidden"} lg:col-span-2 lg:block`}>
+          {navPane}
+        </div>
+        {/* 中：作品画布（正文最大面积） */}
+        <div className={`${mobileTab === "work" ? "" : "hidden"} min-h-0 lg:col-span-6 lg:block`}>
+          {workPane}
+        </div>
+        {/* 右：常驻 Agent 会话 */}
+        <div className={`${mobileTab === "agent" ? "" : "hidden"} min-h-0 lg:col-span-4 lg:block`}>
+          {agentPane}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 作品导航链接组：设定/大纲按需加载最新，各集直达最新 valid 版本 */
+function WorkNavLinks(props: {
+  projectId: string;
+  episodeItems: EpisodeNavItem[];
+  currentEpisode: number;
+  targetCount: number;
+  onSelectEpisode: (episode: number) => void;
+  currentReadingId: string | null;
+  onOpen: (id: string) => void;
+}) {
+  const {
+    projectId,
+    episodeItems,
+    currentEpisode,
+    targetCount,
+    onSelectEpisode,
+    currentReadingId,
+    onOpen,
+  } = props;
+  const storyBible = useQuery({
+    queryKey: ["nav-sb", projectId],
+    queryFn: () => artifactsApi.getLatest(projectId, "story_bible"),
+    retry: false,
+    staleTime: 30_000,
+  });
+  const outline = useQuery({
+    queryKey: ["nav-outline", projectId],
+    queryFn: () => artifactsApi.getLatest(projectId, "episode_outline_set"),
+    retry: false,
+    staleTime: 30_000,
+  });
+
+  const itemClass = (active: boolean) =>
+    `block w-full rounded px-2 py-1 text-left text-xs transition-colors ${
+      active
+        ? "bg-[var(--accent)]/10 text-[var(--accent)]"
+        : "text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+    }`;
+
+  return (
+    <>
+      <div>
+        <p className="mb-1 px-2 text-[10px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
+          作品
+        </p>
+        {storyBible.data && (
+          <button
+            type="button"
+            className={itemClass(currentReadingId === storyBible.data.id)}
+            onClick={() => onOpen(storyBible.data!.id)}
+          >
+            故事设定
+          </button>
+        )}
+        {outline.data && (
+          <button
+            type="button"
+            className={itemClass(currentReadingId === outline.data.id)}
+            onClick={() => onOpen(outline.data!.id)}
+          >
+            分集大纲
+          </button>
+        )}
+        {episodeItems.length > 0 && (
+          <div className="mt-1 max-h-56 overflow-y-auto">
+            <EpisodeNav
+              episodes={episodeItems}
+              currentEpisode={currentEpisode}
+              targetCount={targetCount}
+              onSelect={onSelectEpisode}
+            />
+          </div>
+        )}
+        {!storyBible.data && !outline.data && episodeItems.every((e) => !e.hasScript) && (
+          <p className="px-2 text-xs text-[var(--text-muted)]">暂无作品</p>
+        )}
+      </div>
+      <div>
+        <p className="mb-1 px-2 text-[10px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
+          工具
+        </p>
+        <Link
+          href={`/projects/${projectId}/versions`}
+          className={itemClass(false)}
+        >
+          修订与版本
+        </Link>
+        <Link
+          href={`/projects/${projectId}/knowledge`}
+          className={itemClass(false)}
+        >
+          知识库
+        </Link>
+      </div>
+    </>
   );
 }

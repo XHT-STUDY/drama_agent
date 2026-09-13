@@ -140,8 +140,11 @@ export const artifactsApi = {
     );
   },
 
-  getById(id: string): Promise<Artifact> {
-    return request(`/artifacts/${id}`);
+  /** 按 ID 读取 Artifact；提供 projectId 时服务端校验归属（跨项目 404，
+   * W1-02：工作台固定传当前项目） */
+  getById(id: string, projectId?: string): Promise<Artifact> {
+    const suffix = projectId ? `?project_id=${projectId}` : "";
+    return request(`/artifacts/${id}${suffix}`);
   },
 
   listVersions(projectId: string, type: string, episode = 1): Promise<Artifact[]> {

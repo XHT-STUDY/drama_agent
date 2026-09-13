@@ -70,11 +70,13 @@ test.describe("H-07 全链路 Demo", () => {
     // ============================================================
     // 4. 分集大纲（10 集）
     // ============================================================
-    await test.step("查看 10 集大纲", async () => {
+    await test.step("查看 10 集大纲（W1-02：/outline 兼容入口重定向到工作台画布）", async () => {
       await page.goto(`/projects/${pid}/outline`);
+      // 重定向到 /projects/{pid}?artifact=…，画布元信息显示分集大纲
+      await expect(page.getByTestId("artifact-canvas")).toBeVisible();
       await expect(
-        page.getByText(`📋 分集大纲 (${EXPECTED.outlineCount} 集)`),
-      ).toBeVisible();
+        page.getByTestId("canvas-artifact-meta"),
+      ).toContainText("分集大纲");
       await expect(
         page.getByText(EXPECTED.episode1Title).first(),
       ).toBeVisible();
@@ -86,12 +88,12 @@ test.describe("H-07 全链路 Demo", () => {
     // ============================================================
     // 5. 剧本（前 3 集）+ 评分（低分 → 需修订徽章）
     // ============================================================
-    await test.step("查看第 1 集剧本与评估", async () => {
+    await test.step("查看第 1 集剧本与评估（W1-02：画布承载）", async () => {
       await page.goto(`/projects/${pid}/scripts/1`);
-      await expect(
-        page.getByText(`第 1 集 · ${EXPECTED.episode1Title}`),
-      ).toBeVisible();
-      // 低分场景：评估报告 need_revision=true → 「⚠️ 需修订」
+      await expect(page.getByTestId("artifact-canvas")).toBeVisible();
+      await expect(page.getByTestId("canvas-artifact-meta")).toContainText("第 1 集");
+      // 评估面板：低分场景 need_revision=true → 「⚠️ 需修订」
+      await page.getByRole("button", { name: "评估" }).click();
       await expect(page.getByText("需修订").first()).toBeVisible();
       await expect(page.getByText("📊 维度评分")).toBeVisible();
     });
@@ -127,9 +129,9 @@ test.describe("H-07 全链路 Demo", () => {
     // ============================================================
     // 8. 导出下载：Markdown + DOCX 均非空，历史显示 2 条
     // ============================================================
-    await test.step("导出 Markdown / DOCX 并校验下载文件", async () => {
+    await test.step("导出 Markdown / DOCX 并校验下载文件（W1-02：画布导出面板）", async () => {
       await page.goto(`/projects/${pid}/exports`);
-      // 数据加载完成（ExportSection 出现）
+      // 兼容入口重定向到工作台 panel=exports；ExportSection 就位
       await expect(page.getByText("选择导出内容")).toBeVisible();
       await expect(page.getByRole("button", { name: "📦 生成并下载" })).toBeVisible();
 

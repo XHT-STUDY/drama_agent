@@ -7,6 +7,8 @@
  * - 保留目标集数设置（首次创作提示附加到消息，服务端 Planner 解析）
  * - 失败时恢复草稿（lastFailedContent），重发复用幂等 key（Hook 保证）
  * - aria-live 状态播报；空会话命令示例由父组件传入
+ * - draftKey（W1-02）：未发送草稿按 project+conversation 存 sessionStorage——
+ *   输入即保存、成功发送才清除；去看 Diff/切面板不丢字
  */
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
@@ -29,6 +31,8 @@ interface Props {
   defaultEpisodeCount?: number;
   /** 澄清/重新发起时聚焦输入框 */
   focusSignal?: number;
+  /** 草稿持久化键（project+conversation）；缺省不持久化 */
+  draftKey?: string;
 }
 
 export function AgentComposer({
@@ -39,8 +43,17 @@ export function AgentComposer({
   examples = COMMAND_EXAMPLES,
   defaultEpisodeCount = 3,
   focusSignal = 0,
+  draftKey,
 }: Props) {
-  const [draft, setDraft] = useState("");
+  // 初始值来自 sessionStorage（W1-02：未发送草稿跨面板切换/刷新存活）
+  const [draft, setDraft] = useState(() => {
+    if (!draftKey || typeof window === "undefined") return "";
+    try {
+      return window.sessionStorage.getItem(draftKey) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [episodeCount, setEpisodeCount] = useState(defaultEpisodeCount);
   const [showSettings, setShowSettings] = useState(false);
   // 用户显式调整过集数 → 发送时把目标集数附加为提示（Planner/服务端解析）
@@ -56,6 +69,17 @@ export function AgentComposer({
   useEffect(() => {
     if (focusSignal > 0) textareaRef.current?.focus();
   }, [focusSignal]);
+
+  // 输入即保存、清空即移除（成功发送 submit 里已清 draft → 联动清除）
+  useEffect(() => {
+    if (!draftKey || typeof window === "undefined") return;
+    try {
+      if (draft) window.sessionStorage.setItem(draftKey, draft);
+      else window.sessionStorage.removeItem(draftKey);
+    } catch {
+      // sessionStorage 不可用（隐私模式等）时静默降级
+    }
+  }, [draft, draftKey]);
 
   function submit() {
     const content = draft.trim();

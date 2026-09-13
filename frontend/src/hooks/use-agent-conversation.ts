@@ -91,6 +91,12 @@ export function useAgentConversation(
 
   useEffect(() => {
     setConversationId(externalConversationId);
+    // 会话切换不残留另一会话的失败内容/发送中状态/活动计划（W1-02）
+    setSendError(null);
+    setLastFailedContent(null);
+    setActiveActionId(null);
+    setLastTurn(null);
+    setPendingContent(null);
   }, [externalConversationId]);
 
   // 失败重发复用同一幂等 key：同一逻辑发送不会被重复扣费/重复建 Turn

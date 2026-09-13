@@ -279,3 +279,56 @@ class TestArtifactReferences:
     ) -> None:
         resp = await async_client.get(f"/api/v1/artifacts/{uuid.uuid4()}/references")
         assert resp.status_code == 404
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_get_artifact_rejects_cross_project(app: object, async_client: AsyncClient) -> None:
+    """W1-02：工作台固定传当前项目——跨项目 Artifact 一律 404，不渲染正文。"""
+    resp_a = await async_client.post(
+        "/api/v1/projects", json={"title": "工作台项目"}
+    )
+    assert resp_a.status_code == 201
+    project_a = str(resp_a.json()["id"])
+    resp_b = await async_client.post(
+        "/api/v1/projects", json={"title": "另一个项目"}
+    )
+    assert resp_b.status_code == 201
+    project_b = str(resp_b.json()["id"])
+
+    # 直接经服务播种（API 无建 Artifact 端点）
+    from app.application.artifact_service import ArtifactService
+    from app.db.session import _async_session_factory
+
+    assert _async_session_factory is not None, "DB not initialized"
+    async with _async_session_factory() as db:
+        svc = ArtifactService()
+        created = await svc.create_validated_artifact(
+            db,
+            project_id=uuid.UUID(project_a),
+            artifact_type="story_bible",
+            content={
+                "title": "设定",
+                "genre": "都市",
+                "logline": "故事",
+                "world_setting": "世界",
+                "protagonist": {"name": "主角", "role": "主角", "goal": "目标"},
+                "antagonist": {"name": "对手", "role": "对手", "goal": "目标"},
+            },
+        )
+        await db.commit()
+    artifact_id = str(created.id)
+
+    # 本项目可见
+    ok = await async_client.get(
+        f"/api/v1/artifacts/{artifact_id}", params={"project_id": project_a}
+    )
+    assert ok.status_code == 200
+    # 跨项目 404（不区分"不存在"与"别人的"）
+    cross = await async_client.get(
+        f"/api/v1/artifacts/{artifact_id}", params={"project_id": project_b}
+    )
+    assert cross.status_code == 404
+    # 不带 project_id 的旧调用不受影响
+    legacy = await async_client.get(f"/api/v1/artifacts/{artifact_id}")
+    assert legacy.status_code == 200
