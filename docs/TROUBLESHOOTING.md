@@ -17,7 +17,15 @@
 
 ---
 
-## 2026-07-26 — 角色校验白名单阻断工作流
+## 2026-09-13 — input_hash 跨项目幂等串用（W2-01 证据表预警的隐患）
+
+**症状**：两个项目上传相同内容（或产生相同 dedup_extra 的无源产物，如导入分类、会话摘要）时，后创建的项目会"复用"先创建项目的 Artifact——B 项目拿到 A 项目的产物 ID，内容与来源审计跨项目混淆。
+
+**产生原因**：`find_by_input_hash` 按 input_hash 全局查询，而哈希载荷只含内容因子（来源 ID/集数/类型/dedup_extra）——有源产物的来源 ID 天然项目隔离，但**无源产物**（`source_artifact_ids` 为空、仅凭 dedup_extra 幂等）的哈希不含任何项目标识，跨项目内容相同即哈希相同，全局查询命中他项目记录。
+
+**解决方案**：`ArtifactRepository.find_by_input_hash` 与 `ArtifactStore.find_by_input_hash` 增加 project_id 必填过滤（store.create 的幂等检查传本项目 ID）；项目内幂等行为不变。回归测试：`tests/integration/db/test_repository.py::TestInputHashProjectScopingW101`（同内容两项目两份 Artifact、项目内重复仍命中）。
+
+**学习收获**：内容哈希去重的查询范围是隐式命名空间问题——载荷里没有的环境因子（项目/租户/用户）必须由查询显式补上；凡是"按内容查重"的实现都要先回答"在哪个范围内查重"。
 
 **症状**：Episode Writer 在 `_validate_draft()` 中对 LLM 生成的未知角色名抛 `EpisodeWriterValidationError`，导致整个工作流被阻断。
 

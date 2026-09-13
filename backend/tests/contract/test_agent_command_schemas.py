@@ -113,3 +113,56 @@ class TestRequestHash:
         first = {"message": "解释项目", "context": {"episode": 3}}
         second = {"message": "解释项目", "context": {"episode": 4}}
         assert compute_request_hash(first) != compute_request_hash(second)
+
+
+class TestAgentOutcomeW104Compat:
+    """W1-04：旧结果 JSON 反序列化的诚实性默认。"""
+
+    def test_legacy_outcome_defaults_to_unverified(self) -> None:
+        """W1-04 之前的 result（无新字段）不得自称已验证/已核验。"""
+        from app.domain.agent_command import AgentOutcome
+
+        legacy = {
+            "goal_status": "achieved",
+            "evidence_artifact_ids": ["00000000-0000-0000-0000-000000000001"],
+            "remaining_constraints": ["某语义要求"],
+            "replan_depth": 0,
+        }
+        outcome = AgentOutcome.model_validate(legacy)
+        assert outcome.verification_status == "unverified"
+        assert outcome.constraint_checks == []
+        assert outcome.evidence_refs == []
+        # 旧字段全部保留
+        assert outcome.goal_status == "achieved"
+        assert outcome.remaining_constraints == ["某语义要求"]
+
+    def test_new_outcome_roundtrip_keeps_checks(self) -> None:
+        from app.domain.agent_command import AgentOutcome
+
+        outcome = AgentOutcome.model_validate(
+            {
+                "goal_status": "partially_achieved",
+                "verification_status": "unverified",
+                "constraint_checks": [
+                    {
+                        "constraint": "女主更主动",
+                        "status": "unverified",
+                        "reason": "缺少可核验的正文证据检查",
+                        "evidence_refs": ["00000000-0000-0000-0000-000000000010"],
+                    }
+                ],
+                "evidence_refs": [
+                    {
+                        "artifact_id": "00000000-0000-0000-0000-000000000010",
+                        "role": "script",
+                    }
+                ],
+                "evidence_artifact_ids": ["00000000-0000-0000-0000-000000000010"],
+                "remaining_constraints": [],
+                "replan_depth": 0,
+            }
+        )
+        dumped = outcome.model_dump(mode="json")
+        assert dumped["constraint_checks"][0]["status"] == "unverified"
+        again = AgentOutcome.model_validate(dumped)
+        assert again == outcome

@@ -1,13 +1,15 @@
 "use client";
 
-/** 导出中心 — 导出历史与下载 (H-07).
+/** 导出中心 — 服务端导出历史（W1-05）.
  *
- * 纯展示组件：接收 ExportRecord[] 列表。重新下载基于实时数据重序列化
- * （由容器通过 onRedownload 触发），不在本组件内持有数据。
+ * 历史条目是 export_file Artifact 本体：重新下载经后端固定端点取回
+ * 导出时的那份文件（字节一致，sha256 记录在 content 中）——绝不用
+ * 当前稿件重新序列化。服务端历史无"清空"：交付记录是审计事实。
  */
 
-import type { ExportRecord } from "@/types/api";
-import { EXPORT_KIND_LABELS } from "@/lib/export";
+import { exportsApi } from "@/lib/api-client";
+import { triggerDownload } from "@/lib/export";
+import type { Artifact, ExportFileContent } from "@/types/api";
 
 /** 人类可读大小 */
 function formatSize(bytes: number): string {
@@ -16,65 +18,72 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function kindLabel(kinds: ExportRecord["kinds"]): string {
-  return kinds.map((k) => EXPORT_KIND_LABELS[k]).join("、");
-}
-
 interface Props {
-  records: ExportRecord[];
-  onRedownload: (record: ExportRecord) => void;
-  onClear: () => void;
+  projectId: string;
+  artifacts: Artifact[];
 }
 
-export function ExportHistory({ records, onRedownload, onClear }: Props) {
-  if (records.length === 0) {
+export function ExportHistory({ projectId, artifacts }: Props) {
+  if (artifacts.length === 0) {
     return (
       <section className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
-        暂无导出记录 —— 在上方选择内容并生成下载后，历史将显示在这里
+        暂无导出记录 —— 在上方选择内容并生成下载后，固定版本的交付记录将显示在这里
       </section>
     );
   }
 
+  const redownload = (artifactId: string): void => {
+    triggerDownload(exportsApi.downloadUrl(artifactId, projectId));
+  };
+
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-800">导出历史（{records.length}）</h2>
-        <button
-          type="button"
-          onClick={onClear}
-          className="text-xs text-gray-400 hover:text-red-600 transition-colors"
-        >
-          清空历史
-        </button>
-      </div>
+      <h2 className="mb-1 text-lg font-semibold text-gray-800">导出历史（{artifacts.length}）</h2>
+      <p className="mb-3 text-xs text-gray-400">
+        每条记录固定为导出时的稿件版本；重新下载得到与当时完全一致的文件。
+      </p>
 
       <ul className="space-y-2">
-        {records.map((record) => (
-          <li
-            key={record.id}
-            className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-2.5"
-          >
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700">
-                  {record.format === "markdown" ? "MD" : "DOCX"}
-                </span>
-                <span className="truncate text-sm font-medium text-gray-700">{record.filename}</span>
-              </div>
-              <div className="mt-0.5 text-xs text-gray-400">
-                {new Date(record.exportedAt).toLocaleString("zh-CN")} · {kindLabel(record.kinds)} ·{" "}
-                {formatSize(record.sizeBytes)}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onRedownload(record)}
-              className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:border-blue-300 hover:text-blue-600 transition-colors"
+        {artifacts.map((artifact) => {
+          const content = artifact.content as unknown as ExportFileContent;
+          return (
+            <li
+              key={artifact.id}
+              className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-2.5"
+              data-testid="server-export-record"
             >
-              重新下载
-            </button>
-          </li>
-        ))}
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700">
+                    {content.format === "markdown" ? "MD" : "DOCX"}
+                  </span>
+                  <span className="truncate text-sm text-gray-700" title={content.filename}>
+                    {content.filename}
+                  </span>
+                </div>
+                <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-gray-400">
+                  <span>{formatSize(content.size_bytes)}</span>
+                  <span>{new Date(artifact.created_at).toLocaleString("zh-CN")}</span>
+                  {content.source_artifact_ids.length > 0 && (
+                    <span>依据 {content.source_artifact_ids.length} 份稿件版本</span>
+                  )}
+                </div>
+                {(content.warnings ?? []).length > 0 && (
+                  <div className="mt-1 text-xs text-amber-600">
+                    导出时提示：{(content.warnings ?? []).join("；")}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => redownload(artifact.id)}
+                className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 transition-colors hover:border-blue-300 hover:text-blue-600"
+              >
+                重新下载
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

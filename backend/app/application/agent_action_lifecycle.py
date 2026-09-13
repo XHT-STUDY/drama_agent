@@ -24,7 +24,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.base import BaseAgent
 from app.application.agent_outcome_service import AgentOutcomeService
 from app.application.conversation_service import MessageService
 from app.core.errors import AgentStateTransitionError
@@ -41,7 +40,6 @@ from app.domain.agent_command import (
 )
 from app.domain.conversation import MessageCreate
 from app.events.publisher import EventPublisher
-from app.prompts.loader import PromptLoader
 
 logger = get_logger(__name__)
 
@@ -119,8 +117,6 @@ class AgentActionLifecycle:
         action_id: uuid.UUID,
         run: WorkflowRun,
         final_state: dict[str, Any] | None = None,
-        agent: BaseAgent | None = None,
-        prompt_loader: PromptLoader | None = None,
     ) -> AgentAction | None:
         """Run 终态后回写 Action：状态 + Outcome + 消息 + 可空子提案。
 
@@ -169,8 +165,6 @@ class AgentActionLifecycle:
             action=action,
             run=run,
             final_state=final_state,
-            agent=agent,
-            prompt_loader=prompt_loader,
         )
 
         # 状态回写：cancelled/failed 允许 queued 直达；completed/needs_review
@@ -247,8 +241,6 @@ class AgentActionLifecycle:
         db: AsyncSession,
         *,
         action_id: uuid.UUID,
-        agent: BaseAgent | None = None,
-        prompt_loader: PromptLoader | None = None,
     ) -> AgentAction | None:
         """后台/GET 触发的补写：从 Run 终态与 state_summary 重放 finalize。"""
         action = await AgentActionRepository(db).get(action_id)
@@ -262,8 +254,6 @@ class AgentActionLifecycle:
             action_id=action_id,
             run=run,
             final_state=run.state_summary or {},
-            agent=agent,
-            prompt_loader=prompt_loader,
         )
 
     # ------------------------------------------------------------------
@@ -369,7 +359,9 @@ class AgentActionLifecycle:
                         "或直接告诉我你想调整什么。"
                     )
             else:
-                # 可读自然文案；状态详情由计划卡的 OutcomeView 承载，避免重复
+                # 可读自然文案；状态详情由计划卡的 OutcomeView 承载，避免重复。
+                # W1-04：未完成（已知失败）与待判断（缺核验证据）分开陈述，
+                # 不把未验证要求伪装成已失败
                 status_text = {
                     "achieved": "本轮任务已完成。",
                     "partially_achieved": "本轮任务部分完成。",
@@ -381,12 +373,27 @@ class AgentActionLifecycle:
                     lines.append(f"评分变化：{outcome.score_delta:+.1f}")
                 for constraint in outcome.remaining_constraints:
                     lines.append(f"未完成：{constraint}")
+                unverified = [
+                    c for c in outcome.constraint_checks if c.status == "unverified"
+                ]
+                if unverified:
+                    lines.append(
+                        f"以下 {len(unverified)} 项创作要求需要你阅读本轮稿件后判断："
+                    )
+                    lines.extend(f"待判断：{c.constraint}" for c in unverified)
                 content = "\n".join(lines)
             metadata = {
                 "agent_action_id": str(action.id),
                 "run_id": str(run.id),
                 "message_type": "result",
                 "goal_status": outcome.goal_status,
+                "verification_status": outcome.verification_status,
+                "constraint_checks": [
+                    c.model_dump(mode="json") for c in outcome.constraint_checks
+                ],
+                "evidence_refs": [
+                    r.model_dump(mode="json") for r in outcome.evidence_refs
+                ],
                 "run_status": run.status,
                 "phase": phase,
                 "score_delta": outcome.score_delta,

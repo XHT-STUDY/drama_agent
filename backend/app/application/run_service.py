@@ -430,6 +430,11 @@ class RunService:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
+    def result_artifact_ids(run: WorkflowRun) -> list[str]:
+        """Run 产出的结果 Artifact ID（W1-05：export 后指向 export_file）。"""
+        return list((run.state_summary or {}).get("result_artifact_ids") or [])
+
+    @staticmethod
     def _accepted_run_view(run: WorkflowRun) -> dict[str, Any]:
         """接受时刻的 RunResponse 等价快照（重放时原样返回）。
 
@@ -449,6 +454,7 @@ class RunService:
             "agent_action_id": config.get("agent_action_id"),
             "stage_gate": (run.state_summary or {}).get("stage_gate"),
             "stage_generation": run.stage_generation,
+            "result_artifact_ids": RunService.result_artifact_ids(run),
             "created_at": run.created_at.isoformat() if run.created_at else "",
             "updated_at": run.updated_at.isoformat() if run.updated_at else "",
         }

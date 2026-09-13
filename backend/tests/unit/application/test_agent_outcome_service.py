@@ -24,7 +24,6 @@ from app.db.models.project import Project
 from app.db.models.workflow_run import WorkflowRun
 from app.llm.fake import FakeLLM
 from app.llm.models import LLMCallResult
-from app.prompts.loader import PromptLoader
 
 
 class ExplodeOnCallLLM(FakeLLM):
@@ -100,12 +99,13 @@ class TestAgentOutcomeService:
         action: AgentAction,
         run: WorkflowRun,
         final_state: dict[str, Any] | None,
-        agent: BaseAgent | None,
+        agent: BaseAgent | None = None,
     ) -> Any:
+        # W1-04 起 evaluate 不再调用模型；agent 参数仅为兼容旧调用保留
+        del agent  # W1-04 起 evaluate 纯确定性，不再接收模型依赖
         return await AgentOutcomeService().evaluate(
             session, action=action, run=run,
-            final_state=final_state, agent=agent,
-            prompt_loader=PromptLoader() if agent is not None else None,
+            final_state=final_state,
         )
 
     async def test_deterministic_evidence_is_preferred_over_llm_judgment(
@@ -190,46 +190,60 @@ class TestAgentOutcomeService:
             assert outcome.goal_status == "achieved"
             assert outcome.remaining_constraints == []
 
-    async def test_semantic_constraints_use_evaluator_and_model_cannot_flip_status(
+    async def test_semantic_constraints_unverified_without_model_call(
         self, test_engine: Any
     ) -> None:
-        """语义约束交由 evaluator；模型判 satisfied=false 的约束进入剩余列表。
+        """W1-04：语义约束不再经 evaluator 判断——无正文检查即 unverified。
 
-        模型输出 Schema 不含 goal_status/score/evidence——即使越权也无处写入。
+        执行完成/评分上涨不自动视为满足；约束进 constraint_checks 待作者
+        判断，achieved 降级 partially_achieved；unverified 不混入
+        remaining_constraints（未完成是已知失败，待判断是未知）。
         """
-        import json as _json
-        from pathlib import Path
-
-        golden = _json.loads(
-            (
-                Path(__file__).resolve().parents[2]
-                / "golden" / "agent_outcome_partial.json"
-            ).read_text(encoding="utf-8")
-        )
-        from app.domain.agent_command import AgentOutcomeEvaluatorOutput
-
-        llm = FakeLLM(seed=42)
-        llm.register(
-            "agent_outcome_evaluator",
-            AgentOutcomeEvaluatorOutput.model_validate(golden),
-        )
         factory = async_sessionmaker(test_engine, expire_on_commit=False)
         async with factory() as session:
             action, run = await _seed(
                 session, intent="revise_script", run_status="completed",
                 constraints=["第 3 集增加正面冲突", "保持整体轻松基调"],
             )
-            agent = BaseAgent(name="planner", llm=llm)
-
             outcome = await self._evaluate(
                 session, action, run,
                 final_state={"script_artifact_ids": {"3": "00000000-0000-0000-0000-000000000010"}},
-                agent=agent,
             )
 
-            # 一条约束被判未满足 → achieved 降级为 partially
             assert outcome.goal_status == "partially_achieved"
-            assert "保持整体轻松基调" in outcome.remaining_constraints
-            assert "第 3 集增加正面冲突" not in outcome.remaining_constraints
-            assert outcome.recommended_next_action is not None
-            assert outcome.recommended_next_action.intent == "revise_script"
+            assert outcome.verification_status == "unverified"
+            assert outcome.remaining_constraints == []
+            statuses = {c.constraint: c.status for c in outcome.constraint_checks}
+            assert statuses == {
+                "第 3 集增加正面冲突": "unverified",
+                "保持整体轻松基调": "unverified",
+            }
+            # 待判断项锚定本轮新稿证据（供前端"查看本轮稿件"入口）
+            script_check = outcome.constraint_checks[0]
+            assert str(script_check.evidence_refs[0]) == "00000000-0000-0000-0000-000000000010"
+            # 单纯 unverified 不触发后续修订计划（缺证据不自动改稿）
+            assert outcome.recommended_next_action is None
+            # 证据锚点带角色
+            roles = {r.role for r in outcome.evidence_refs}
+            assert roles == {"script"}
+
+    async def test_failed_run_constraints_reported_once_as_blocked(
+        self, test_engine: Any
+    ) -> None:
+        """blocked 任务：要求随任务失败陈述，不单列 unverified 核验项。"""
+        factory = async_sessionmaker(test_engine, expire_on_commit=False)
+        async with factory() as session:
+            action, run = await _seed(
+                session, intent="revise_script", run_status="failed",
+                constraints=["保持悬念"],
+            )
+            run.error_code = "LLM_TIMEOUT"
+            run.error_detail = "模型调用超时"
+            await session.commit()
+
+            outcome = await self._evaluate(session, action, run, final_state={})
+            assert outcome.goal_status == "blocked"
+            assert outcome.constraint_checks == []
+            assert len(outcome.remaining_constraints) == 1
+            assert "Run 未完成" in outcome.remaining_constraints[0]
+

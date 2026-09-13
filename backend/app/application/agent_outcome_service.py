@@ -1,13 +1,14 @@
-"""AgentOutcomeService — 目标达成判断（J-09）。
+"""AgentOutcomeService — 目标达成判断（J-09，W1-04 诚实性版）。
 
-评估顺序（确定性证据优先）:
+评估顺序（确定性证据优先，且当前是唯一来源）:
 1. Run 终态 + workflow final state → 确定性 goal_status / evidence /
    score_delta / remaining_constraints（评分、连续性、Artifact 引用、
    大纲影响、错误信息全部来自服务端事实）;
-2. 仅当存在"用户语义约束"（现有校验器无法判断的自然语言要求）时，
-   调用 AgentOutcomeEvaluatorSkill 判断这些约束——模型只能补充
-   remaining_constraints 与后续意图建议，不得改变确定性结论
-   （越权字段在合并时被直接丢弃）。
+2. 逐条创作要求生成 constraint_checks：阶段一没有"读正文比对要求"的
+   可复核检查（W1-03 才引入原文证据链），自然语言要求一律如实标
+   unverified 交作者判断——执行完成、评分上涨、Schema 合法都不自动
+   视为满足（W1-04 停用无正文的语义 Outcome Evaluator 调用；Skill
+   文件保留供历史契约与后续阶段）。
 """
 
 from __future__ import annotations
@@ -19,25 +20,31 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.base import BaseAgent
 from app.application.artifact_service import ArtifactService
-from app.core.errors import AppError
 from app.db.models.agent_action import AgentAction
 from app.db.models.workflow_run import WorkflowRun
 from app.domain.agent_command import (
     ActionTarget,
     AgentGoalStatus,
     AgentOutcome,
-    AgentOutcomeEvaluatorInput,
-    OutcomeRecommendation,
+    ConstraintCheck,
+    OutcomeEvidenceRef,
     RecommendedNextAction,
 )
-from app.prompts.loader import PromptLoader
-from app.skills.agent_outcome_evaluator import AgentOutcomeEvaluatorSkill
 
 logger = logging.getLogger(__name__)
 
 _TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "needs_review", "cancelled"})
+
+# state 键 → 证据角色（W1-04：证据锚点指向本轮实际产出/依据）
+_EVIDENCE_REF_KEYS: tuple[tuple[str, str], ...] = (
+    ("source_script_artifact_id", "source_script"),
+    ("source_outline_artifact_id", "source_outline"),
+    ("story_bible_artifact_id", "story_bible"),
+    ("outline_set_artifact_id", "outline"),
+    ("revision_plan_artifact_id", "revision_plan"),
+    ("continuity_check_artifact_id", "continuity"),
+)
 
 
 @dataclass
@@ -49,6 +56,7 @@ class AgentEvidence:
     goal: str
     user_constraints: list[str] = field(default_factory=list)
     artifact_ids: list[str] = field(default_factory=list)
+    evidence_refs: list[OutcomeEvidenceRef] = field(default_factory=list)
     score_delta: float | None = None
     remaining_constraints: list[str] = field(default_factory=list)
     follow_ups: list[str] = field(default_factory=list)
@@ -61,11 +69,10 @@ class AgentEvidence:
 
 
 class AgentOutcomeService:
-    """确定性证据优先的目标达成判断。"""
+    """确定性证据优先的目标达成判断（W1-04：零模型调用）。"""
 
     def __init__(self) -> None:
         self._artifact_svc = ArtifactService()
-        self._evaluator = AgentOutcomeEvaluatorSkill()
 
     async def evaluate(
         self,
@@ -74,14 +81,14 @@ class AgentOutcomeService:
         action: AgentAction,
         run: WorkflowRun,
         final_state: dict[str, Any] | None = None,
-        agent: BaseAgent | None = None,
-        prompt_loader: PromptLoader | None = None,
     ) -> AgentOutcome:
         """生成 AgentOutcome（含可选的一次后续建议）。
 
+        纯确定性评估（W1-04 起零模型调用——无正文证据的语义判断只会
+        产生不可核实的结论）。
+
         Args:
             final_state: workflow 终态快照；None 时从 run.state_summary 读取。
-            agent / prompt_loader: 缺省时不调用模型（纯确定性评估）。
         """
         state: dict[str, Any] = final_state or run.state_summary or {}
         evidence = await self._collect_evidence(db, action=action, run=run, state=state)
@@ -90,69 +97,54 @@ class AgentOutcomeService:
         goal_status, remaining = self._deterministic_status(evidence)
 
         # 确认门（stage_gate=outline/scripts）是设计内的阶段暂停而非异常：
-        # 不调 evaluator、不产生后续动作建议（避免在门上生成"等待确认"的
-        # 子计划卡，用户只需在门上确认续跑），也不把"等待确认"列为未完成约束。
+        # 不产生核验项与后续动作建议（用户只需在门上确认续跑），也不把
+        # "等待确认"列为未完成约束。
         is_stage_gate = (
             evidence.run_status == "needs_review"
             and state.get("stage_gate") in ("outline", "scripts")
         )
 
-        # 语义约束判断：确定性结论已 blocked / 无语义约束 → 不调用模型
-        judgments: list[tuple[str, bool, str]] = []
-        recommendation: OutcomeRecommendation | None = None
-        semantic_constraints = [
-            c for c in evidence.user_constraints if c not in remaining
-        ]
-        if (
-            goal_status != "blocked"
-            and not is_stage_gate
-            and semantic_constraints
-            and agent is not None
-            and prompt_loader is not None
-        ):
-            try:
-                output = await self._evaluator.execute(
-                    {
-                        "input": AgentOutcomeEvaluatorInput(
-                            goal=evidence.goal,
-                            intent=evidence.intent,  # type: ignore[arg-type]
-                            run_status=evidence.run_status,
-                            deterministic_goal_status=goal_status,
-                            user_constraints=semantic_constraints,
-                            evidence_summary="\n".join(evidence.summary_lines)[:6000],
-                        ),
-                        "agent": agent,
-                        "prompt_loader": prompt_loader,
-                    }
-                )
-                judgments = [
-                    (j.constraint, j.satisfied, j.reason)
-                    for j in output.constraint_judgments
-                ]
-                recommendation = output.recommended_next_action
-            except AppError as exc:
-                # 评估失败不阻断终态回写：退化为纯确定性结论
-                logger.warning("Outcome Evaluator 失败，退化为确定性结论: %s", exc)
-
-        # 合并语义判断（模型不能改变确定性结论，只能补充剩余约束）
-        for constraint, satisfied, _reason in judgments:
-            if not satisfied and constraint not in remaining:
-                remaining.append(constraint)
-                if goal_status == "achieved":
-                    goal_status = "partially_achieved"
-
+        # 逐条创作要求的核验结果（W1-04）：阶段一没有可复核的正文检查，
+        # 已知确定性失败（blocked）以外的语义要求一律 unverified 待作者
+        # 判断；blocked 时要求随任务一起失败，不再单列核验项；
+        # 确认门是设计内暂停，不产生核验项也不留"需要人工复核"尾巴
+        checks: list[ConstraintCheck] = []
         if is_stage_gate:
             remaining = []
+        elif goal_status != "blocked":
+            checks = [
+                ConstraintCheck(
+                    constraint=c,
+                    status="unverified",
+                    reason="缺少可核验的正文证据检查，需要你阅读本轮稿件后判断",
+                    evidence_refs=[
+                        r.artifact_id for r in evidence.evidence_refs if r.role == "script"
+                    ][:5],
+                )
+                for c in evidence.user_constraints
+                if c and c not in remaining
+            ]
+        has_unverified = any(c.status == "unverified" for c in checks)
+        verification_status: Any = "unverified" if has_unverified else "verified"
+
+        # 语义未验证不得自称完全达成（兼容旧三态：映射 partially_achieved）。
+        # unverified 不进 remaining_constraints——"未完成"是已知失败，
+        # "待判断"是未知，混在一起会把未验证伪装成已失败。
+        if goal_status == "achieved" and has_unverified:
+            goal_status = "partially_achieved"
 
         next_action = (
             None
             if is_stage_gate
-            else self._recommended_next_action(evidence, recommendation)
+            else self._recommended_next_action(evidence)
         )
 
         return AgentOutcome(
             goal_status=goal_status,
+            verification_status=verification_status,
+            constraint_checks=checks,
             evidence_artifact_ids=_unique_uuids(evidence.artifact_ids),
+            evidence_refs=evidence.evidence_refs,
             score_delta=evidence.score_delta,
             remaining_constraints=remaining,
             recommended_next_action=next_action,
@@ -184,20 +176,23 @@ class AgentOutcomeService:
             evidence.run_status = "failed"
             evidence.error_detail = f"Run 处于非终态 {run.status}，按失败处理"
 
-        # Artifact ID 证据
-        for key in (
-            "requirement_artifact_id", "story_bible_artifact_id",
-            "outline_set_artifact_id", "revision_plan_artifact_id",
-            "continuity_check_artifact_id", "source_script_artifact_id",
-            "source_outline_artifact_id",
-        ):
+        # Artifact ID 证据 + 角色化证据锚点（W1-04）
+        for key, role in _EVIDENCE_REF_KEYS:
             value = state.get(key)
             if value:
                 evidence.artifact_ids.append(str(value))
-        for mapping_key in ("script_artifact_ids", "evaluation_artifact_ids"):
-            evidence.artifact_ids.extend(
-                str(v) for v in (state.get(mapping_key) or {}).values()
-            )
+                evidence.evidence_refs.append(
+                    OutcomeEvidenceRef(artifact_id=uuid.UUID(str(value)), role=role)  # type: ignore[arg-type]
+                )
+        for mapping_key, role in (
+            ("script_artifact_ids", "script"),
+            ("evaluation_artifact_ids", "evaluation"),
+        ):
+            for value in (state.get(mapping_key) or {}).values():
+                evidence.artifact_ids.append(str(value))
+                evidence.evidence_refs.append(
+                    OutcomeEvidenceRef(artifact_id=uuid.UUID(str(value)), role=role)  # type: ignore[arg-type]
+                )
 
         # 大纲影响证据
         impact = state.get("outline_impact") or {}
@@ -297,35 +292,18 @@ class AgentOutcomeService:
     @staticmethod
     def _recommended_next_action(
         evidence: AgentEvidence,
-        evaluator_recommendation: OutcomeRecommendation | None,
     ) -> RecommendedNextAction | None:
-        """确定性建议优先（大纲影响 → 修订受影响剧本），其次 evaluator 建议。
+        """确定性建议（大纲影响 → 修订受影响剧本）。
 
-        只输出意图与目标描述；执行目标（Artifact ID）由 lifecycle 用
-        当前最新 Artifact 重新解析——建议本身不携带可执行句柄。
+        W1-04：仅有 unverified 待判断项不构成后续计划——缺证据不触发
+        无限改稿，作者判断后手动发起。只输出意图与目标描述；执行目标
+        （Artifact ID）由 lifecycle 用当前最新 Artifact 重新解析。
         """
         if evidence.dependent_script_ids and evidence.intent == "revise_outline":
             episode = evidence.changed_episodes[0] if evidence.changed_episodes else None
             return RecommendedNextAction(
                 intent="revise_script",
                 target=ActionTarget(target_type="script", episode_number=episode),
-                constraints=[],
-            )
-        if evaluator_recommendation is not None:
-            rec = evaluator_recommendation
-            episode = rec.episode_number
-            target_type = {
-                "revise_script": "script",
-                "revise_outline": "outline",
-                "evaluate": "evaluation",
-                "create_script": "project",
-            }.get(rec.intent, "project")
-            return RecommendedNextAction(
-                intent=rec.intent,
-                target=ActionTarget(
-                    target_type=target_type,  # type: ignore[arg-type]
-                    episode_number=episode,
-                ),
                 constraints=[],
             )
         return None

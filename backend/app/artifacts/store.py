@@ -86,9 +86,9 @@ class ArtifactStore:
 
         repo = self._get_repo(db)
 
-        # 幂等检查：相同 input_hash 返回已有记录
+        # 幂等检查：相同 input_hash 返回已有记录（项目内）
         if input_hash is not None:
-            existing = await repo.find_by_input_hash(input_hash)
+            existing = await repo.find_by_input_hash(input_hash, project_id)
             if existing is not None:
                 logger.info(
                     "Artifact 幂等命中（input_hash 相同，复用已有版本）: "
@@ -202,9 +202,11 @@ class ArtifactStore:
         """按项目分页查询 Artifact 列表。"""
         return await self._get_repo(db).list_by_project(project_id, artifact_type, offset=offset, limit=limit)
 
-    async def find_by_input_hash(self, db: AsyncSession, input_hash: str) -> Artifact | None:
-        """按 input_hash 幂等查询。"""
-        return await self._get_repo(db).find_by_input_hash(input_hash)
+    async def find_by_input_hash(
+        self, db: AsyncSession, input_hash: str, project_id: uuid.UUID
+    ) -> Artifact | None:
+        """按 input_hash 幂等查询（项目内，防跨项目串用）。"""
+        return await self._get_repo(db).find_by_input_hash(input_hash, project_id)
 
     async def get_source_links(self, db: AsyncSession, artifact_id: uuid.UUID) -> list[Any]:
         """查询 Artifact 的来源依赖关系。"""

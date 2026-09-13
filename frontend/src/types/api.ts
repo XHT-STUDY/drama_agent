@@ -190,12 +190,17 @@ export interface Run {
   action: string;
   status: RunStatus;
   config_snapshot?: Record<string, unknown>;
+  /** 失败时的机器可读错误码与详情 */
+  error_code?: string | null;
+  error_detail?: string | null;
   /** 触发本 Run 的 AgentAction ID（Agent 确认创建时） */
   agent_action_id?: string | null;
   /** 当前确认门（outline=大纲门 / scripts=剧本分批门；null = 无门） */
   stage_gate?: string | null;
   /** 门确认续跑世代（W1-01）：每次合法 continue 递增；续跑请求必须携带所见世代 */
   stage_generation: number;
+  /** 本轮 Run 产出的结果 Artifact（W1-05：export 完成后指向 export_file，固定下载） */
+  result_artifact_ids?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -555,6 +560,32 @@ export interface ExportRecord {
   sizeBytes: number;
 }
 
+/** 可导出的内容集合（W1-05 导出页：每集最新 valid，冻结 ID 用） */
+export interface ExportableArtifacts {
+  storyBible: Artifact | null;
+  outline: Artifact | null;
+  scripts: Artifact[];
+  evaluations: Artifact[];
+  revisions: Artifact[];
+}
+
+/** export_file Artifact 的 content（服务端导出历史的展示字段） */
+export interface ExportFileContent {
+  storage_key: string;
+  format: ExportFormat;
+  filename: string;
+  size_bytes: number;
+  sha256: string;
+  source_artifact_ids: Array<{ artifact_id: string; version: number; relation: string }>;
+  warnings?: string[];
+}
+
+/** 服务端导出历史条目（W1-05）：export_file Artifact 本体 */
+export interface ServerExportRecord {
+  artifact: Artifact;
+  content: ExportFileContent;
+}
+
 // ============================================================
 // 会话与消息 (Conversation / Message) — J-10
 // ============================================================
@@ -700,10 +731,37 @@ export interface RecommendedNextAction {
   constraints: string[];
 }
 
-/** Action 终态的目标达成判断 */
+/** 单条创作要求的核验结果（W1-04）：satisfied/unsatisfied 只能来自
+ * 明确执行过的检查；自然语言要求无正文检查时如实标 unverified */
+export interface ConstraintCheck {
+  constraint: string;
+  status: "satisfied" | "unsatisfied" | "unverified";
+  reason?: string;
+  evidence_refs?: string[];
+}
+
+/** Outcome 证据锚点（W1-04）：指向本轮实际产出/依据的 Artifact 及其角色 */
+export interface OutcomeEvidenceRef {
+  artifact_id: string;
+  role:
+    | "source_script"
+    | "source_outline"
+    | "story_bible"
+    | "outline"
+    | "script"
+    | "evaluation"
+    | "continuity"
+    | "revision_plan";
+}
+
+/** Action 终态的目标达成判断（verification_status：unverified = 存在
+ * 待作者判断的要求，旧结果默认 unverified——历史行没有逐项核验记录） */
 export interface AgentOutcome {
   goal_status: AgentGoalStatus;
+  verification_status?: "verified" | "unverified";
+  constraint_checks?: ConstraintCheck[];
   evidence_artifact_ids: string[];
+  evidence_refs?: OutcomeEvidenceRef[];
   score_delta?: number | null;
   remaining_constraints: string[];
   recommended_next_action?: RecommendedNextAction | null;

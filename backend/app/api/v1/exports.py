@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_db, get_settings
 from app.api.v1.runs import RunResponse
 from app.application.artifact_service import ArtifactService
+from app.application.export_service import ExportService
 from app.application.project_service import ProjectService
 from app.application.run_service import RunService
 from app.application.workflow_dispatcher import schedule_worker
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["exports"])
 _project_svc = ProjectService()
 _artifact_svc = ArtifactService()
+_export_svc = ExportService()
 _run_svc = RunService()
 
 # 下载媒体类型（按导出格式映射）
@@ -96,6 +98,7 @@ class CreateExportRequest(BaseModel):
     responses={
         202: {"description": "导出 Run 已创建并进入队列"},
         404: {"description": "项目不存在"},
+        422: {"description": "导出选择不合法（EXPORT_SELECTION_INVALID）"},
     },
 )
 async def create_export(
@@ -105,17 +108,30 @@ async def create_export(
 ) -> RunResponse:
     """发起导出，返回 202 + Run（客户端经 /runs/{id} 轮询状态、SSE 订阅进度）。
 
-    导出选择（kinds / format / 显式版本）随 Run 的 config_snapshot 传给 Worker，
-    由 ExportService 在后台完成组装 → 序列化 → 落盘 → ExportFile Artifact。
+    W1-05 固定版本语义：导出选择在**请求接受时**规范化为逐 kind 的显式
+    Artifact ID 并冻结进 config_snapshot——排队后产生的新版本、暂停期间
+    的聊天改稿都不会改变本次导出内容；Worker 只消费冻结的 ID 集合。
+    旧客户端（省略 artifact_ids）同样在接受时解析 latest 并冻结，不能等
+    Worker 运行时重新选稿。导出完成后 Run 的 result_artifact_ids 指向
+    export_file Artifact，用其下载端点重新下载得到字节一致的文件。
     """
     # 项目存在校验（404 PROJECT_NOT_FOUND）
     await _project_svc.get(db, project_id)
+
+    # 接受时解析并冻结选择（不合法即 422，不排队）
+    resolved, warnings = await _export_svc.resolve_selection(
+        db,
+        project_id=project_id,
+        kinds=list(body.kinds),
+        artifact_ids=body.artifact_ids,
+    )
 
     config_snapshot: dict[str, Any] = {
         "options": {
             "kinds": body.kinds,
             "format": body.format,
-            "artifact_ids": body.artifact_ids,
+            "artifact_ids": resolved,
+            **({"selection_warnings": warnings} if warnings else {}),
         }
     }
     run = await _run_svc.create_run(
@@ -131,13 +147,39 @@ async def create_export(
     schedule_worker(run.id, "export", config_snapshot)
 
     logger.info(
-        "发起导出: run=%s project=%s kinds=%s format=%s",
+        "发起导出（选择已冻结）: run=%s project=%s kinds=%s format=%s 源=%s",
         run.id,
         project_id,
         body.kinds,
         body.format,
+        {k: len(v) for k, v in resolved.items()},
     )
     return RunResponse.from_orm(run)
+
+
+@router.get(
+    "/projects/{project_id}/exports",
+    responses={
+        200: {"description": "服务端导出历史（export_file Artifact 分页列表）"},
+        404: {"description": "项目不存在"},
+    },
+)
+async def list_exports(
+    project_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> dict[str, Any]:
+    """服务端导出历史（W1-05）：项目内 export_file Artifact 分页列表。
+
+    历史交付固定到导出时的稿件内容——每条记录可经
+    /exports/{artifact_id}/download 重新下载，字节与首次导出一致
+    （sha256 记录在 content 中）。
+    """
+    await _project_svc.get(db, project_id)
+    return await _artifact_svc.list_by_project(
+        db, project_id, "export_file", offset=offset, limit=limit
+    )
 
 
 @router.get(

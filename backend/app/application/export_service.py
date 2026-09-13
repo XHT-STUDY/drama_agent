@@ -70,6 +70,13 @@ class ExportError(AppError):
     code: str = "EXPORT_FAILED"
 
 
+class ExportSelectionError(AppError):
+    """导出选择在排队前即不合法（W1-05：请求接受时校验并拒绝）。"""
+
+    status_code: int = 422
+    code: str = "EXPORT_SELECTION_INVALID"
+
+
 def _instrument_export(fn: Callable[..., Any]) -> Callable[..., Any]:
     """导出成败计数装饰器（I-02）：成功/失败分别累加 export_total{format,status}。"""
 
@@ -223,6 +230,114 @@ class ExportService:
                     _register([item])
 
         return data, sources, warnings
+
+    # ---- 选择冻结（W1-05） ----
+
+    async def resolve_selection(
+        self,
+        db: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        kinds: list[str],
+        artifact_ids: dict[str, list[str]] | None,
+    ) -> tuple[dict[str, list[str]], list[str]]:
+        """在创建 Run 之前把导出选择规范化为逐 kind 的显式 Artifact ID。
+
+        作者导出哪一稿就固定哪一稿（W1-05）：排队后产生的新版本、暂停
+        期间的聊天改稿都不能改变本次导出内容。
+
+        - 显式模式（artifact_ids 提供）：每个 kind 必须有非空 ID 列表
+          （缺项/空数组 422）；逐 ID 校验 type/status/项目归属；剧本类
+          kind 同一集选多个版本 422；评估报告绑定剧本与所选剧本版本
+          不一致时默认剔除并告警（不把错配报告混进交付）。
+        - 缺省模式（旧客户端）：接受时解析各 kind 的 latest valid 并
+          冻结——不能等 Worker 运行时重新选稿；无内容的 kind 冻结为
+          空列表（Worker 导出时如实提示该 kind 无内容）。
+
+        Returns:
+            (resolved, warnings)：resolved = kind → 显式 Artifact ID 列表
+        """
+        resolved: dict[str, list[str]] = {}
+        warnings: list[str] = []
+
+        explicit_mode = artifact_ids is not None
+        if explicit_mode and set(artifact_ids or {}) - set(kinds):
+            unknown = sorted(set(artifact_ids or {}) - set(kinds))
+            raise ExportSelectionError(
+                detail=f"artifact_ids 含未选择的内容类型: {unknown}",
+            )
+
+        # 先解析剧本（评估绑定校验需要所选剧本集合）
+        ordered_kinds = [k for k in ("script",) if k in kinds] + [
+            k for k in kinds if k != "script"
+        ]
+        script_artifacts: dict[str, ArtifactResponse] = {}
+        for kind in ordered_kinds:
+            ids: list[str]
+            if explicit_mode:
+                ids = list((artifact_ids or {}).get(kind) or [])
+                if not ids:
+                    raise ExportSelectionError(
+                        detail=(
+                            f"显式指定导出内容时，{kind} 的 Artifact ID 列表"
+                            "不能为空或缺失"
+                        ),
+                    )
+            else:
+                if kind in _KIND_LIST_KEYS:
+                    items = await self._collect_latest(
+                        db, project_id, _KIND_TO_TYPE[kind]
+                    )
+                else:
+                    item_orm = await self._artifact_store.get_latest(
+                        db, project_id, _KIND_TO_TYPE[kind], 1
+                    )
+                    items = [ArtifactResponse(item_orm)] if item_orm else []
+                ids = [str(i.id) for i in items]
+                # 无内容的 kind 冻结为空列表：Worker 导出时该 kind 会
+                # 记录"无可用有效内容"警告（权威告警在导出文件里，避免
+                # 接受时与导出时重复）
+
+            try:
+                artifacts = await self._fetch_explicit(db, project_id, ids, kind)
+            except ExportError as exc:
+                # 选择不合法（类型/状态/归属）在排队前以选择错误拒绝
+                raise ExportSelectionError(detail=str(exc.detail) if exc.detail else str(exc)) from exc
+            if kind == "script":
+                episodes: dict[int, str] = {}
+                for a in artifacts:
+                    if a.episode_number in episodes:
+                        raise ExportSelectionError(
+                            detail=(
+                                f"第 {a.episode_number} 集选择了多个剧本版本"
+                                f"（{episodes[a.episode_number]} / {a.id}），"
+                                "一次导出每集只能有一份正文"
+                            ),
+                        )
+                    episodes[a.episode_number] = str(a.id)
+                    script_artifacts[str(a.id)] = a
+
+            if kind == "evaluation" and "script" in kinds:
+                kept: list[str] = []
+                for a in artifacts:
+                    bound = str(
+                        (a.content or {}).get("script_artifact_id") or ""
+                    )
+                    if bound and script_artifacts and bound not in script_artifacts:
+                        warnings.append(
+                            f"评估报告 {a.id} 绑定的剧本版本不在本次导出的剧本"
+                            "集合中，已默认剔除（可在版本页核对后重新导出）"
+                        )
+                        continue
+                    kept.append(str(a.id))
+                artifacts = [
+                    a for a in artifacts if str(a.id) in kept
+                ]
+                ids = kept
+
+            resolved[kind] = [str(a.id) for a in artifacts]
+
+        return resolved, warnings
 
     # ---- 主入口 ----
 

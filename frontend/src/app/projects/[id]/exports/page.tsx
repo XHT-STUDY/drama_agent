@@ -1,91 +1,71 @@
 "use client";
 
-/** 导出中心页 (H-07).
+/** 导出中心页（H-07，W1-05 固定版本版）.
  *
- * 客户端本地导出：复用现有 GET artifacts 接口取内容，在浏览器序列化为
- * Markdown / DOCX 并下载。提供：
- * - ExportSection：选择导出内容与格式 → 生成并下载
- * - ExportHistory：导出历史（localStorage 按项目隔离）+ 重新下载 + 清空
- *
- * 数据获取集中在页面容器，ExportSection / ExportHistory 为纯叶子组件。
+ * 后端导出：选择在请求接受时冻结为显式 Artifact ID；导出完成后经
+ * export_file Artifact 的下载端点拿文件——历史重新下载字节一致。
+ * - ExportSection：内容/格式选择 → 发起后端导出 → 轮询 Run → 下载
+ * - ExportHistory：服务端历史（export_file Artifact 列表）+ 固定重下
+ * 旧版 localStorage 历史只读展示为"未保存固定文件"的浏览器记录。
  */
 
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { artifactsApi, projectsApi, revisionsApi } from "@/lib/api-client";
+import { artifactsApi, exportsApi } from "@/lib/api-client";
 import { Loading } from "@/components/Loading";
 import { ErrorMessage } from "@/components/ErrorMessage";
 import { Empty } from "@/components/Empty";
 import { ExportSection } from "@/features/exports/ExportSection";
 import { ExportHistory } from "@/features/exports/ExportHistory";
-import { downloadBlob, serializeExport, type ExportData } from "@/lib/export";
-import type {
-  Artifact,
-  EpisodeOutlineSetContent,
-  EvaluationReportContent,
-  ExportContentKind,
-  ExportFormat,
-  ExportRecord,
-  RevisionPlanContent,
-  ScriptDraftContent,
-  StoryBibleContent,
-} from "@/types/api";
+import type { Artifact, ExportRecord, ExportableArtifacts } from "@/types/api";
 
-/** Artifact.content → 强类型（后端 content 为宽松 Record，先过一层） */
-function contentAs<T>(artifact: Artifact): T {
-  return artifact.content as unknown as T;
+/** 按集取最新 valid（同集多版本时取 version 最大者；不依赖
+ * current_episode_count——已写集数以实际存在的 Artifact 为准） */
+function latestValidPerEpisode(artifacts: Artifact[]): Artifact[] {
+  const byEpisode = new Map<number, Artifact>();
+  for (const a of artifacts) {
+    if (a.status !== "valid") continue;
+    const cur = byEpisode.get(a.episode_number);
+    if (!cur || a.version > cur.version) byEpisode.set(a.episode_number, a);
+  }
+  return [...byEpisode.values()].sort((x, y) => x.episode_number - y.episode_number);
 }
 
-/** 加载导出所需全部内容（缺数据容错置空，不阻塞导出） */
-async function loadExportData(projectId: string): Promise<ExportData> {
-  const project = await projectsApi.get(projectId);
+function latestValidSingle(artifacts: Artifact[]): Artifact | null {
+  return latestValidPerEpisode(artifacts)[0] ?? null;
+}
 
-  const [storyBible, outline, revisionsRes] = await Promise.all([
-    artifactsApi
-      .getLatest(projectId, "story_bible", 1)
-      .catch(() => null),
-    artifactsApi
-      .getLatest(projectId, "episode_outline_set", 1)
-      .catch(() => null),
-    revisionsApi.list(projectId).catch(() => ({ items: [] as Artifact[] })),
-  ]);
-
-  // 已撰写的集数 = current_episode_count（finalize 更新）
-  const written = Math.max(0, project.current_episode_count);
-  const episodes = Array.from({ length: written }, (_, i) => i + 1);
-
-  const [scripts, evaluations] = await Promise.all([
-    Promise.all(
-      episodes.map((ep) =>
-        artifactsApi
-          .getLatest(projectId, "script_draft", ep)
-          .then((a) => contentAs<ScriptDraftContent>(a))
-          .catch(() => null),
-      ),
-    ),
-    Promise.all(
-      episodes.map((ep) =>
-        artifactsApi
-          .getLatest(projectId, "evaluation_report", ep)
-          .then((a) => contentAs<EvaluationReportContent>(a))
-          .catch(() => null),
-      ),
-    ),
-  ]);
-
+async function loadExportableArtifacts(projectId: string): Promise<ExportableArtifacts> {
+  // 读取失败整体报错（W1-05：静默吞掉某类型=悄悄少导一部分）
+  const [sbAll, outlineAll, scriptsAll, evaluationsAll, revisionsAll] =
+    await Promise.all([
+      artifactsApi.listAllByType(projectId, "story_bible"),
+      artifactsApi.listAllByType(projectId, "episode_outline_set"),
+      artifactsApi.listAllByType(projectId, "script_draft"),
+      artifactsApi.listAllByType(projectId, "evaluation_report"),
+      artifactsApi.listAllByType(projectId, "revision_plan"),
+    ]);
   return {
-    projectTitle: project.title,
-    storyBible: storyBible ? contentAs<StoryBibleContent>(storyBible) : null,
-    outline: outline ? contentAs<EpisodeOutlineSetContent>(outline) : null,
-    scripts: scripts.filter((s): s is ScriptDraftContent => s !== null),
-    evaluations: evaluations.filter((e): e is EvaluationReportContent => e !== null),
-    revisions: revisionsRes.items.map((a) => ({
-      plan: contentAs<RevisionPlanContent>(a),
-      diff: null,
-    })),
+    storyBible: latestValidSingle(sbAll),
+    outline: latestValidSingle(outlineAll),
+    scripts: latestValidPerEpisode(scriptsAll),
+    evaluations: latestValidPerEpisode(evaluationsAll),
+    revisions: latestValidPerEpisode(revisionsAll),
   };
+}
+
+/** 旧版浏览器历史（只读：未保存固定文件，不再支持重下） */
+function readLegacyRecords(projectId: string): ExportRecord[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(`drama-exports:${projectId}`);
+    const parsed = raw ? (JSON.parse(raw) as ExportRecord[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 /** BackLink — 返回工作台 */
@@ -105,33 +85,6 @@ function BackLink({ projectId }: { projectId: string }) {
   );
 }
 
-// ============================================================
-// localStorage 导出历史（按项目隔离）
-// ============================================================
-
-const historyKey = (projectId: string): string => `drama-exports:${projectId}`;
-
-function readHistory(projectId: string): ExportRecord[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(historyKey(projectId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as ExportRecord[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeHistory(projectId: string, records: ExportRecord[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(historyKey(projectId), JSON.stringify(records));
-  } catch {
-    // localStorage 不可用（隐私模式等）时静默降级
-  }
-}
-
 export default function ExportsPage() {
   const params = useParams();
   const projectId = String(params.id);
@@ -144,37 +97,15 @@ export default function ExportsPage() {
     refetch,
   } = useQuery({
     queryKey: ["export-data", projectId],
-    queryFn: () => loadExportData(projectId),
+    queryFn: () => loadExportableArtifacts(projectId),
   });
 
-  // 导出历史（localStorage）
-  const [records, setRecords] = useState<ExportRecord[]>(() => readHistory(projectId));
-  const [historyError, setHistoryError] = useState<string | null>(null);
+  const history = useQuery({
+    queryKey: ["server-exports", projectId],
+    queryFn: () => exportsApi.list(projectId),
+  });
 
-  const persistRecords = (next: ExportRecord[]): void => {
-    setRecords(next);
-    writeHistory(projectId, next);
-  };
-
-  const handleExported = (record: ExportRecord): void => {
-    persistRecords([record, ...records].slice(0, 50));
-    setHistoryError(null);
-  };
-
-  const handleRedownload = async (record: ExportRecord): Promise<void> => {
-    if (!data) return;
-    setHistoryError(null);
-    try {
-      const result = await serializeExport({
-        data,
-        kinds: record.kinds as ExportContentKind[],
-        format: record.format as ExportFormat,
-      });
-      downloadBlob(result.filename, result.blob);
-    } catch (e) {
-      setHistoryError(e instanceof Error ? e.message : "重新下载失败，请重试");
-    }
-  };
+  const legacyRecords = useMemo(() => readLegacyRecords(projectId), [projectId]);
 
   const isEmpty = useMemo(
     () =>
@@ -206,19 +137,28 @@ export default function ExportsPage() {
         />
       ) : (
         <div className="space-y-6">
-          <ExportSection data={data} onExported={handleExported} />
+          <ExportSection projectId={projectId} available={data} />
 
-          {historyError && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-600">
-              {historyError}
-            </div>
+          {history.isError ? (
+            <ErrorMessage
+              error={(history.error || new Error("导出历史加载失败")) as Error}
+              onRetry={() => history.refetch()}
+            />
+          ) : history.isLoading ? (
+            <Loading text="正在加载导出历史…" />
+          ) : (
+            <ExportHistory
+              projectId={projectId}
+              artifacts={history.data?.items ?? []}
+            />
           )}
 
-          <ExportHistory
-            records={records}
-            onRedownload={(record) => void handleRedownload(record)}
-            onClear={() => persistRecords([])}
-          />
+          {legacyRecords.length > 0 && (
+            <p className="text-xs text-gray-400" data-testid="legacy-exports-note">
+              另有 {legacyRecords.length} 条旧版浏览器导出记录（未保存固定文件，
+              内容已随稿件变化，不再支持重新下载）。
+            </p>
+          )}
         </div>
       )}
     </div>

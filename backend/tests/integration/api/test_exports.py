@@ -289,3 +289,194 @@ class TestExportAPI:
         )
         assert resp.status_code == 422
         assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
+async def _create_project_any(async_client: AsyncClient, title: str) -> str:
+    resp = await async_client.post("/api/v1/projects", json={"title": title})
+    assert resp.status_code == 201, resp.text
+    return str(resp.json()["id"])
+
+
+async def _wait_run_any(async_client: AsyncClient, run_id: str, max_tries: int = 60) -> str:
+    status = "queued"
+    for _ in range(max_tries):
+        await asyncio.sleep(0.2)
+        resp = await async_client.get(f"/api/v1/runs/{run_id}")
+        status = resp.json()["status"]
+        if status in ("completed", "failed"):
+            break
+    return status
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestExportFrozenSelectionW105:
+    """W1-05：导出选择在接受时冻结为显式 Artifact ID，历史重下字节一致。"""
+
+    _create_project = staticmethod(_create_project_any)
+    _wait_run = staticmethod(_wait_run_any)
+
+    async def _seed_one_script(
+        self, app: Any, project_id: str, title: str
+    ) -> str:
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        from app.application.artifact_service import ArtifactService
+        from app.domain.enums import ArtifactType
+        from tests.integration.export.test_export_service import _valid_script
+
+        engine = app.state._test_engine
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        svc = ArtifactService()
+        async with factory() as db:
+            art = await svc.create_validated_artifact(
+                db,
+                project_id=uuid.UUID(project_id),
+                artifact_type=ArtifactType.SCRIPT_DRAFT,
+                episode_number=1,
+                content=_valid_script(1, title),
+            )
+            await db.commit()
+            return str(art.id)
+
+    async def test_legacy_request_freezes_latest_and_redownload_bytes_stable(
+        self, app: Any, async_client: AsyncClient
+    ) -> None:
+        """旧客户端省略 IDs：接受时解析 latest 冻结进 config；改稿后历史
+        重下字节一致（SHA256 相同），新导出才用新版本。"""
+        project_id = await self._create_project(async_client, "冻结选择测试")
+        v1_id = await self._seed_one_script(app, project_id, "旧版第一集")
+
+        # 发起导出（省略 artifact_ids）
+        resp = await async_client.post(
+            f"/api/v1/projects/{project_id}/exports",
+            json={"kinds": ["script"], "format": "markdown"},
+        )
+        assert resp.status_code == 202, resp.text
+        run = resp.json()
+        # 接受即冻结：config.options.artifact_ids 是显式 v1 ID
+        frozen = run["config_snapshot"]["options"]["artifact_ids"]
+        assert frozen == {"script": [v1_id]}
+        status = await self._wait_run(async_client, run["run_id"])
+        assert status == "completed"
+
+        run_resp = await async_client.get(f"/api/v1/runs/{run['run_id']}")
+        export_artifact_id = run_resp.json()["result_artifact_ids"][0]
+
+        dl1 = await async_client.get(
+            f"/api/v1/exports/{export_artifact_id}/download",
+            params={"project_id": project_id},
+        )
+        assert dl1.status_code == 200
+
+        # 改稿：第 1 集出现 v2
+        await self._seed_one_script(app, project_id, "新版第一集")
+
+        # 历史重下：字节与首次一致（不含 v2 内容）
+        dl2 = await async_client.get(
+            f"/api/v1/exports/{export_artifact_id}/download",
+            params={"project_id": project_id},
+        )
+        assert dl2.content == dl1.content
+        assert "旧版第一集" in dl1.content.decode("utf-8")
+        assert "新版第一集" not in dl2.content.decode("utf-8")
+
+        # 服务端历史列出交付记录
+        history = await async_client.get(f"/api/v1/projects/{project_id}/exports")
+        assert history.status_code == 200
+        ids = [item["id"] for item in history.json()["items"]]
+        assert export_artifact_id in ids
+
+        # 新导出解析新 latest（v2）——冻结的是"发起时刻"
+        resp2 = await async_client.post(
+            f"/api/v1/projects/{project_id}/exports",
+            json={"kinds": ["script"], "format": "markdown"},
+        )
+        frozen2 = resp2.json()["config_snapshot"]["options"]["artifact_ids"]
+        assert frozen2["script"] != [v1_id]
+
+    async def test_explicit_selection_rejections(
+        self, app: Any, async_client: AsyncClient
+    ) -> None:
+        """显式选择的排队前 422：缺项/空数组/跨项目/同集多版本。"""
+        project_id = await self._create_project(async_client, "显式选择校验")
+        v1 = await self._seed_one_script(app, project_id, "第一集")
+
+        other_project = await self._create_project(async_client, "别的项目")
+        other_v1 = await self._seed_one_script(app, other_project, "别家第一集")
+
+        cases: list[dict[str, Any]] = [
+            # 缺 story_bible 项（选了 kinds 却没给 IDs）
+            {"kinds": ["script", "story_bible"], "artifact_ids": {"script": [v1]}},
+            # 空数组
+            {"kinds": ["script"], "artifact_ids": {"script": []}},
+            # 跨项目 Artifact
+            {"kinds": ["script"], "artifact_ids": {"script": [other_v1]}},
+            # 同集两个版本
+            {"kinds": ["script"], "artifact_ids": {"script": [v1, v1]}},
+        ]
+        for payload in cases:
+            resp = await async_client.post(
+                f"/api/v1/projects/{project_id}/exports", json=payload
+            )
+            assert resp.status_code == 422, payload
+            assert resp.json()["code"] == "EXPORT_SELECTION_INVALID", payload
+
+    async def test_mismatched_evaluation_dropped_with_warning(
+        self, app: Any, async_client: AsyncClient
+    ) -> None:
+        """评估报告绑定的剧本不在所选集合 → 默认剔除并记 selection_warnings。"""
+        import json as _json
+        from pathlib import Path
+
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        from app.application.artifact_service import ArtifactService
+        from app.domain.enums import ArtifactType
+        from tests.integration.export.test_export_service import _valid_script
+
+        golden = _json.loads(
+            (Path(__file__).resolve().parents[2] / "golden" / "evaluation_report_valid.json")
+            .read_text(encoding="utf-8")
+        )
+
+        project_id = await self._create_project(async_client, "错配评估")
+        engine = app.state._test_engine
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        svc = ArtifactService()
+        async with factory() as db:
+            script_v1 = await svc.create_validated_artifact(
+                db, project_id=uuid.UUID(project_id),
+                artifact_type=ArtifactType.SCRIPT_DRAFT, episode_number=1,
+                content=_valid_script(1, "第一集"),
+            )
+            # 评估绑定的是 v1
+            eval_v1 = await svc.create_validated_artifact(
+                db, project_id=uuid.UUID(project_id),
+                artifact_type=ArtifactType.EVALUATION_REPORT, episode_number=1,
+                content={**golden, "script_artifact_id": str(script_v1.id)},
+            )
+            # 改稿出 v2（评估不绑定 v2）
+            script_v2 = await svc.create_validated_artifact(
+                db, project_id=uuid.UUID(project_id),
+                artifact_type=ArtifactType.SCRIPT_DRAFT, episode_number=1,
+                content=_valid_script(1, "第一集修订"),
+            )
+            await db.commit()
+
+        # 显式选 v2 剧本 + v1 时代的评估
+        resp = await async_client.post(
+            f"/api/v1/projects/{project_id}/exports",
+            json={
+                "kinds": ["script", "evaluation"],
+                "format": "markdown",
+                "artifact_ids": {
+                    "script": [str(script_v2.id)],
+                    "evaluation": [str(eval_v1.id)],
+                },
+            },
+        )
+        assert resp.status_code == 202, resp.text
+        options = resp.json()["config_snapshot"]["options"]
+        assert options["artifact_ids"]["evaluation"] == []
+        assert any("评估报告" in w for w in options.get("selection_warnings", []))

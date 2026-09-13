@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-09-13 — 诚实性三连：Outcome unverified 语义、固定版本导出与 input_hash 项目隔离
+
+**任务 ID：** W1-04 + W1-05 + input_hash 项目过滤（AGENT_NATIVE 阶段一）  
+**状态：** DONE  
+**日期：** 2026-09-13
+
+### 做了什么
+
+三项独立的诚实性修复：执行结束不再伪装成要求达成、导出历史不再随改稿漂移、跨项目内容不再串用。
+
+1. **W1-04 Outcome 诚实语义**：`AgentOutcome` 新增 `verification_status=verified|unverified`（旧结果默认 unverified）、`constraint_checks`（逐条创作要求 `{constraint, status, reason, evidence_refs}`）与 `evidence_refs`（带角色的本轮证据锚点）。服务端退出"Run 终态/产物数/分差喂给模型判语义"的旧路径（零模型调用）：阶段一没有读正文比对要求的可复核检查，自然语言创作要求一律如实标 `unverified` 交作者判断——执行完成、评分上涨、Schema 合法都不自动视为满足；语义未验证映射 `partially_achieved`，unverified 不混入 `remaining_constraints`；单纯 unverified 不触发后续修订计划；blocked 任务要求随任务失败陈述不单列。结果消息区分"未完成：X"（已知失败）与"以下 N 项创作要求需要你阅读本轮稿件后判断"（未知），metadata 同步核验字段。前端新增 ActionPlanCard/MessageList 共用的 `OutcomeEvidenceView`：待判断清单 + 带角色证据入口（链接锚定本轮 Artifact）；MessageList 修复只渲染首行丢失败指引的问题。
+2. **W1-05 固定版本导出**：`ExportService.resolve_selection` 在**请求接受时**把导出选择规范化为逐 kind 显式 Artifact ID 冻结进 config_snapshot（旧客户端省略 IDs 也接受时解析 latest，不等 Worker 运行时重选）；显式选择缺项/空数组/跨项目/类型不匹配/同集多版本排队前 422 `EXPORT_SELECTION_INVALID`；评估报告绑定剧本不在所选集合时默认剔除并记 `selection_warnings`。导出完成后 `RunResponse.result_artifact_ids` 指向 export_file Artifact（state_summary 持久化，刷新可恢复）；新增 `GET /projects/{id}/exports` 服务端历史。前端导出中心从浏览器序列化整体切到后端：ExportSection 发起时冻结所选当前版本 ID + 轮询 Run + 固定下载；ExportHistory 渲染服务端记录（格式/文件名/大小/依据版本数/警告），重下走固定端点字节一致，无"清空"；旧 localStorage 历史只读标注"未保存固定文件"。浏览器序列化路径（serializeExport/buildExportMarkdown 等约 450 行）确认无产品调用后删除，内容转义安全回归转移到后端 `tests/unit/tools/test_export_markdown.py`。
+3. **input_hash 项目隔离**：`find_by_input_hash` 增加 project_id 过滤（repo/store 两层）——无源产物（导入分类、会话摘要）的哈希载荷不含项目标识，跨项目查询会把 A 项目的产物幂等"复用"给 B 项目；项目内幂等行为不变。
+
+### 为什么这么做
+
+- **"执行成功"与"作者要求达成"是两个命题**：评分上涨和工作流完成证明机器跑完了，不证明"女主更主动"——把不可核验的判断如实标注为 unverified 并交还作者，比让模型看运行摘要猜一个 satisfied 诚实得多；后续阶段引入正文证据链（W1-03）后才可能自动核验。
+- **导出的本质是交付快照**：作者导出哪一稿就固定哪一稿，历史下载必须字节一致——"重新下载=用当前数据重算"意味着交付记录说谎。冻结时点选在请求接受（而非 Worker 执行）：接受与执行之间可能隔着排队和改稿。
+- **浏览器序列化是假导出**：它序列化的是"此刻浏览器恰好加载的数据"，既不冻结也不可审计；后端已有完整 ExportService（G-05），前端切换是接线不是重建。
+- **幂等键的命名空间必须显式**：input_hash 的载荷只含内容因子，"同内容=同产物"仅在项目内成立；跨项目幂等是数据泄漏不是优化。
+
+### 修改文件
+
+后端：`application/agent_outcome_service.py`（重写：零模型调用 + constraint_checks/evidence_refs）、`domain/agent_command.py`（OutcomeEvidenceRef/ConstraintCheck/AgentOutcome 扩展）、`application/agent_action_lifecycle.py`（结果消息待判断/未完成分离 + metadata）、`application/export_service.py`（resolve_selection + ExportSelectionError）、`api/v1/exports.py`（接受时冻结 + 服务端历史端点）、`api/v1/runs.py` + `application/run_service.py`（result_artifact_ids）、`application/workflow_dispatcher.py`（export 分支写 result_artifact_ids）、`db/repositories/artifacts.py` + `artifacts/store.py`（input_hash 项目过滤）。前端：`features/agent/OutcomeEvidenceView.tsx`（新增共享组件）、`ActionPlanCard.tsx`、`MessageList.tsx`（完整内容 + compact 视图 + projectId 透传）、`AgentWorkspace.tsx`、`app/projects/[id]/exports/page.tsx`（重写：实际 Artifact 集合加载，不依赖 current_episode_count）、`features/exports/ExportSection.tsx`（重写：后端导出 + Run 轮询 + 固定下载）、`features/exports/ExportHistory.tsx`（重写：服务端历史）、`lib/export.ts`（收敛为 EXPORT_KIND_LABELS）、`lib/api-client.ts`（exportsApi）、`types/api.ts`。删除：`tests/security/escaping.test.tsx`（职责转移到后端）。
+
+测试：`tests/unit/application/test_agent_outcome_service.py`（unverified 契约 + blocked 不单列）、`tests/evals/test_agent_outcome_eval.py`（签名适配）、`tests/integration/api/test_exports.py`（+3：接受时冻结/改稿后重下字节一致/显式 422 四连/错配评估剔除+警告/服务端历史）、`tests/unit/tools/test_export_markdown.py`（新增：注入转义回归）、`tests/integration/db/test_repository.py`（+1：无源产物跨项目不串用、项目内幂等不变）、前端 `tests/exports.test.tsx`（重写：冻结 IDs+幂等键+固定下载+失败不下载+服务端历史无清空）、`tests/agent-workspace.test.tsx`（消息完整内容+待判断渲染）。
+
+### 双轴审查后的追加修复
+
+- Message.metadata 补齐 `evidence_refs`（消息流证据入口此前拿不到）；旧结果消息（无核验字段）在 UI 标注"历史结果未记录逐项核验"，不冒充新语义。
+- `evaluate`/`finalize` 移除已无用途的 agent/prompt_loader 参数（evaluate 零模型调用后成死参），dispatcher 调用点同步清理；删除未使用的 `_EPISODIC_KINDS`；`result_artifact_ids` 映射收敛为 `RunService.result_artifact_ids` 单一实现。
+- 前端：`triggerDownload` 抽取（Section/History 共用）；ExportableArtifacts 类型下沉 types/api（消除 features→app 反向依赖）；导出页去掉逐类型 catch——读取失败整体报错，不静默少导；接受时 `selection_warnings` 在 UI 显式提醒（错配评估剔除不静默）；多集 kind 的描述带确切版本清单（第N集vM）。
+- 契约测试补旧结果反序列化（默认 unverified、新字段 roundtrip）；证据链接的 `?artifact=` 参数由 W1-02 作品画布消费（当前 versions 页为修订工作台，链接参数前向兼容）。
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| 目标测试（outcome/evals/events/contract/exports api+export/upload_to_export/export_markdown/repository） | 全绿 |
+| `uv run pytest`（后端全量） | 全绿 |
+| `pnpm test`（前端 202 例）+ `pnpm lint` + `tsc --noEmit` | 通过 |
+| `ruff check app/ tests/` + `mypy`（改动文件） | 通过 |
+
+### 学到了什么
+
+1. **诚实有时是"少做"**：这轮最大的改动是删除——删掉无正文的语义判断调用、删掉浏览器序列化器。系统能力变强不等于每个环节都要说话；说"这项我无法核验"比编一个结论更值钱。
+2. **冻结时点要与授权时点对齐**：用户点击导出的那一刻是授权，Worker 执行只是兑现——状态解析放在兑现时刻就会把用户没见过的版本混进交付。
+3. **幂等查询的隐式命名空间是数据泄漏面**：任何"按内容哈希查重"的实现都要回答"在哪个范围内查重"；无源产物的哈希不含环境因子时，范围必须由查询显式补上。
+
+---
+
 ## 2026-09-13 — W1-01 分批续跑可信化：阶段世代、幂等收据与归属冻结
 
 **任务 ID：** W1-01（AGENT_NATIVE_IMPLEMENTATION_PLAN 阶段一）  

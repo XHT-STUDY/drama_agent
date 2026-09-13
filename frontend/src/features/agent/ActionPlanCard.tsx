@@ -13,17 +13,12 @@
  */
 
 import Link from "next/link";
-import type { AgentOutcome, Artifact } from "@/types/api";
+import type { Artifact } from "@/types/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { artifactsApi, runsApi } from "@/lib/api-client";
 import { useAgentAction } from "@/hooks/use-agent-action";
-
-const GOAL_STATUS_LABEL: Record<string, string> = {
-  achieved: "已达成",
-  partially_achieved: "部分达成",
-  blocked: "受阻",
-};
+import { OutcomeEvidenceView } from "./OutcomeEvidenceView";
 
 const STATUS_LABEL: Record<string, string> = {
   proposed: "等待确认",
@@ -36,53 +31,6 @@ const STATUS_LABEL: Record<string, string> = {
   stale: "计划已过期",
   rejected: "已拒绝",
 };
-
-function OutcomeView({
-  outcome,
-}: {
-  outcome: AgentOutcome;
-}) {
-  const statusColor =
-    outcome.goal_status === "achieved"
-      ? "text-[var(--success)]"
-      : outcome.goal_status === "partially_achieved"
-        ? "text-[var(--warning)]"
-        : "text-[var(--danger)]";
-  // 未完成约束：blocked 全量展示；partially_achieved 只给计数（降噪）；
-  // 产物链接在版本页查看
-  const showConstraints =
-    outcome.goal_status === "blocked" && outcome.remaining_constraints.length > 0;
-  const showPartialCount =
-    outcome.goal_status === "partially_achieved" && outcome.remaining_constraints.length > 0;
-  return (
-    <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3" data-testid="action-outcome">
-      <p className="text-sm font-medium">
-        结果：
-        <span className={statusColor} data-testid="goal-status">
-          {GOAL_STATUS_LABEL[outcome.goal_status] ?? outcome.goal_status}
-        </span>
-        {typeof outcome.score_delta === "number" && (
-          <span className="ml-2 text-xs text-[var(--text-muted)]" data-testid="score-delta">
-            评分变化 {outcome.score_delta > 0 ? "+" : ""}
-            {outcome.score_delta.toFixed(1)}
-          </span>
-        )}
-      </p>
-      {showConstraints && (
-        <ul className="list-disc pl-5 text-xs text-[var(--warning)]" data-testid="remaining-constraints">
-          {outcome.remaining_constraints.map((c) => (
-            <li key={c}>{c}</li>
-          ))}
-        </ul>
-      )}
-      {showPartialCount && (
-        <p className="text-xs text-[var(--text-muted)]" data-testid="partial-count">
-          有 {outcome.remaining_constraints.length} 项修改要求未能自动确认。
-        </p>
-      )}
-    </div>
-  );
-}
 
 interface Props {
   actionId: string;
@@ -522,7 +470,7 @@ export function ActionPlanCard({
 
       {/* 确认门上只保留门按钮：结果/后续建议是噪音，流程就是"确认 → 下一步" */}
       {terminalWithOutcome && action.result && !stageGate && (
-        <OutcomeView outcome={action.result} />
+        <OutcomeEvidenceView outcome={action.result} projectId={projectId} />
       )}
     </section>
   );

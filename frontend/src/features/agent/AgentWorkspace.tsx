@@ -235,6 +235,7 @@ export function AgentWorkspace({ projectId, project }: Props) {
             ) : (
               <MessageList
                 messages={conversation.messages}
+                projectId={projectId}
                 pendingContent={conversation.pendingContent}
                 renderPlanCard={(actionId) => (
                   <ActionPlanCard

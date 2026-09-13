@@ -402,3 +402,42 @@ export const knowledgeApi = {
     });
   },
 };
+
+// ============================================================
+// 导出（W1-05：固定版本后端导出 + 服务端历史）
+// ============================================================
+
+export const exportsApi = {
+  /** 发起后端导出：选择在请求接受时冻结为显式 Artifact ID（kind → ID
+   * 列表），排队后的新版本不改变本次导出内容 */
+  create(
+    projectId: string,
+    body: {
+      kinds: string[];
+      format: string;
+      artifact_ids?: Record<string, string[]>;
+      idempotency_key?: string;
+    },
+  ): Promise<import("@/types/api").Run> {
+    return request(`/projects/${projectId}/exports`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** 服务端导出历史：export_file Artifact 分页列表（最新在前） */
+  list(
+    projectId: string,
+    offset = 0,
+    limit = 20,
+  ): Promise<PaginatedList<import("@/types/api").Artifact>> {
+    return request(
+      `/projects/${projectId}/exports?offset=${offset}&limit=${limit}`,
+    );
+  },
+
+  /** 固定下载地址：重下导出时的那份文件（字节一致） */
+  downloadUrl(artifactId: string, projectId: string): string {
+    return `${API_BASE}/exports/${artifactId}/download?project_id=${projectId}`;
+  },
+};

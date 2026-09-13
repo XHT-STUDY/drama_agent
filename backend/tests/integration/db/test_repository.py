@@ -103,3 +103,64 @@ class TestBaseRepository:
         # 验证 deleted_at 已设置
         await test_session.refresh(project)
         assert project.deleted_at is not None
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestInputHashProjectScopingW101:
+    """W1-01：input_hash 幂等查询限定项目——无源产物（哈希载荷不含
+    project_id）不允许跨项目"复用"，否则 A 项目的导入分类/会话摘要
+    会被 B 项目幂等命中（跨项目数据串用）。"""
+
+    async def test_sourceless_dedup_does_not_leak_across_projects(
+        self, test_session: AsyncSession
+    ) -> None:
+        from app.artifacts.store import ArtifactStore
+        from app.db.models.artifact import Artifact
+
+        projects = []
+        for i in range(2):
+            project = Project(title=f"项目{i}", target_episode_count=3)
+            test_session.add(project)
+            projects.append(project)
+        await test_session.flush()
+
+        store = ArtifactStore()
+        content = {"content_type": "outline", "reason": "same upload text"}
+        dedup_extra = "import:同一段上传文本"  # 无源产物的幂等因子
+        a1 = await store.create(
+            test_session,
+            project_id=projects[0].id,
+            artifact_type="import_classification",
+            episode_number=1,
+            status="valid",
+            content=content,
+            dedup_extra=dedup_extra,
+        )
+        a2 = await store.create(
+            test_session,
+            project_id=projects[1].id,
+            artifact_type="import_classification",
+            episode_number=1,
+            status="valid",
+            content=content,
+            dedup_extra=dedup_extra,
+        )
+        assert a1.id != a2.id, "同内容不同项目必须是两份 Artifact"
+        assert a1.project_id == projects[0].id
+        assert a2.project_id == projects[1].id
+
+        # 项目内重复创建仍幂等命中（既有行为不变）
+        a1_again = await store.create(
+            test_session,
+            project_id=projects[0].id,
+            artifact_type="import_classification",
+            episode_number=1,
+            status="valid",
+            content=content,
+            dedup_extra=dedup_extra,
+        )
+        assert a1_again.id == a1.id
+        await test_session.rollback()
+
+        del Artifact  # noqa: F841 - 仅确保模型导入可用

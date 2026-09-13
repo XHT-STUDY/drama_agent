@@ -251,13 +251,65 @@ class RecommendedNextAction(BaseModel):
     constraints: list[str] = Field(default_factory=list)
 
 
+class OutcomeEvidenceRef(BaseModel):
+    """Outcome 证据锚点（W1-04）——指向本轮实际产出/依据的 Artifact。
+
+    与 evidence_artifact_ids（纯 ID 列表）互补：role 说明该证据在本轮
+    任务中的位置（source_script=修订依据 / script=本轮新稿 / …），
+    前端据此生成"查看本轮稿件"入口，而非跳通用版本页的 latest。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    artifact_id: UUID
+    role: Literal[
+        "source_script",
+        "source_outline",
+        "story_bible",
+        "outline",
+        "script",
+        "evaluation",
+        "continuity",
+        "revision_plan",
+    ]
+
+
+ConstraintCheckStatus = Literal["satisfied", "unsatisfied", "unverified"]
+
+
+class ConstraintCheck(BaseModel):
+    """单条创作要求的核验结果（W1-04）。
+
+    satisfied/unsatisfied 只能来自明确执行过的可复核检查；自然语言
+    创作要求（如"女主更主动"）没有对应正文检查时如实标 unverified，
+    由作者判断——执行完成、评分上涨、Schema 合法都不自动视为满足。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    constraint: str = Field(..., min_length=1, max_length=2000)
+    status: ConstraintCheckStatus
+    reason: str = Field(default="", max_length=1000)
+    evidence_refs: list[UUID] = Field(default_factory=list)
+
+
 class AgentOutcome(BaseModel):
-    """Action 终态的目标达成判断。"""
+    """Action 终态的目标达成判断。
+
+    goal_status 保持旧三态（旧客户端兼容）；语义未验证映射
+    partially_achieved。verification_status 区分"执行是否结束且结论
+    经过核验"（verified=纯确定性结论）与"存在待作者判断的要求"
+    （unverified）。旧结果反序列化时默认 unverified——历史行没有
+    逐项核验记录，不得自称已验证。
+    """
 
     model_config = {"extra": "forbid"}
 
     goal_status: AgentGoalStatus
+    verification_status: Literal["verified", "unverified"] = "unverified"
+    constraint_checks: list[ConstraintCheck] = Field(default_factory=list)
     evidence_artifact_ids: list[UUID] = Field(default_factory=list)
+    evidence_refs: list[OutcomeEvidenceRef] = Field(default_factory=list)
     score_delta: float | None = None
     remaining_constraints: list[str] = Field(default_factory=list)
     recommended_next_action: RecommendedNextAction | None = None

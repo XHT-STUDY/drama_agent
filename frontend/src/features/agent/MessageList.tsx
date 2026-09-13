@@ -13,21 +13,33 @@
  */
 
 import type { ReactNode } from "react";
-import type { ChatMessage } from "@/types/api";
+import type { AgentOutcome, ChatMessage, ConstraintCheck } from "@/types/api";
+import { OutcomeEvidenceView } from "./OutcomeEvidenceView";
 
 interface Props {
   messages: ChatMessage[];
+  /** 结果消息证据入口的项目链接前缀（缺省不渲染链接） */
+  projectId?: string;
   /** action_plan 消息的计划卡插槽（workspace 提供 ActionPlanCard） */
   renderPlanCard?: (actionId: string) => ReactNode;
   /** 发送中尚未上屏的用户消息（乐观渲染） */
   pendingContent?: string | null;
 }
 
-function ResultMessage({ message }: { message: ChatMessage }) {
+function ResultMessage({
+  message,
+  projectId,
+}: {
+  message: ChatMessage;
+  projectId?: string;
+}) {
   const meta = message.metadata as {
     goal_status?: string;
     score_delta?: number | null;
     remaining_constraints?: string[];
+    verification_status?: "verified" | "unverified";
+    constraint_checks?: ConstraintCheck[];
+    evidence_refs?: AgentOutcome["evidence_refs"];
     stage_gate?: string;
   };
   // 确认门是设计内的阶段暂停：只渲染干净的阶段进展文案，不带状态术语
@@ -40,46 +52,33 @@ function ResultMessage({ message }: { message: ChatMessage }) {
       </div>
     );
   }
-  const goal = meta.goal_status ?? "unknown";
-  // 未完成约束：blocked 全量展示；partially_achieved 多为"未自动确认"
-  // 的语义要求，只给计数不给清单（把用户要求当失败陈列是噪音）
-  const constraints = meta.remaining_constraints ?? [];
-  const showConstraints = goal === "blocked" && constraints.length > 0;
-  const showPartialCount =
-    goal === "partially_achieved" && constraints.length > 0;
   return (
     <div className="flex justify-start">
       <div
         className="max-w-[85%] rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2"
         data-testid="result-message"
       >
-        <p className="message-body font-medium">
-          {message.content.split("\n")[0]}
-        </p>
-        {typeof meta.score_delta === "number" && (
-          <p className="mt-1 text-xs text-[var(--text-muted)]" data-testid="result-score-delta">
-            评分变化 {meta.score_delta > 0 ? "+" : ""}
-            {meta.score_delta.toFixed(1)}
-          </p>
-        )}
-        {showConstraints && (
-          <ul className="mt-1 list-disc pl-5 text-xs text-[var(--warning)]" data-testid="result-remaining">
-            {constraints.map((c) => (
-              <li key={c}>{c}</li>
-            ))}
-          </ul>
-        )}
-        {showPartialCount && (
-          <p className="mt-1 text-xs text-[var(--text-muted)]" data-testid="result-partial-count">
-            有 {constraints.length} 项修改要求未能自动确认，已给出后续修订建议。
-          </p>
-        )}
+        {/* W1-04：保留完整消息内容——失败指引（重试入口等）在第二行起，
+            只渲染首行会把它丢掉 */}
+        <p className="message-body whitespace-pre-wrap">{message.content}</p>
+        <OutcomeEvidenceView
+          compact
+          projectId={projectId}
+          outcome={{
+            goal_status: meta.goal_status ?? "unknown",
+            verification_status: meta.verification_status,
+            constraint_checks: meta.constraint_checks,
+            evidence_refs: meta.evidence_refs,
+            remaining_constraints: meta.remaining_constraints ?? [],
+            score_delta: meta.score_delta ?? null,
+          }}
+        />
       </div>
     </div>
   );
 }
 
-export function MessageList({ messages, renderPlanCard, pendingContent }: Props) {
+export function MessageList({ messages, projectId, renderPlanCard, pendingContent }: Props) {
   return (
     <div className="space-y-3" aria-label="消息历史">
       {messages.map((message) => {
@@ -98,7 +97,7 @@ export function MessageList({ messages, renderPlanCard, pendingContent }: Props)
           );
         }
         if (message.kind === "action_result") {
-          return <ResultMessage key={message.id} message={message} />;
+          return <ResultMessage key={message.id} message={message} projectId={projectId} />;
         }
         if (message.kind === "action_plan") {
           return (

@@ -75,9 +75,22 @@ class ArtifactRepository(BaseRepository):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def find_by_input_hash(self, input_hash: str) -> Artifact | None:
-        """按 input_hash 查找已有 Artifact（幂等去重）。"""
-        stmt: Any = select(Artifact).where(Artifact.input_hash == input_hash).limit(1)
+    async def find_by_input_hash(
+        self, input_hash: str, project_id: uuid.UUID
+    ) -> Artifact | None:
+        """按 input_hash 查找项目内已有 Artifact（幂等去重）。
+
+        必须限定项目（W1-01）：无源产物（导入分类、会话摘要）的哈希载荷
+        不含 project_id，跨项目查询会把 A 项目的产物幂等"复用"给 B 项目。
+        """
+        stmt: Any = (
+            select(Artifact)
+            .where(
+                Artifact.input_hash == input_hash,
+                Artifact.project_id == project_id,
+            )
+            .limit(1)
+        )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 

@@ -43,6 +43,7 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 | 409 | `RUN_BUDGET_EXCEEDED` | 触发 per-run 硬预算（调用数 / Token） | LLM 调用 |
 | 409 | `IDEMPOTENCY_KEY_REUSED` | 同一幂等键被不同请求载荷复用 | Run / Agent Turn 创建（J-04）、`POST /runs/{id}/continue`（W1-01） |
 | 409 | `RUN_STAGE_STALE` | continue 请求携带的阶段世代与 Run 当前世代不符（旧请求重放 / 并发确认败者） | `POST /runs/{id}/continue`、continue 意图确认（W1-01） |
+| 422 | `EXPORT_SELECTION_INVALID` | 导出显式选择不合法（缺项/空数组/跨项目/类型不匹配/同集多版本），排队前拒绝 | `POST /projects/{id}/exports`（W1-05） |
 | 409 | `INVALID_ACTIVE_CONTEXT` | 活动 Artifact / 会话与当前项目或目标不一致 | Agent Turn 创建（J-04） |
 | 409 | `AGENT_TURN_INVALID_TRANSITION` | AgentTurn 状态迁移不合法 | Agent 内部状态机（J-04） |
 | 409 | `AGENT_ACTION_INVALID_TRANSITION` | AgentAction 状态迁移不合法（如重复 reject / 非 proposed 确认） | `POST /agent/actions/{id}/confirm|reject`（J-04） |
@@ -235,7 +236,7 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **对话短路（确认/续跑短语）**：Turn 内容为整句确认或续跑短语时在 Planner 之前被确定性路由——确认类（"确认""好的""就按这个来"等）命中会话最新 proposed Action 走 confirm；无 proposed 但项目有门上 Run 时直接续跑；续跑类（"继续""写5集""把剩下的写完"等，可带批集数）续跑 stage_gate Run。两者产出 `answer` 型 Turn（Planner 零调用）；未命中或无可执行目标回落 Planner 原行为。整句匹配防误触发："好的，不过我想把主角改成女生"不会短路。
 
-**Action 生命周期与 Outcome（J-09）**：确认后的 Run config 携带 `agent_action_id`，Dispatcher 在 Run 状态变化时同步 Action（queued→running→终态）。Run 终态后回写 `result`（AgentOutcome：`goal_status=achieved|partially_achieved|blocked`、`evidence_artifact_ids`、`score_delta`、`remaining_constraints`、可空 `recommended_next_action`）并向会话追加 `action_result` 消息；部分达成且深度 0 时创建 `parent_action_id`/`replan_depth=1` 的 proposed 子 Action 与 `action_plan` 消息（只展示等待确认，不自动建 Run）。Worker 崩溃后 GET Action 自动 reconciliation 补写（幂等，不重复消息/子提案）。新增 SSE 事件 `agent_action.updated`（payload 含 `agent_action_id`、`status`、`goal_status`），现有消费者忽略新字段仍兼容。
+**Action 生命周期与 Outcome（J-09，W1-04 诚实性版）**：确认后的 Run config 携带 `agent_action_id`，Dispatcher 在 Run 状态变化时同步 Action（queued→running→终态）。Run 终态后回写 `result`（AgentOutcome：`goal_status=achieved|partially_achieved|blocked`、`verification_status=verified|unverified`、`constraint_checks`（逐条创作要求 `{constraint, status: satisfied|unsatisfied|unverified, reason, evidence_refs}`）、`evidence_artifact_ids`、`evidence_refs`（带角色的本轮证据锚点：source_script/script/outline/evaluation/…）、`score_delta`、`remaining_constraints`、可空 `recommended_next_action`）并向会话追加 `action_result` 消息（metadata 同步 verification_status/constraint_checks）。**诚实性契约（W1-04）**：阶段一无"读正文比对要求"的可复核检查，自然语言创作要求一律如实标 `unverified` 交作者判断——执行完成、评分上涨、Schema 合法都不自动视为满足；语义未验证映射 `partially_achieved`，unverified 不混入 `remaining_constraints`（"未完成"只留给已知确定性失败）；单纯 unverified 不触发后续修订计划；旧结果反序列化默认 `unverified`（历史行无逐项核验记录，不自称已验证）。部分达成且深度 0 时创建 `parent_action_id`/`replan_depth=1` 的 proposed 子 Action 与 `action_plan` 消息（只展示等待确认，不自动建 Run）。Worker 崩溃后 GET Action 自动 reconciliation 补写（幂等，不重复消息/子提案）。新增 SSE 事件 `agent_action.updated`（payload 含 `agent_action_id`、`status`、`goal_status`），现有消费者忽略新字段仍兼容。
 
 **revise_script 计划（J-06）**：目标由服务端解析——目标集的最新 valid 剧本（Planner 不提供 UUID），来源快照含 checksum；目标集无有效剧本时 Turn→`failed`（404 `SCRIPT_NOT_FOUND` 语义，经 Turn `error_code` 返回）。Run options 携带 `source_script_artifact_id` / `episode_number` / `user_constraints`。
 
@@ -276,7 +277,8 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/projects/{id}/exports` | 发起导出（kinds / format 可选显式版本），202 + Run |
+| POST | `/projects/{id}/exports` | 发起导出（W1-05：选择接受时冻结为显式 Artifact ID），202 + Run |
+| GET | `/projects/{id}/exports` | 服务端导出历史（export_file Artifact 分页，W1-05） |
 | GET | `/exports/{artifact_id}/download` | 下载导出文件（归属 + 类型 + 存储三层校验） |
 
 ## POST /projects/{id}/runs — 创建 Run
@@ -526,9 +528,9 @@ F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
 
 **错误码**：跨项目 403 `CROSS_PROJECT_ACCESS`；非修订计划 / 不存在 404 `ARTIFACT_NOT_FOUND`。
 
-## POST /projects/{id}/exports — 发起导出
+## POST /projects/{id}/exports — 发起导出（W1-05 固定版本）
 
-异步导出（确定性，不调 LLM）：Worker 组装各 kind 的 latest valid Artifact → 序列化 → 落盘 → 生成 `export_file` Artifact，随后 SSE 推送 `run.completed`。
+异步导出（确定性，不调 LLM）。**选择在请求接受时冻结**：服务端把选择规范化为逐 kind 的显式 Artifact ID 写入 `config_snapshot.options.artifact_ids`——排队后产生的新版本、暂停期间的聊天改稿都不会改变本次导出内容；Worker 只消费冻结的 ID 集合。省略 `artifact_ids` 的旧客户端同样在接受时解析 latest 并冻结，不等 Worker 运行时重新选稿。
 
 ### 请求体
 
@@ -545,8 +547,8 @@ F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
 |------|------|------|------|
 | `kinds` | string[] | 是（≥1） | `story_bible` / `outline` / `script` / `evaluation` / `revision` |
 | `format` | string | 否 | `markdown`（默认）/ `docx` |
-| `artifact_ids` | `dict<kind, artifact_id[]>` | 否 | 缺省各 kind 取 latest valid；提供时显式指定 Artifact 版本 |
-| `idempotency_key` | string | 否 | ≤128，幂等键 |
+| `artifact_ids` | `dict<kind, artifact_id[]>` | 否 | 显式指定 Artifact 版本；提供时**每个所选 kind 必须有非空列表**（缺项/空数组 422）。逐 ID 校验类型/status/项目归属；`script` 同一集多个版本 422；`evaluation` 绑定的剧本版本不在所选剧本集合时默认剔除并记入 `options.selection_warnings` |
+| `idempotency_key` | string | 否 | ≤128，幂等键（同键不同选择 409） |
 
 ### 响应（202）
 
@@ -556,12 +558,19 @@ F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
   "project_id": "...",
   "action": "export",
   "status": "queued",
-  "config_snapshot": {"options": {"kinds": [...], "format": "markdown"}},
+  "config_snapshot": {"options": {"kinds": [...], "format": "markdown", "artifact_ids": {"script": ["..."]}}},
+  "result_artifact_ids": [],
   "created_at": "...", "updated_at": "..."
 }
 ```
 
-**错误码**：404 `PROJECT_NOT_FOUND`（项目不存在）；422 `VALIDATION_ERROR`（非法 kind / 空 kinds）。
+导出完成后 `GET /runs/{run_id}` 的 `result_artifact_ids[0]` 指向 `export_file` Artifact——用其下载端点重新下载得到字节一致的文件（`sha256` 记录在 content 中），错过即时 SSE 的客户端以此恢复下载入口。
+
+**错误码**：404 `PROJECT_NOT_FOUND`；422 `VALIDATION_ERROR`（非法 kind / 空 kinds）；422 `EXPORT_SELECTION_INVALID`（显式选择缺项/空数组/跨项目/类型不匹配/同集多版本）。
+
+## GET /projects/{id}/exports — 服务端导出历史（W1-05）
+
+项目内 `export_file` Artifact 分页列表（`?offset=&limit=`，同 artifacts 列表格式）。每条记录的 `content` 含 `filename`/`format`/`size_bytes`/`sha256`/`source_artifact_ids`/`warnings`——历史交付固定到导出时的稿件内容，经下载端点重下字节一致。服务端历史无"清空"操作（交付记录是审计事实）。
 
 ## GET /exports/{artifact_id}/download — 下载导出文件
 

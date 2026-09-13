@@ -2999,6 +2999,8 @@ Prompt 必须区分：
 
 | W1-01 | 分批续跑可信化：阶段世代/幂等收据/归属冻结（AGENT_NATIVE 阶段一） | 2.5d | bda1302 | DONE | AI Agent | 2026-09-13：迁移 0011（stage_generation + run_id 部分唯一索引 uq_agent_actions_run_id_owner，downgrade 拒绝破坏性回滚）；continue_gated_run 重写（行锁串行 + run.continue_accepted 持久收据：同键同参重放原快照/同键异参 409 IDEMPOTENCY_KEY_REUSED/世代不符 409 RUN_STAGE_STALE/裸请求 422；接受即 attempt 置零 + 世代 +1；清除 write/evaluate 完成标记修复第二批零写入；batch=null 恢复项目目标 script_count）；幕次键升维 v2:状态[:门]:g{gen}:a{attempt}（旧 v2 格式按 g0 归一）；finalize 所有者守卫（continue 接管归属后旧 Action 结果冻结）；评估节点增量评估；前端 continueRun 携带 expected_stage_generation/idempotency_key。测试：run_continue 15 例 / phases 9 例（含连续双 scripts 门）/ db 部分唯一 2 例 / staged_creation 四批全链路（真实 worker：大纲门→3+3+3+全量→10 集 completed，世代 4、attempt 恒 1、旧门重放被拒）；全量后端 exit 0 + 前端 222 passed + alembic 0011 (head)；详见 DEV_LOG 2026-09-13 |
 
+| W1-04+05 | 诚实性三连：Outcome unverified 语义 / 固定版本导出 / input_hash 项目隔离 | 2d | W1-01 | DONE | AI Agent | 2026-09-13：AgentOutcome 增 verification_status/constraint_checks/evidence_refs，服务端退出无正文语义判断（零模型调用，自然语言要求一律 unverified 待作者判断，不混入 remaining、不触发改稿计划）；结果消息分离"未完成/待判断"，前端 OutcomeEvidenceView 共享组件 + MessageList 完整内容渲染；导出选择接受时冻结为显式 Artifact ID（ExportService.resolve_selection，显式缺项/空/跨项目/同集多版本 422 EXPORT_SELECTION_INVALID，错配评估剔除+警告），result_artifact_ids 指向 export_file，GET /projects/{id}/exports 服务端历史，前端导出中心切后端（轮询 Run+固定下载，删浏览器序列化 ~450 行，转义回归转后端 test_export_markdown）；find_by_input_hash 加项目过滤。测试：exports API +3（冻结/字节一致/422 四连/错配/历史）、outcome 单测重写、repository 跨项目、export_markdown 转义、前端 exports 重写；后端全量 exit 0 + 前端 202 passed；详见 DEV_LOG 2026-09-13 |
+
 ### 13.3 阶段验收记录
 
 | Gate | 计划日期 | 实际日期 | 结果 | 验收人 | 证据 | 遗留问题 |

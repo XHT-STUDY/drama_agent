@@ -257,16 +257,23 @@ describe("ActionPlanCard", () => {
     });
   });
 
-  it("结果消息为自然文案：无状态术语重复、约束仅 blocked 显示、不渲染产物链接", () => {
+  it("W1-04 结果消息：完整内容保留、待判断与未完成分开、评分展示", () => {
     const messages = [
       msg({
-        content: "本轮任务部分完成。",
+        content: "本轮任务部分完成。\n未完成：第 3 集剧本仍引用旧大纲",
         kind: "action_result",
         metadata: {
           goal_status: "partially_achieved",
           score_delta: 2.5,
           remaining_constraints: ["第 3 集剧本仍引用旧大纲"],
-          evidence_artifact_ids: ["00000000-0000-0000-0000-000000000003"],
+          verification_status: "unverified",
+          constraint_checks: [
+            {
+              constraint: "女主更主动但保留悬念",
+              status: "unverified",
+              reason: "缺少可核验的正文证据检查",
+            },
+          ],
         },
         sequence: 3,
       }),
@@ -279,16 +286,47 @@ describe("ActionPlanCard", () => {
       ),
     );
 
-    // 自然文案上屏；状态由计划卡 OutcomeView 承载，消息不再重复
-    expect(screen.getByTestId("result-message").textContent).toContain("本轮任务部分完成。");
-    expect(screen.getByTestId("result-score-delta").textContent).toContain("+2.5");
+    // W1-04：完整内容上屏（多行失败指引不再被首行截断）
+    expect(screen.getByTestId("result-message").textContent).toContain(
+      "本轮任务部分完成。",
+    );
+    expect(screen.getByTestId("result-message").textContent).toContain(
+      "未完成：第 3 集剧本仍引用旧大纲",
+    );
+    // 紧凑结果视图：评分 + 待判断清单（未验证要求不伪装成失败）
+    expect(screen.getByTestId("score-delta").textContent).toContain("+2.5");
+    expect(screen.getByTestId("unverified-checks").textContent).toContain(
+      "女主更主动但保留悬念",
+    );
+    expect(screen.getByTestId("unverified-checks").textContent).toContain(
+      "未能自动核验",
+    );
+    expect(screen.getByTestId("remaining-constraints").textContent).toContain(
+      "第 3 集剧本仍引用旧大纲",
+    );
     expect(screen.queryByTestId("result-goal-status")).toBeNull();
-    // 部分达成只给计数不给清单（把用户要求当失败陈列是噪音）
-    expect(screen.queryByTestId("result-remaining")).toBeNull();
-    expect(screen.getByTestId("result-partial-count").textContent).toContain("1 项");
-    // 产物 UUID 链接不再出现在消息流（版本页查看）
-    expect(screen.queryByTestId("result-evidence")).toBeNull();
-    expect(screen.queryByText(/产物 00000000/)).toBeNull();
+  });
+
+  it("W1-04 旧结果消息（无核验字段）标注历史未记录逐项核验", () => {
+    const messages = [
+      msg({
+        content: "本轮任务已完成。",
+        kind: "action_result",
+        metadata: { goal_status: "achieved" },
+        sequence: 4,
+      }),
+    ];
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: qc() },
+        React.createElement(MessageList, { messages }),
+      ),
+    );
+    expect(screen.getByTestId("legacy-outcome-note").textContent).toContain(
+      "历史结果未记录逐项核验",
+    );
+    // 新消息有字段时不出现该标记（上方用例已覆盖 unverified 渲染）
   });
 
   it("确认门结果消息渲染为干净阶段文案（无状态术语）", () => {

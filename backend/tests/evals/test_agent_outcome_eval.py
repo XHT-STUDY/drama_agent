@@ -107,7 +107,7 @@ class TestDeterministicOutcomeEval:
             next_intent = expected.get("next_intent")
             no_next = expected.get("no_next_intent")
             if next_intent or no_next:
-                recommendation = AgentOutcomeService._recommended_next_action(evidence, None)
+                recommendation = AgentOutcomeService._recommended_next_action(evidence)
                 if next_intent:
                     if recommendation is None or recommendation.intent != next_intent:
                         actual = recommendation.intent if recommendation else None
@@ -132,7 +132,7 @@ class TestDeterministicOutcomeEval:
         """白名单外意图（explain）不可能出现在确定性建议中。"""
         for case in load_cases():
             evidence = evidence_of(case)
-            recommendation = AgentOutcomeService._recommended_next_action(evidence, None)
+            recommendation = AgentOutcomeService._recommended_next_action(evidence)
             if recommendation is not None:
                 assert recommendation.intent in {
                     "create_script", "evaluate", "revise_script", "revise_outline",

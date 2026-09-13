@@ -139,13 +139,7 @@ class WorkflowDispatcher:
             for run_id in exhausted_ids:
                 try:
                     async with self._session_factory() as fin_db:
-                        await _finalize_agent_action_if_any(
-                            fin_db,
-                            RunService(),
-                            run_id,
-                            agent=None,
-                            prompt_loader=None,
-                        )
+                        await _finalize_agent_action_if_any(fin_db, RunService(), run_id)
                         await fin_db.commit()
                 except Exception:
                     logger.exception(
@@ -445,6 +439,14 @@ async def _execute_workflow(
                 artifact = await ExportService().export_project(
                     db, project_id=run.project_id, selection=selection
                 )
+                # W1-05：导出文件 Artifact ID 写入 state_summary——刷新/
+                # 错过即时 SSE 的客户端从 RunResponse.result_artifact_ids
+                # 拿到固定下载入口
+                run.state_summary = {
+                    **(run.state_summary or {}),
+                    "result_artifact_ids": [str(artifact.id)],
+                }
+                await db.flush()
                 await run_svc.transition_status(db, run_id, "completed", lease_owner=lease_owner)
                 await publisher.publish(
                     db,
@@ -1008,8 +1010,6 @@ async def _execute_workflow(
                         action_id=uuid.UUID(str(agent_action_id_cfg)),
                         run=terminal_run,
                         final_state=final_state,
-                        agent=agent,
-                        prompt_loader=prompt_loader,
                     )
                 except Exception:
                     logger.exception(
@@ -1034,9 +1034,7 @@ async def _execute_workflow(
                     payload={"message": "Run 已取消"},
                     autocommit=True,
                 )
-                await _finalize_agent_action_if_any(
-                    db, run_svc, run_id, agent=agent, prompt_loader=prompt_loader
-                )
+                await _finalize_agent_action_if_any(db, run_svc, run_id)
             except Exception:
                 # 终态写入失败不得静默：至少留下日志供排查；
                 # 状态兜底由 GET Action 的 reconciliation 补写
@@ -1057,9 +1055,7 @@ async def _execute_workflow(
                     payload={"error": str(e), "error_code": error_code},
                     autocommit=True,
                 )
-                await _finalize_agent_action_if_any(
-                    db, run_svc, run_id, agent=agent, prompt_loader=prompt_loader
-                )
+                await _finalize_agent_action_if_any(db, run_svc, run_id)
             except Exception:
                 # 终态写入失败不得静默：至少留下日志供排查；
                 # 状态兜底由 GET Action 的 reconciliation 补写
@@ -1098,9 +1094,6 @@ async def _finalize_agent_action_if_any(
     db: AsyncSession,
     run_svc: Any,
     run_id: uuid.UUID,
-    *,
-    agent: Any,
-    prompt_loader: Any,
 ) -> None:
     """异常/取消路径的 AgentAction 终态回写（reconciliation 可补写）。"""
     try:
@@ -1115,8 +1108,6 @@ async def _finalize_agent_action_if_any(
             action_id=uuid.UUID(str(action_id_cfg)),
             run=run,
             final_state=run.state_summary or {},
-            agent=agent,
-            prompt_loader=prompt_loader,
         )
     except Exception:
         logger.exception("AgentAction 终态回写失败: run=%s", run_id)
