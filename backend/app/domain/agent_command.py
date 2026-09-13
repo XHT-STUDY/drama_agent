@@ -185,16 +185,25 @@ class EvaluateCommand(BaseModel):
 
 
 class ContinueCommand(BaseModel):
-    """确认门续跑命令（L-3/L-4）。
+    """确认门续跑命令（L-3/L-4，W1-01 增加阶段世代快照）。
 
     target_run_id 由服务端在计划构建时解析（项目最新停在 stage_gate 的
     Run），Planner 不提供 Run 标识；确认时二次校验 Run 仍在门上。
+    expected_stage_generation 是计划构建时的 Run 世代快照——确认时与
+    当前世代不符（其间发生过续跑）则计划作废，防止旧计划重放多写一批。
+    旧计划（W1-01 之前持久化）缺该字段：仅当 Run 自计划创建后未再推进
+    时按当前世代恢复，否则按 stale 处理。
     """
 
     model_config = {"extra": "forbid"}
 
     intent: Literal["continue"] = "continue"
     target_run_id: UUID
+    expected_stage_generation: int | None = Field(
+        default=None,
+        ge=0,
+        description="计划构建时的 Run stage_generation 快照；None = 旧计划，确认时恢复",
+    )
     batch_size: int | None = Field(
         default=None, ge=1, le=50,
         description="本批集数：None = 写完剩余全部（与 /runs/{id}/continue 语义一致）",

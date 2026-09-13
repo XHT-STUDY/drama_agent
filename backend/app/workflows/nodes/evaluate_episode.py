@@ -68,6 +68,16 @@ async def evaluate_episodes_node(state: CreationState) -> dict[str, Any]:
         logger.warning("没有可评估的剧本，跳过评估节点")
         return {"completed_nodes": state.get("completed_nodes", []) + ["evaluate_episodes"]}
 
+    # W1-01 分批增量评估：前一批已评估的集（同 Run 内 evaluation_artifact_ids
+    # 已有绑定）不重评——重评只会得到 input_hash 去重后的同一 Artifact，
+    # 却把每批的 LLM 成本按全部集数翻倍
+    already_evaluated = state.get("evaluation_artifact_ids") or {}
+    pending = {ep: sid for ep, sid in script_ids.items() if ep not in already_evaluated}
+    if not pending:
+        logger.info("本批无新增集需要评估（%d 集均已评估），跳过", len(script_ids))
+        return {"completed_nodes": state.get("completed_nodes", []) + ["evaluate_episodes"]}
+    script_ids = pending
+
     await publisher.publish(
         db, run_id=run_id, event_type="node.started",
         payload={"node": "evaluate_episodes", "episode_count": len(script_ids), "progress": 0.86},

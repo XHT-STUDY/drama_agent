@@ -77,6 +77,7 @@ async def finalize_node(state: CreationState) -> dict[str, Any]:
             payload={
                 "total_artifacts": total,
                 "script_count": len(scripts),
+                "stage_generation": state.get("stage_generation", 0),
                 "prompt_versions": state.get("prompt_versions", {}),
                 "progress": 1.0,
             },

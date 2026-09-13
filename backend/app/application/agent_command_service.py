@@ -36,6 +36,7 @@ from app.core.errors import (
     OutlineNotFoundForRevisionError,
     ProjectHasActiveRunError,
     RunNotRetryableError,
+    RunStageStaleError,
     ScriptNotFoundForRevisionError,
     UnsupportedAgentIntentError,
 )
@@ -386,7 +387,7 @@ class AgentCommandService:
         # 行为与无短路时完全一致。
         shortcut = detect_shortcut(content)
         if shortcut is not None:
-            handled = await self._try_shortcut(db, project, conv_id, shortcut)
+            handled = await self._try_shortcut(db, project, conv_id, shortcut, turn_id=turn_id)
             if handled is not None:
                 try:
                     final_turn = await self._finalize_turn(
@@ -554,9 +555,57 @@ class AgentCommandService:
                 )
                 await db.commit()
                 raise RunNotRetryableError(detail="计划对应的任务已不在确认门上，请重新发起")
-            resumed = await self._run_service.continue_gated_run(
-                db, run.id, batch_size=command.batch_size
-            )
+
+            # W1-01 阶段世代：确认时校验计划构建时的世代快照，防止旧计划
+            # 重放多写一批。旧计划（缺 expected 字段）仅当 Run 自计划创建后
+            # 未再推进时按当前世代恢复，无法可靠恢复则作废。
+            expected_gen = command.expected_stage_generation
+            if expected_gen is None:
+                run_untouched_since_plan = (
+                    run.updated_at is not None
+                    and action.created_at is not None
+                    and run.updated_at <= action.created_at
+                )
+                if not run_untouched_since_plan:
+                    await action_repo.transition(
+                        action_id, "stale", expected_statuses={"proposed"}
+                    )
+                    await db.commit()
+                    raise RunStageStaleError(
+                        detail=(
+                            "旧续跑计划创建后任务已被推进，无法确认世代，"
+                            "计划已作废；请基于当前进度重新发起"
+                        ),
+                        current_stage_generation=run.stage_generation,
+                    )
+                expected_gen = run.stage_generation
+
+            try:
+                resumed_result = await self._run_service.continue_gated_run(
+                    db,
+                    run.id,
+                    batch_size=command.batch_size,
+                    expected_stage_generation=expected_gen,
+                    idempotency_key=f"continue:{action_id}",
+                )
+            except RunStageStaleError:
+                # 并发确认（按钮/聊天/重复计划）只有一个胜者：本计划作废
+                await action_repo.transition(
+                    action_id, "stale", expected_statuses={"proposed"}
+                )
+                await db.commit()
+                raise
+            if resumed_result.replayed:
+                # 同键收据重放（重复确认）：返回当前持久化状态，不新增阶段
+                if action.run_id is not None:
+                    replay_run = await self._run_service.get_run(db, action.run_id)
+                    return self._action_response(action), replay_run
+                await db.commit()
+                raise RunNotRetryableError(
+                    detail="续跑收据重放时缺少关联 Run，请基于当前进度重新发起"
+                )
+            resumed = resumed_result.run
+            assert resumed is not None
             # Run 终态回写（J-09 lifecycle）指向本 continue Action：
             # 原 create_script Action 在停门时已写入终态与结果消息，不可复用。
             resumed.config_snapshot = {
@@ -702,6 +751,8 @@ class AgentCommandService:
         project: Project,
         conversation_id: uuid.UUID,
         shortcut: tuple[str, int | None],
+        *,
+        turn_id: uuid.UUID,
     ) -> AgentPlannerOutput | None:
         """执行确定性短路；返回 None 表示无可执行目标，回落 Planner。
 
@@ -726,7 +777,7 @@ class AgentCommandService:
                     )
                 if gated is not None:
                     # 确认门上的"确认"即续跑（门消息承诺"等待确认后继续创作"）
-                    return await self._continue_gated(db, gated.id, batch=None)
+                    return await self._continue_gated(db, gated.id, batch=None, turn_id=turn_id)
                 return await self._no_target_answer(db, project.id)
             if kind == "retry":
                 failed = await find_latest_failed_run(db, project.id)
@@ -738,7 +789,7 @@ class AgentCommandService:
             gated = await find_gated_run(db, project.id)
             if gated is None:
                 return await self._no_target_answer(db, project.id)
-            return await self._continue_gated(db, gated.id, batch=batch)
+            return await self._continue_gated(db, gated.id, batch=batch, turn_id=turn_id)
         except AppError as exc:
             logger.info("短路执行失败，转为可读答复: kind=%s error=%s", kind, exc)
             return AgentPlannerOutput(
@@ -811,9 +862,19 @@ class AgentCommandService:
         )
 
     async def _continue_gated(
-        self, db: AsyncSession, run_id: uuid.UUID, *, batch: int | None
+        self,
+        db: AsyncSession,
+        run_id: uuid.UUID,
+        *,
+        batch: int | None,
+        turn_id: uuid.UUID,
     ) -> AgentPlannerOutput:
-        """续跑停在确认门的 Run 并生成可读答复。"""
+        """续跑停在确认门的 Run 并生成可读答复。
+
+        W1-01：续跑以 Turn 为幂等键（同 Turn 重放命中收据返回原接受；
+        并发的按钮/聊天确认只有一个胜者，败者得到 RUN_STAGE_STALE 的
+        可读答复），expected 取读取时世代——行锁内的世代校验兜底并发。
+        """
         run = await self._run_service.get_run(db, run_id)
         summary = run.state_summary or {}
         gate = summary.get("stage_gate")
@@ -822,11 +883,21 @@ class AgentCommandService:
         target_count = int(
             options.get("outline_count") or options.get("script_count") or 0
         )
-        await self._run_service.continue_gated_run(db, run_id, batch_size=batch)
-        schedule_worker(run.id, run.action, run.config_snapshot or {})
+        result = await self._run_service.continue_gated_run(
+            db,
+            run_id,
+            batch_size=batch,
+            expected_stage_generation=run.stage_generation,
+            idempotency_key=f"turn:{turn_id}",
+        )
+        if not result.replayed:
+            # 重放命中收据说明该 Turn 的续跑已接受过——Worker 已在执行
+            # 或批次已结束，无需（也不应基于行锁前的旧快照）再唤醒
+            assert result.run is not None
+            schedule_worker(run_id, result.run.action, result.run.config_snapshot or {})
         logger.info(
-            "对话短路续跑 Run: run=%s gate=%s batch=%s conversation 级确认",
-            run_id, gate, batch,
+            "对话短路续跑 Run: run=%s gate=%s batch=%s replayed=%s conversation 级确认",
+            run_id, gate, batch, result.replayed,
         )
         return AgentPlannerOutput(
             turn_type="answer",
@@ -1085,7 +1156,9 @@ class AgentCommandService:
                 or 0
             )
             command = ContinueCommand(
-                target_run_id=gated.id, batch_size=output.batch_size
+                target_run_id=gated.id,
+                expected_stage_generation=gated.stage_generation,
+                batch_size=output.batch_size,
             )
             intent = "continue"
             target = ActionTarget(target_type="project")

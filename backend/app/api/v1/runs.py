@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_db
 from app.application.run_service import RunService
 from app.application.workflow_dispatcher import schedule_worker
-from app.core.errors import RunAlreadyActiveError, RunNotRetryableError
+from app.core.errors import AppError, RunAlreadyActiveError, RunNotRetryableError
 from app.events.stream import router as sse_router
 from app.observability.diagnostics import RunDiagnosticsResponse
 
@@ -119,6 +119,11 @@ class RunResponse(BaseModel):
         default=None,
         description="当前确认门（outline=大纲门 / scripts=剧本分批门；L-2/L-4）",
     )
+    stage_generation: int = Field(
+        default=0,
+        description="门确认续跑世代（W1-01）：每次合法 continue 递增；"
+        "continue 请求必须携带所见世代",
+    )
     created_at: str = Field(..., description="创建时间")
     updated_at: str = Field(..., description="更新时间")
 
@@ -135,6 +140,7 @@ class RunResponse(BaseModel):
             error_detail=run.error_detail,
             agent_action_id=config.get("agent_action_id"),
             stage_gate=(run.state_summary or {}).get("stage_gate"),
+            stage_generation=run.stage_generation,
             created_at=run.created_at.isoformat() if run.created_at else "",
             updated_at=run.updated_at.isoformat() if run.updated_at else "",
         )
@@ -269,10 +275,29 @@ async def cancel_run(
 
 
 class ContinueRunRequest(BaseModel):
-    """续跑请求体（L-4）。"""
+    """续跑请求体（L-4，W1-01 增加阶段世代与幂等收据）。
+
+    expected_stage_generation / idempotency_key 必填：防止旧请求重放
+    在新门上多写一批（版本化客户端升级，见 API_CONTRACT）。字段在模型层
+    可空、在端点显式校验——旧客户端的裸请求得到带"刷新工作台"指引的
+    422，而不是无上下文的通用校验报错。
+    """
 
     model_config = {"extra": "forbid"}
 
+    expected_stage_generation: int | None = Field(
+        default=None,
+        ge=0,
+        description="客户端看到的 Run stage_generation（GET Run 返回值）；"
+        "与当前世代不符返回 409 RUN_STAGE_STALE",
+    )
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        description="本次续跑请求的幂等键；同键同参数重放返回原接受收据，"
+        "同键不同参数返回 409 IDEMPOTENCY_KEY_REUSED",
+    )
     batch_size: int | None = Field(
         default=None, ge=1, le=50,
         description="本批集数（L-4）：如 1=下一集、5=下 5 集；缺省 = 剩余全部（批模式关闭）",
@@ -285,20 +310,46 @@ async def continue_run(
     db: Annotated[AsyncSession, Depends(get_db)],
     body: ContinueRunRequest | None = None,
 ) -> RunResponse:
-    """确认门续跑（L-3/L-4）：分段创作停在 stage_gate 后继续执行。
+    """确认门续跑（L-3/L-4，W1-01 幂等收据版）。
 
     执行逻辑统一在 RunService.continue_gated_run（REST 端点、对话短路、
     continue 意图确认三处共用）；此处仅做参数透传、落库与唤醒。
+    同幂等键同参数重放返回接受时的 Run 快照，不新增阶段。
     """
-    run = await _service.continue_gated_run(
-        db, run_id, batch_size=body.batch_size if body else None
+    if body is None or body.expected_stage_generation is None or body.idempotency_key is None:
+        raise AppError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            detail=(
+                "续跑请求缺少阶段信息（expected_stage_generation 与 "
+                "idempotency_key 必填）：这是防止旧请求重放多写一批的"
+                "版本化客户端升级，请刷新工作台后基于当前进度重新操作"
+            ),
+        )
+    result = await _service.continue_gated_run(
+        db,
+        run_id,
+        batch_size=body.batch_size,
+        expected_stage_generation=body.expected_stage_generation,
+        idempotency_key=body.idempotency_key,
     )
     await db.commit()
 
+    if result.replayed:
+        logger.info(
+            "续跑收据重放: run=%s key=%s（不新增阶段）",
+            run_id,
+            body.idempotency_key,
+        )
+        return RunResponse(**result.accepted_view)
+
+    run = result.run
+    assert run is not None
     logger.info(
-        "续跑 Run: run=%s batch_size=%s",
+        "续跑 Run: run=%s batch_size=%s generation=%d",
         run_id,
-        body.batch_size if body else None,
+        body.batch_size,
+        run.stage_generation,
     )
     schedule_worker(run.id, run.action, run.config_snapshot or {})
     return RunResponse.from_orm(run)

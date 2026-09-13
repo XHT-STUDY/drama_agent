@@ -59,18 +59,33 @@ _TERMINAL_ACTION_STATUSES = frozenset(
 
 
 def _run_phase(run: WorkflowRun, final_state: dict[str, Any] | None) -> str:
-    """Run 幕次键（v2，带执行次数）：区分同一 Action 的多次回写。
+    """Run 幕次键（v2，带世代与执行次数）：区分同一 Action 的多次回写。
 
-    v2 = 状态[:门类型]:a{attempt_count}。重试/续跑都以新的 attempt 重新
-    执行，且系统已向用户承诺"完成后会在这里汇报"——重试后的再次失败、
-    续跑后的再次暂停（下一批门 / 修订轮用尽）都是新幕次，必须再次回写。
-    不带 v2 前缀的旧格式值视为存量冻结（与 NULL 同语义，见 0010 迁移）。
+    v2 = 状态[:门类型]:g{stage_generation}:a{attempt_count}。g 区分门确认
+    续跑的批次（W1-01：门续跑不再累加 attempt，两个 scripts 门若只看
+    attempt 会重新吞并）；a 区分同批次内的故障重试（重试后的再次失败是
+    新幕次，必须再次回写）。不带 v2 前缀的旧格式值视为存量冻结（与
+    NULL 同语义，见 0010 迁移）。
     """
     if run.status == "needs_review":
         gate = (final_state or {}).get("stage_gate")
         gate_key = gate if gate in ("outline", "scripts") else "paused"
-        return f"v2:needs_review:{gate_key}:a{run.attempt_count}"
-    return f"v2:{run.status}:a{run.attempt_count}"
+        return f"v2:needs_review:{gate_key}:g{run.stage_generation}:a{run.attempt_count}"
+    return f"v2:{run.status}:g{run.stage_generation}:a{run.attempt_count}"
+
+
+def _stored_phase_matches(stored: str, phase: str) -> bool:
+    """比较已回写幕次键与新幕次键，容忍 W1-01 之前的旧 v2 格式。
+
+    旧格式（v2:状态[:门]:a{N}，bda1302 写入）没有 g 段——按世代 0
+    归一后比较：同一幕次不重复回写，新幕次（世代或 attempt 已推进）
+    正常放行。无 v2 前缀的更早行不在此处理（冻结语义）。
+    """
+    if ":g" not in stored:
+        head, _, attempt = stored.rpartition(":a")
+        if head:
+            stored = f"{head}:g0:a{attempt}"
+    return stored == phase
 
 
 class AgentActionLifecycle:
@@ -120,6 +135,18 @@ class AgentActionLifecycle:
             logger.warning("Action %s 关联的 Run 与当前 Run 不一致，跳过", action_id)
             return None
 
+        # W1-01 所有者守卫：Run 的当前回写所有者是 config_snapshot.
+        # agent_action_id（continue 计划确认后切换归属）。非所有者的旧
+        # Action 已冻结历史结果——不能拿当前 Run 终态覆盖它已存的结局
+        # （旧 Action 的 reconcile/GET 补写在此短路）。
+        owner_id = (run.config_snapshot or {}).get("agent_action_id")
+        if owner_id and str(owner_id) != str(action_id):
+            logger.info(
+                "Action %s 不是 Run %s 的当前所有者（owner=%s），保留已存结果",
+                action_id, run.id, owner_id,
+            )
+            return action
+
         # Run 尚未终态 → 不回写（Dispatcher 在终态后才调用；防御性守卫）
         if run.status not in _RUN_TO_ACTION_STATUS:
             return action
@@ -129,10 +156,10 @@ class AgentActionLifecycle:
         # 暂停 → 续跑 → 终态，新幕次必须再次回写，否则续跑后的失败/完成
         # 对用户不可见（看到的永远是门上那句"等待确认"）。
         # last_synced_phase 为 NULL 或旧格式（无 v2 前缀）的存量行保持冻结
-        # 语义（旧行为不变）。
+        # 语义（旧行为不变）；旧 v2 格式（无 g 段）按世代 0 归一比较。
         if action.result is not None and (
             action.last_synced_phase is None
-            or action.last_synced_phase == phase
+            or _stored_phase_matches(action.last_synced_phase, phase)
             or not action.last_synced_phase.startswith("v2:")
         ):
             return action

@@ -95,6 +95,13 @@ class WorkflowRun(Base, UUIDMixin):
         server_default="0",
         comment="Dispatcher 领取/恢复次数",
     )
+    stage_generation: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        comment="门确认续跑的世代号：每次合法 continue 递增，故障重试不变更"
+        "（W1-01：批次推进与故障重试分账，attempt 在门续跑入队时置零）",
+    )
     error_code: Mapped[str | None] = mapped_column(
         String(50),
         default=None,

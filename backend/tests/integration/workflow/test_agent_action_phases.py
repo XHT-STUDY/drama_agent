@@ -118,7 +118,7 @@ async def test_failure_after_gate_pause_is_reported(db_session: AsyncSession) ->
         db_session, action_id=action.id, run=run, final_state=run.state_summary
     )
     assert finalized is not None and finalized.status == "needs_review"
-    assert finalized.last_synced_phase == "v2:needs_review:outline:a1"
+    assert finalized.last_synced_phase == "v2:needs_review:outline:g0:a1"
     messages = await _result_messages(db_session, action)
     assert len(messages) == 1
     assert "等待确认后继续创作剧本" in messages[0].content
@@ -134,7 +134,7 @@ async def test_failure_after_gate_pause_is_reported(db_session: AsyncSession) ->
         db_session, action_id=action.id, run=run, final_state=run.state_summary
     )
     assert finalized is not None and finalized.status == "failed"
-    assert finalized.last_synced_phase == "v2:failed:a1"
+    assert finalized.last_synced_phase == "v2:failed:g0:a1"
     assert finalized.result is not None
     assert finalized.result["goal_status"] == "blocked"
 
@@ -182,7 +182,7 @@ async def test_completion_after_gate_pause_finalizes_action(
         db_session, action_id=action.id, run=run, final_state=run.state_summary
     )
     assert finalized is not None and finalized.status == "completed"
-    assert finalized.last_synced_phase == "v2:completed:a1"
+    assert finalized.last_synced_phase == "v2:completed:g0:a1"
 
     messages = await _result_messages(db_session, action)
     assert len(messages) == 2
@@ -233,8 +233,9 @@ async def test_needs_review_after_continue_reports_new_phase(
     )
     assert len(await _result_messages(db_session, action)) == 1
 
-    # 第二幕（attempt=2）：确认续跑 → 全部写完+评估 → 修订轮次用尽，
-    # Run 仍是 needs_review 但门字段已被 continue 剥离
+    # 第二幕（generation=1, attempt=2）：确认续跑 → 全部写完+评估 →
+    # 修订轮次用尽，Run 仍是 needs_review 但门字段已被 continue 剥离
+    run.stage_generation = 1
     run.attempt_count = 2
     run.state_summary = {
         "completed_nodes": ["normalize", "story_bible", "outline", "write_episodes"],
@@ -247,13 +248,13 @@ async def test_needs_review_after_continue_reports_new_phase(
         db_session, action_id=action.id, run=run, final_state=run.state_summary
     )
     assert finalized is not None and finalized.status == "needs_review"
-    assert finalized.last_synced_phase == "v2:needs_review:paused:a2"
+    assert finalized.last_synced_phase == "v2:needs_review:paused:g1:a2"
     assert finalized.result is not None
 
     messages = await _result_messages(db_session, action)
     assert len(messages) == 2, "续跑后的结局必须追加，不能停在门上那句"
     assert "等待确认" not in messages[-1].content
-    assert messages[-1].message_metadata["phase"] == "v2:needs_review:paused:a2"
+    assert messages[-1].message_metadata["phase"] == "v2:needs_review:paused:g1:a2"
 
     # 同幕次重入（重复 reconciliation）不追加第三条
     again = await lifecycle.finalize(
@@ -288,7 +289,7 @@ async def test_retry_failure_after_failure_reports_again(
         db_session, action_id=action.id, run=run, final_state=run.state_summary
     )
     assert finalized is not None and finalized.status == "failed"
-    assert finalized.last_synced_phase == "v2:failed:a1"
+    assert finalized.last_synced_phase == "v2:failed:g0:a1"
     assert len(await _result_messages(db_session, action)) == 1
 
     # 第二幕（attempt=2）：断点重试后再次失败
@@ -298,11 +299,11 @@ async def test_retry_failure_after_failure_reports_again(
         db_session, action_id=action.id, run=run, final_state=run.state_summary
     )
     assert finalized is not None and finalized.status == "failed"
-    assert finalized.last_synced_phase == "v2:failed:a2"
+    assert finalized.last_synced_phase == "v2:failed:g0:a2"
     messages = await _result_messages(db_session, action)
     assert len(messages) == 2, "重试后的再次失败必须再次汇报（承诺过）"
     assert "失败" in messages[-1].content
-    assert messages[-1].message_metadata["phase"] == "v2:failed:a2"
+    assert messages[-1].message_metadata["phase"] == "v2:failed:g0:a2"
 
     # 同幕次重入不追加第三条
     await lifecycle.finalize(
@@ -330,3 +331,154 @@ async def test_legacy_phase_format_stays_frozen(db_session: AsyncSession) -> Non
     assert finalized is not None
     assert finalized.last_synced_phase == "needs_review:outline", "旧格式行保持冻结"
     assert len(await _result_messages(db_session, action)) == 0
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_consecutive_scripts_gates_each_reported(
+    db_session: AsyncSession,
+) -> None:
+    """W1-01：同一 Action 连续两个 scripts 门各有一条结果消息。
+
+    门续跑不再累加 attempt（置零后领取回到 1）——若幕次键只看 attempt，
+    第二个 scripts 门（g1:a1）会与第一个（g0:a1）撞键被吞。世代维度
+    是区分连续批门的关键。
+    """
+    action, run = await _seed_action_with_run(db_session)
+    lifecycle = AgentActionLifecycle()
+
+    def _scripts_summary(written: int) -> dict[str, Any]:
+        return {
+            "stage_gate": "scripts",
+            "target_episode_count": 10,
+            "script_artifact_ids": {
+                str(ep): str(uuid.uuid4()) for ep in range(1, written + 1)
+            },
+            "completed_nodes": ["normalize", "story_bible", "outline"],
+        }
+
+    # 第一批（g0）：写 3 集停在 scripts 门
+    run.status = "needs_review"
+    run.stage_generation = 0
+    run.attempt_count = 1
+    run.state_summary = _scripts_summary(3)
+    await db_session.commit()
+    await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert action.last_synced_phase == "v2:needs_review:scripts:g0:a1"
+
+    # 第二批（g1，attempt 置零后被领取回到 1）：再写 5 集停在 scripts 门
+    run.stage_generation = 1
+    run.attempt_count = 1
+    run.state_summary = _scripts_summary(8)
+    await db_session.commit()
+    finalized = await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert finalized is not None
+    assert finalized.last_synced_phase == "v2:needs_review:scripts:g1:a1"
+
+    messages = await _result_messages(db_session, action)
+    assert len(messages) == 2, "连续两个 scripts 门各一条结果，第二个不能被吞"
+    assert "3/10" in messages[0].content
+    assert "8/10" in messages[-1].content
+
+    # 两个幕次各自的重入（重复 reconciliation）都不追加
+    for _ in range(2):
+        await lifecycle.finalize(
+            db_session, action_id=action.id, run=run, final_state=run.state_summary
+        )
+    assert len(await _result_messages(db_session, action)) == 2
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_old_v2_phase_format_normalized_not_duplicated(
+    db_session: AsyncSession,
+) -> None:
+    """W1-01 之前写入的旧 v2 幕次键（无 g 段）按世代 0 归一比较。
+
+    同幕次（g0）不重复回写；新世代（g1）正常放行——旧格式行升级后
+    既不产生重复门消息，也不会错过续跑后的新结局。
+    """
+    action, run = await _seed_action_with_run(db_session, status="needs_review")
+    action.result = {"goal_status": "partially_achieved", "remaining_constraints": []}
+    action.last_synced_phase = "v2:needs_review:scripts:a1"  # bda1302 格式
+    await db_session.commit()
+
+    # 同幕次（g0, a1, scripts 门）：归一后相等 → 冻结，不追加
+    run.status = "needs_review"
+    run.stage_generation = 0
+    run.attempt_count = 1
+    run.state_summary = {
+        "stage_gate": "scripts",
+        "script_artifact_ids": {"1": str(uuid.uuid4())},
+        "completed_nodes": ["normalize"],
+    }
+    await db_session.commit()
+    finalized = await AgentActionLifecycle().finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert finalized is not None
+    assert finalized.last_synced_phase == "v2:needs_review:scripts:a1"
+    assert len(await _result_messages(db_session, action)) == 0
+
+    # 新世代（g1）：放行回写
+    run.stage_generation = 1
+    await db_session.commit()
+    finalized = await AgentActionLifecycle().finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert finalized is not None
+    assert finalized.last_synced_phase == "v2:needs_review:scripts:g1:a1"
+    assert len(await _result_messages(db_session, action)) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_owner_swap_freezes_old_action_result(
+    db_session: AsyncSession,
+) -> None:
+    """W1-01 所有者守卫：continue Action 接管归属后，旧创建 Action 的
+    已存结果不被当前 Run 终态覆盖（GET 旧 Action 的 reconcile 短路）。"""
+    action, run = await _seed_action_with_run(db_session, status="needs_review")
+    lifecycle = AgentActionLifecycle()
+
+    # 第一幕：创建 Action 停门 + 回写结果
+    run.status = "needs_review"
+    run.state_summary = _gate_summary()
+    await db_session.commit()
+    await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert action.status == "needs_review"
+    assert action.result is not None
+    frozen_result = dict(action.result)
+    frozen_phase = action.last_synced_phase
+
+    # continue Action 接管归属；Run 走完批次后 completed
+    new_owner_id = uuid.uuid4()
+    run.config_snapshot = {
+        **(run.config_snapshot or {}),
+        "agent_action_id": str(new_owner_id),
+    }
+    run.status = "completed"
+    run.stage_generation = 1
+    run.attempt_count = 1
+    run.state_summary = {
+        "script_artifact_ids": {"1": str(uuid.uuid4())},
+        "evaluation_artifact_ids": {"1": str(uuid.uuid4())},
+        "completed_nodes": ["finalize"],
+    }
+    await db_session.commit()
+
+    finalized = await lifecycle.finalize(
+        db_session, action_id=action.id, run=run, final_state=run.state_summary
+    )
+    assert finalized is not None
+    assert finalized.status == "needs_review", "旧 Action 状态不被覆盖"
+    assert finalized.result == frozen_result, "旧 Action 结果不被覆盖"
+    assert finalized.last_synced_phase == frozen_phase
+    # 旧 Action 也没有新消息
+    assert len(await _result_messages(db_session, action)) == 1

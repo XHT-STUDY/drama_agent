@@ -226,11 +226,19 @@ export const runsApi = {
     return request(`/runs/${runId}/cancel`, { method: "POST" });
   },
 
-  /** 确认门续跑（L-3/L-4）：batch_size 进入批模式（本批集数），缺省写剩余全部 */
-  continueRun(runId: string, body?: { batch_size?: number }): Promise<Run> {
+  /**
+   * 确认门续跑（L-3/L-4，W1-01 幂等收据版）：batch_size 进入批模式
+   * （本批集数），缺省写剩余全部。expected_stage_generation 为调用方
+   * 所见的 Run 世代（GET Run 返回），idempotency_key 每次用户点击生成
+   * 新键——同键同参数重放返回原接受，世代不符返回 409 RUN_STAGE_STALE。
+   */
+  continueRun(
+    runId: string,
+    body: { batch_size?: number; expected_stage_generation: number; idempotency_key: string },
+  ): Promise<Run> {
     return request(`/runs/${runId}/continue`, {
       method: "POST",
-      body: JSON.stringify(body ?? {}),
+      body: JSON.stringify(body),
     });
   },
 };

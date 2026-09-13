@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-09-13 — W1-01 分批续跑可信化：阶段世代、幂等收据与归属冻结
+
+**任务 ID：** W1-01（AGENT_NATIVE_IMPLEMENTATION_PLAN 阶段一）  
+**状态：** DONE  
+**日期：** 2026-09-13
+
+### 做了什么
+
+修复"聊天创建 → 大纲门 → 连续多批续写"链路上的四处真实断点，使四批续写可靠完成、旧请求重放不多写一批、历史 Action 结果不被新批次覆写：
+
+1. **批次推进与故障重试分账**：`workflow_runs` 新增 `stage_generation` 列（迁移 0011，存量为 0）——每次合法门确认续跑 +1，故障 retry/租约重领不变更；续跑入队时 `attempt_count` 置零。此前每次领取都累加 attempt（上限 3），第四批必然 `WORKFLOW_RECOVERY_EXHAUSTED`。dispatcher 恢复 checkpoint 后以 DB 行的世代覆盖合并值（旧 checkpoint 不能把世代拉回）。
+2. **continue 幂等收据**：`RunService.continue_gated_run` 重写为行锁串行（FOR UPDATE）+ 持久收据（`run.continue_accepted` 事件，payload 含幂等键/请求哈希/世代/接受响应快照）。REST 请求体必填 `expected_stage_generation` + `idempotency_key`（旧裸请求 422 且响应带"刷新工作台"指引，API_CONTRACT 标注为版本化客户端升级）：同键同参数重放返回接受快照不新增阶段；同键异参 409 `IDEMPOTENCY_KEY_REUSED`；世代不符 409 `RUN_STAGE_STALE`。聊天短路以 `turn:{turn_id}` 为键；continue 意图确认以 `continue:{action_id}` 为键，`ContinueCommand` 持久化计划构建时的世代快照（旧计划缺字段时仅当 Run 自计划创建后未再推进才恢复，否则作废）。
+3. **第二批零写入修复**：续跑时从 `completed_nodes` 清除 `write_episodes`/`evaluate_episodes` 并剥除 `needs_revision_decision`——此前两个节点因早退守卫直接跳过，第二批从门续跑后**一个字都不写**就 completed。同时全量续跑（batch_size=null）把 `options.script_count` 恢复为项目目标（此前沿用上批终点，"写完全部"实际零写入）；评估节点按 `evaluation_artifact_ids` 增量评估（前批已评估集不重评，省 LLM 成本）。
+4. **run_id 部分唯一索引与归属冻结**：`agent_actions.run_id` 从全局唯一改为"非 continue Action 每 Run 至多一个"的部分唯一索引（`uq_agent_actions_run_id_owner`）——聊天 continue 意图确认（审计 Action 关联原 Run）此前在 IntegrityError 上不可用。Run 终态回写守卫增加所有者判定：`config_snapshot.agent_action_id` 已被 continue Action 接管时，旧创建 Action 的已存结果冻结不被当前 Run 终态覆盖（GET 旧 Action 的 reconcile 短路）。
+5. **幂等终态键升维**：`last_synced_phase` 幕次键加入世代维度（`v2:状态[:门]:g{generation}:a{attempt}`）——门续跑不再累加 attempt 后，连续两个 scripts 门若只看 attempt 会重新吞并（bda1302 修复被 W1-01 打回原形的风险）。bda1302 写入的旧 v2 格式（无 g 段）按世代 0 归一比较：同幕次不重复回写、新世代正常放行。
+
+前端：`Run` 类型与 `continueRun` 携带 `stage_generation`/`expected_stage_generation`/`idempotency_key`（每次点击新键）；ActionPlanCard 门按钮自动取所见世代。
+
+### 为什么这么做
+
+- **批门与故障重试是两种"重新执行"**：合法的用户确认推进剧情批次，机器故障重试恢复同一批次——共享一个 attempt 计数使前者耗尽后者的预算，四批创作必然失败。世代/attempt 双维度让两类推进各有各的账。
+- **收据必须先于活跃检查**：接受后的 Run 回到 queued，此时同键重放应拿到收据而非 `RUN_ALREADY_ACTIVE`；世代校验则挡住"旧门请求在新门重放多写一批"（并发按钮/聊天只有一个胜者）。
+- **completed_nodes 是"跳过已写集"与"跳过整个节点"的双重语义冲突**：早退守卫防止 retry 重算，但批续跑需要重进节点、由节点内部的 existing_scripts 跳过已写集——续跑侧清除节点级标记是唯一正确的分层位置。
+- **归属冻结比"回写最近 Action"更诚实**：continue 接管回写归属后，旧创建 Action 的门上消息是历史事实，当前 Run 的结局只属于发起续跑的那个 Action；无差别回写会让两个 Action 的结果互相覆盖。
+
+### 修改文件
+
+后端：`migrations/versions/0011_run_stage_continuation.py`（新增）、`db/models/workflow_run.py`、`db/models/agent_action.py`、`application/run_service.py`（continue 重写 + ContinueResult）、`application/agent_action_lifecycle.py`（幕次键 + 所有者守卫）、`application/agent_command_service.py`（confirm continue 分支/短路键/计划持久化世代）、`application/workflow_dispatcher.py`、`workflows/state.py`、`workflows/nodes/evaluate_episode.py`、`workflows/nodes/finalize.py`、`api/v1/runs.py`、`api/v1/agent.py`、`core/errors.py`（RunStageStaleError）、`domain/agent_command.py`（ContinueCommand）；前端：`types/api.ts`、`lib/api-client.ts`、`features/agent/ActionPlanCard.tsx`；文档：API_CONTRACT。
+
+测试：重写/扩展 `tests/integration/api/test_run_continue.py`（15 例：收据重放/键复用/世代 409/裸请求 422/script_count 恢复/completed_nodes 清理/收据事件）、`tests/integration/workflow/test_agent_action_phases.py`（9 例：连续双 scripts 门各一条消息/旧 v2 格式归一/所有者冻结）、`tests/integration/db/test_agent_actions.py`（+2：continue 可共享 Run、非 continue 仍唯一）、`tests/integration/workflow/test_staged_creation.py`（+1：四批续写全链路——真实 worker + FakeLLM，大纲门→3+3+3+全量→10 集 completed，世代 4、attempt 恒 1、旧门重放被拒）、`tests/integration/events/test_agent_action_events.py`（夹具改真实所有者 UUID）。
+
+### 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| 目标测试（run_continue/phases/db/staged/actions/shortcut/e2e_path/dispatcher_recovery/migration） | 全绿 |
+| `uv run pytest`（后端全量） | 全绿 |
+| `uv run alembic upgrade head` → 0011 (head)，索引与列已验证 | 通过 |
+| `ruff check app/ tests/` + `mypy`（改动文件） | 通过 |
+| `pnpm test`（前端 16 文件 222 例）+ `tsc --noEmit` | 通过 |
+
+### 学到了什么
+
+1. **改计数语义前先问"谁在读这个计数"**：attempt 同时被领取逻辑（调度资格）、耗尽判定（失败语义）和幕次键（消息幂等）消费；把它从"门续跑"里摘出来时，三个消费方都要重新对账——幕次键补世代维度正是这次联动修复。
+2. **测试夹具里的占位符会伪装成真实状态**：`agent_action_id: "pending"` 在没有所有者语义时无害，守卫落地后它成了"别的所有者"。夹具必须像生产数据一样真实。
+3. **"写完全部"这类语义要用终点字段的全量重算验证**：批模式留下的 `script_count` 终点是隐蔽的残留状态，单批测试永远绿，只有连续两批（先 batch 后 all）才暴露。
+
+---
+
 ## 2026-07-25 — H-01 前端基座、API Client 与类型生成
 
 **任务 ID：** H-01  

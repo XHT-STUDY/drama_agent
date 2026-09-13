@@ -194,6 +194,8 @@ export interface Run {
   agent_action_id?: string | null;
   /** 当前确认门（outline=大纲门 / scripts=剧本分批门；null = 无门） */
   stage_gate?: string | null;
+  /** 门确认续跑世代（W1-01）：每次合法 continue 递增；续跑请求必须携带所见世代 */
+  stage_generation: number;
   created_at: string;
   updated_at: string;
 }

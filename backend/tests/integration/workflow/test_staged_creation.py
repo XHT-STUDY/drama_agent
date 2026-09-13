@@ -249,3 +249,135 @@ async def test_batch_mode_stops_at_scripts_gate(
     assert len(summary.get("script_artifact_ids") or {}) == 2
     # 评估已跑（本批有评估结果）
     assert summary.get("evaluation_artifact_ids")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_four_batch_continuation_completes_without_attempt_exhaustion(
+    test_project: uuid.UUID,
+    workflow_config: RunnableConfig,
+    test_engine: Any,
+) -> None:
+    """W1-01 四批续写全链路：门续跑不耗故障重试预算，重放不多写一批。
+
+    真实 worker（_execute_workflow + FakeLLM）驱动：大纲门 → 3+3+3 批 →
+    全部续跑写完剩余。修复前三处断点：每次领取累加 attempt（第 3 次领取
+    后耗尽 failed）；completed_nodes 不清（第二批空转 completed）；
+    全量续跑沿用上批 script_count 终点（一个字都不写）。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select, update
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    import app.db.session as db_session
+    from app.application.run_service import RunService
+    from app.application.workflow_dispatcher import _execute_workflow
+    from app.core.errors import RunStageStaleError
+    from app.db.models.workflow_run import WorkflowRun
+
+    factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+    db_session._async_session_factory = factory
+
+    db = workflow_config["configurable"]["db"]
+    run_svc = RunService()
+    run = await run_svc.create_run(
+        db=db, project_id=test_project, action="create_script",
+        config={"options": {
+            "user_input": (
+                "被青训队抛弃的足球少年林峰凭借战术视野天赋，"
+                "从底层联赛逆袭至职业巅峰，要求强爽点与每集结尾钩子。"
+            ),
+            "outline_count": 10,
+            "script_count": 3, "stop_after": "outline",
+        }},
+    )
+    owner = "w-0"
+    await db.execute(update(WorkflowRun).where(WorkflowRun.id == run.id).values(
+        status="running", lease_owner=owner,
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=5), attempt_count=1))
+    await db.commit()
+    await _execute_workflow(run.id, "create_script", {}, owner)
+
+    async def _current_run() -> WorkflowRun:
+        fresh = await factory().__aenter__()
+        try:
+            return (
+                await fresh.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == run.id)
+                )
+            ).scalar_one()
+        finally:
+            await fresh.__aexit__(None, None, None)
+
+    async def _continue(
+        index: str, *, batch: int | None, expected: int
+    ) -> None:
+        """全新会话执行门上续跑（避免长持有会话的 ORM 旧实例脏读）。"""
+        fresh = await factory().__aenter__()
+        try:
+            result = await run_svc.continue_gated_run(
+                fresh, run.id,
+                batch_size=batch,
+                expected_stage_generation=expected,
+                idempotency_key=f"batch-{index}",
+            )
+            assert not result.replayed
+            await fresh.commit()
+        finally:
+            await fresh.__aexit__(None, None, None)
+
+    async def _run_batch(index: int, *, batch: int | None) -> None:
+        """门上续跑一批并执行到下一门/终态。"""
+        gated = await _current_run()
+        assert gated.status == "needs_review", gated.status
+        assert (gated.state_summary or {}).get("stage_gate") in ("outline", "scripts")
+        await _continue(
+            str(index), batch=batch, expected=gated.stage_generation
+        )
+        # 模拟 Dispatcher 领取（continue 已置 attempt=0，领取后回到 1）
+        claim = await factory().__aenter__()
+        try:
+            await claim.execute(
+                update(WorkflowRun).where(WorkflowRun.id == run.id).values(
+                    status="running", lease_owner=f"w-{index}",
+                    lease_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+                    attempt_count=WorkflowRun.attempt_count + 1,
+                )
+            )
+            await claim.commit()
+        finally:
+            await claim.__aexit__(None, None, None)
+        await _execute_workflow(run.id, "create_script", {}, f"w-{index}")
+
+    # 大纲门（g0）→ 批 1：写 3 集（g1）
+    await _run_batch(1, batch=3)
+    # scripts 门（g1）→ 批 2：再写 3 集（g2）
+    await _run_batch(2, batch=3)
+    # scripts 门（g2）→ 批 3：再写 3 集（g3）
+    gated3 = await _current_run()
+    assert (gated3.state_summary or {}).get("stage_gate") == "scripts"
+    # 旧门请求重放（expected=g1 的旧键）→ 世代不符拒绝，不多写一批
+    stale = await factory().__aenter__()
+    try:
+        with pytest.raises(RunStageStaleError):
+            await run_svc.continue_gated_run(
+                stale, run.id, batch_size=3,
+                expected_stage_generation=1,
+                idempotency_key="replayed-old-key",
+            )
+        await stale.rollback()
+    finally:
+        await stale.__aexit__(None, None, None)
+    await _run_batch(3, batch=3)
+    # scripts 门（g3）→ 全量续跑：写完剩余 1 集（g4）→ completed
+    await _run_batch(4, batch=None)
+
+    final = await _current_run()
+    assert final.status == "completed", final.status
+    summary = final.state_summary or {}
+    assert len(summary.get("script_artifact_ids") or {}) == 10
+    # 四次合法续跑 = 世代 4；每批 attempt 从零开始（单次领取 = 1），
+    # 批次推进从未触碰故障重试预算
+    assert final.stage_generation == 4
+    assert final.attempt_count == 1

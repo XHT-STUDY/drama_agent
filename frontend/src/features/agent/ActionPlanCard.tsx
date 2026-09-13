@@ -271,11 +271,14 @@ export function ActionPlanCard({
   });
 
   const continueMutation = useMutation({
+    // 每次用户点击生成新幂等键；expected 世代取本组件所见 Run——旧门上的
+    // 重复点击由后端收据/世代校验兜底（W1-01：重放不多写一批）
     mutationFn: (batchSize?: number | undefined) =>
-      runsApi.continueRun(
-        action!.run_id!,
-        batchSize ? { batch_size: batchSize } : undefined,
-      ),
+      runsApi.continueRun(action!.run_id!, {
+        expected_stage_generation: runQuery.data?.stage_generation ?? 0,
+        idempotency_key: crypto.randomUUID(),
+        ...(batchSize ? { batch_size: batchSize } : {}),
+      }),
     onSuccess: () => {
       // Action 停在 needs_review 不再变——门 UI 由 Run 驱动，立即失效以切走按钮
       void queryClient.invalidateQueries({

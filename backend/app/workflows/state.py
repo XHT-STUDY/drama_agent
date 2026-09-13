@@ -69,6 +69,9 @@ class CreationState(TypedDict, total=False):
     """最终目标集数（L-4 批门判断：已写 < 目标 → 停）。"""
     stage_gate: str
     """已到达的确认门（outline）；dispatcher 据此把 Run 转 needs_review。"""
+    stage_generation: int
+    """门确认续跑的世代号（W1-01）：每次合法 continue 递增；随终态
+    state/checkpoint 携带，批次推进与故障重试分账。"""
 
     # ---- 对话式大纲修订（J-08）----
     source_outline_artifact_id: str | None

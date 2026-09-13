@@ -197,6 +197,21 @@ class ProjectHasActiveRunError(RunAlreadyActiveError):
     code = "PROJECT_HAS_ACTIVE_RUN"
 
 
+class RunStageStaleError(AppError):
+    """continue 请求携带的阶段世代与 Run 当前世代不符（409 RUN_STAGE_STALE，W1-01）。
+
+    旧请求重放 / 并发续跑（按钮与聊天同时确认）只有一个胜者；
+    败者拿到当前 stage_generation，应刷新工作台后基于新门重新发起。
+    """
+
+    status_code = 409
+    code = "RUN_STAGE_STALE"
+
+    def __init__(self, detail: str, *, current_stage_generation: int) -> None:
+        super().__init__(detail=detail)
+        self.current_stage_generation = current_stage_generation
+
+
 class AgentActionStaleError(AppError):
     """计划基于的来源 Artifact 已更新（409 ACTION_STALE，J-04）。
 

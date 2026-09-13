@@ -543,6 +543,7 @@ async def _execute_workflow(
                     "needs_manual_review_reason": None,
                     "stop_after": options.get("stop_after") or "",
                     "stage_gate": "",
+                    "stage_generation": run.stage_generation,
                     "target_episode_count": int(
                         options.get("outline_count", options.get("script_count", 3))
                     ),
@@ -757,6 +758,9 @@ async def _execute_workflow(
                     if k not in ("status", "error_node", "error_code", "error_detail")
                 }
                 initial_state = {**initial_state, **_resume}
+                # W1-01：世代以 DB 行为准——continue 接受后立即递增，旧
+                # checkpoint 里的值不能覆盖（防止幕次键回退吞掉新门消息）
+                initial_state["stage_generation"] = run.stage_generation
                 logger.info(
                     "Run 恢复 checkpoint: run=%s 已完成节点=%s 已写剧本集=%s",
                     run_id,
@@ -853,6 +857,7 @@ async def _execute_workflow(
                     payload={
                         "reason": f"stage_gate:{gate}",
                         "stage_gate": gate,
+                        "stage_generation": run.stage_generation,
                         "message": message,
                         "outline_set_artifact_id": final_state.get("outline_set_artifact_id"),
                         "story_bible_artifact_id": final_state.get("story_bible_artifact_id"),

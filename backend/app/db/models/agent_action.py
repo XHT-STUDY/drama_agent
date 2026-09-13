@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,7 +21,15 @@ class AgentAction(Base, UUIDMixin):
     __tablename__ = "agent_actions"
     __table_args__ = (
         UniqueConstraint("agent_turn_id", name="uq_agent_actions_agent_turn_id"),
-        UniqueConstraint("run_id", name="uq_agent_actions_run_id"),
+        # W1-01：run_id 全局唯一阻止 continue 审计 Action 关联同一 Run。
+        # 改为部分唯一索引——一个 Run 最多一个创建它的非 continue Action；
+        # continue 意图的 Action（审计/回写归属）可以关联同一 Run。
+        Index(
+            "uq_agent_actions_run_id_owner",
+            "run_id",
+            unique=True,
+            postgresql_where=text("run_id IS NOT NULL AND intent <> 'continue'"),
+        ),
         UniqueConstraint(
             "parent_action_id",
             "replan_depth",

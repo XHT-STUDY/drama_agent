@@ -71,6 +71,9 @@ class AgentRunSnapshot(BaseModel):
     project_id: str = Field(..., description="所属项目 UUID")
     action: str = Field(..., description="Run 动作")
     status: str = Field(..., description="Run 状态")
+    stage_generation: int = Field(
+        default=0, description="门确认续跑世代（W1-01）"
+    )
     created_at: str = Field(..., description="创建时间")
 
     @classmethod
@@ -80,6 +83,7 @@ class AgentRunSnapshot(BaseModel):
             project_id=str(run.project_id),
             action=run.action,
             status=run.status,
+            stage_generation=getattr(run, "stage_generation", 0) or 0,
             created_at=run.created_at.isoformat() if run.created_at else "",
         )
 

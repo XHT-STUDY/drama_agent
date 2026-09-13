@@ -74,6 +74,10 @@ async def _seed_completed_agent_run(
         run_id=run.id,
     )
     session.add(action)
+    await session.flush()
+    # 回写所有者是真实 Action UUID（W1-01 所有者守卫按此判定归属；
+    # 占位字符串会被视为"非当前所有者"而冻结）
+    run.config_snapshot = {"agent_action_id": str(action.id)}
     await session.commit()
     return action, run
 

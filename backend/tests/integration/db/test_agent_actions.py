@@ -171,3 +171,92 @@ class TestAgentActionRepository:
 
         with pytest.raises(IntegrityError):
             await test_session.flush()
+
+
+class TestRunIdPartialUniqueW101:
+    """W1-01：run_id 从全局唯一改为"非 continue Action 每 Run 至多一个"。"""
+
+    async def test_continue_action_can_share_run_with_creator(
+        self,
+        test_session: AsyncSession,
+    ) -> None:
+        """continue 审计 Action 可关联创建者 Action 的 Run（聊天 continue
+        意图确认的物理前提——此前全局唯一约束使该路径 IntegrityError）。"""
+        project, conversation, turn = await _seed_action_context(test_session)
+        second_message = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content="继续",
+            sequence=2,
+        )
+        test_session.add(second_message)
+        await test_session.flush()
+        continue_turn = AgentTurn(
+            project_id=project.id,
+            conversation_id=conversation.id,
+            user_message_id=second_message.id,
+            idempotency_key=f"turn-continue-{uuid.uuid4()}",
+            request_hash="c" * 64,
+            status="action_proposed",
+            turn_type="plan",
+        )
+        run = WorkflowRun(project_id=project.id, action="create_script", status="needs_review")
+        test_session.add_all([continue_turn, run])
+        await test_session.flush()
+
+        creator = _new_action(project, conversation, turn)
+        creator.intent = "create_script"
+        creator.run_id = run.id
+        creator.status = "needs_review"
+        continue_action = AgentAction(
+            project_id=project.id,
+            conversation_id=conversation.id,
+            agent_turn_id=continue_turn.id,
+            replan_depth=0,
+            intent="continue",
+            status="queued",
+            requires_confirmation=True,
+            plan={"goal": "继续创作"},
+            source_artifact_ids=[],
+            run_id=run.id,
+        )
+        test_session.add_all([creator, continue_action])
+        # 非 continue + continue 关联同一 Run：合法，不再 IntegrityError
+        await test_session.flush()
+
+    async def test_two_non_continue_actions_still_rejected(
+        self,
+        test_session: AsyncSession,
+    ) -> None:
+        """两个非 continue Action 关联同一 Run 仍被部分唯一索引拒绝。"""
+        project, conversation, turn = await _seed_action_context(test_session)
+        second_message = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content="再评估一次",
+            sequence=2,
+        )
+        test_session.add(second_message)
+        await test_session.flush()
+        second_turn = AgentTurn(
+            project_id=project.id,
+            conversation_id=conversation.id,
+            user_message_id=second_message.id,
+            idempotency_key=f"turn-second-{uuid.uuid4()}",
+            request_hash="d" * 64,
+            status="action_proposed",
+            turn_type="plan",
+        )
+        run = WorkflowRun(project_id=project.id, action="evaluate", status="queued")
+        test_session.add_all([second_turn, run])
+        await test_session.flush()
+        first = _new_action(project, conversation, turn)
+        first.run_id = run.id
+        first.status = "queued"
+        second = _new_action(project, conversation, second_turn)
+        second.run_id = run.id
+        second.status = "queued"
+        test_session.add_all([first, second])
+
+        with pytest.raises(IntegrityError):
+            await test_session.flush()
