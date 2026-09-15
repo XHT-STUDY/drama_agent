@@ -250,7 +250,7 @@ class TestUploadRunLinkW106:
 
     async def _upload(self, async_client: AsyncClient, project_id: str) -> str:
         files = {
-            "file": ("scene.txt", "第1场 天台 夜\n少年独自加练。".encode("utf-8"), "text/plain")
+            "file": ("scene.txt", "第1场 天台 夜\n少年独自加练。".encode(), "text/plain")
         }
         resp = await async_client.post(
             f"/api/v1/projects/{project_id}/uploads", files=files

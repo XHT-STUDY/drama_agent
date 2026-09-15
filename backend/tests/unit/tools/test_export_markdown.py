@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from app.tools.exporters.markdown import build_export_markdown
 
 
-def _script_content() -> dict:
+def _script_content() -> dict[str, Any]:
     return {
         "episode_number": 1,
         "title": "<script>alert('title')</script>",
