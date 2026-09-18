@@ -4,6 +4,56 @@
 
 ---
 
+## IR-1 意图识别优化：修正评测尺子（2026-09-18）
+
+**任务 ID：** IR-1（Phase IR，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §6）
+**状态：** DONE
+**日期：** 2026-09-18
+
+### 做了什么
+
+1. `backend/tests/evals/agent_commands.json` 升级 dataset v3（65 → 88 条）：
+   - 6 条旧 `plan/explain`（cmd-011~016）按 Prompt v1.4 重标——正文/设定/大纲解释 → `answer + intent=explain + target`，项目状态问题（cmd-013/015）→ `answer` 不带 intent；
+   - 新增 21 条 continue 基础集（14 条 plan：写 1/2/3/5/10 集、下一集/下一批/全部剩余、大纲门确认后开写；5 条白名单无 continue 必须澄清；2 条复合表达澄清），与短路层 `下一批→batch 1` 等生产语义对齐；
+   - 新增 2 条"文本明确第 3 集 vs 页面在第 2 集"冲突用例（明确目标优先）；
+   - 每条新增 `split`/`target_type`/`batch_size`/`risk`/`coverage` 标注（§4.1 合同）。
+2. 新增纯函数评分器 `backend/tests/evals/command_scorer.py`：先 turn_type 再 intent 再 target 再 batch 分层评分；intent micro/macro P/R/F1；澄清 precision/recall；target_type/明确集数/上下文集数/batch 分列准确率；§4.3 互斥失败主类（provider/truncated/invalid/turn/intent/target_type/episode/batch/应澄清却执行[仅限预测为可执行 plan，answer 归 turn_type 错误]/过度澄清）；§3.3 发版门槛表（12 项；发版判定中 fail 与 no_data 均阻断——门槛是发布合同，"没测到"≠"达标"）。
+3. 重写 harness `test_agent_command_eval.py`：数据集契约改为 v1.4 语义校验（plan 禁带 explain、answer intent ∈ {None, explain}、字段依赖合法性、continue ≥20、结果文件新鲜度）；评分器单测以伪造输出验证"intent 对但集数错 → episode 门槛失败""continue 对但 batch 错 → batch 门槛失败""answer/explain 记 TP"等验收点；真实评测默认发版模式（任一门槛 fail 即断言失败），`EVAL_REPORT_ONLY=1` 只产报告；报告写入 dataset 版本/git commit/Prompt 版本/模型/provider/起止时间/重复次数。
+4. v1.3 旧真实评测结果（60 条、Prompt v1.3）归档至 `tests/evals/results/archive/`，消除"报告 60 条 vs 数据 65 条 vs Prompt v1.4"三方漂移（P0-5）。
+5. 文档同步：`AGENT_EVAL_REPORT.md`（资产表、CI 结果、v1.4 真实评测标注未执行+原因、历史结果降级为归档参考）、`AGENT_EVAL_METHOD.md`（60→88 条、六意图联合契约）、`TEST_PLAN.md` §11.1、`DEV_PLAN.md` §20.7 Phase IR 登记。
+
+### 为什么这么做
+
+- 旧 harness 把 `answer/explain` 判失败、不比较集数与批次，等于用 v1.3 的尺子量 v1.4 的契约——先修尺子再谈数据与路由（IR-2/IR-3 都依赖本阶段指标口径）。
+- 评分逻辑抽成纯函数模块而非散在 pytest 里：单测可用伪造输出精确验证每个指标与门槛行为（不依赖模型），真实 harness 只做编排，两层同一口径。
+- 项目状态类 answer 若带 `intent=explain` 会触发服务端读原文路径，属于语义分支错误而非风格差异，因此评分器对"期望无 intent"的 case 也严格比较 intent。
+- 旧结果归档而非删除：保留 v1.3 基线供趋势对比，同时用新鲜度契约保证它不可能冒充当前 Prompt 的结果。
+
+### 修改文件
+
+- `backend/tests/evals/agent_commands.json`（重写，dataset v3）
+- `backend/tests/evals/command_scorer.py`（新增）
+- `backend/tests/evals/test_agent_command_eval.py`（重写）
+- `backend/tests/evals/results/agent_commands_results.json` → `results/archive/agent_commands_results_prompt-v1.3_2026-09-07.json`（归档）
+- `docs/AGENT_EVAL_REPORT.md`、`docs/AGENT_EVAL_METHOD.md`、`docs/TEST_PLAN.md`、`docs/DEV_PLAN.md`、`docs/DEV_LOG.md`
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python -m pytest tests/evals/test_agent_command_eval.py tests/unit/skills/test_agent_command_planner.py tests/contract/test_agent_command_schemas.py -q` | 通过（42 passed，1 skipped=结果文件新鲜度[无真实结果文件时正确跳过]） |
+| `ruff check` + `ruff format --check`（evals 两文件） | 通过 |
+| `mypy tests/evals/command_scorer.py` | 通过 |
+| 默认 CI 零真实模型调用 | ✅（eval_real 默认被 addopts 排除；preflight 用 explode 桩证明） |
+
+### 学到了什么
+
+评测尺子本身也需要契约测试：数据集语义、结果文件与 Prompt 版本三者的一致性若没有机器守护，会在下一次 Prompt 升级时再次静默漂移。"评分器必须先用伪造结果证明自己会失败"——如果一个指标在任何输入下都不会变红，它就没有监控行为。
+
+Code review 抓到两个真实缺陷：(1) 首次提交只包含了显式 `git add` 的文件，`git mv` 预暂存的归档外其余改动全部遗留在工作区——提交前必须核对 `git show --stat` 与提交信息一致；(2) 发版门槛对缺数据类别放行（no_data 不阻断）看似宽容实为漏洞：continue precision 是 §3.3 发布合同，数据集缺该类样本时应该阻断而不是默认通过。
+
+---
+
 ## Memory 系统设计与实施计划（2026-09-18）
 
 ### 做了什么

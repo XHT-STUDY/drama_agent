@@ -3446,6 +3446,22 @@ Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋�
 
 ---
 
+## 20.7 Phase IR 规划（意图识别优化，2026-09-18 登记）
+
+> 依据文档：`docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md`（决策已确认）。
+> 目标：把意图识别升级为"turn_type + intent + target + 约束 + 执行范围"联合契约，
+> 可测量、可校验、可追踪；不新增 intent 枚举，不开放模型自由工具调用。
+> 四阶段串行、各自独立可合并；全部完成定义见该文档 §14。
+
+| # | 任务 | 依赖 | 估算 | 要点 |
+|---:|---|---|---:|---|
+| IR-1 | 修正评测尺子 | — | 2–3d | ✅ DONE（2026-09-18）：`agent_commands.json` 升级 dataset v3（88 条）——6 条旧 `plan/explain` 按 v1.4 重标为 answer 分支、新增 21 条 continue 基础集与 2 条明确目标×上下文冲突用例、新增 split/target_type/batch_size/risk/coverage 标注；新增纯函数评分器 `tests/evals/command_scorer.py`（turn_type→intent→target→batch 分层、micro/macro、混淆矩阵、§4.3 失败分类、§3.3 发版门槛）；harness 重写（评分器单测用伪造结果验证 target/batch 指标与门槛；结果文件新鲜度契约防旧结果冒充；`EVAL_REPORT_ONLY=1` 开发期只产报告，默认发版模式门槛不达标即非零退出）；v1.3 旧结果归档 `results/archive/`；AGENT_EVAL_REPORT/METHOD/TEST_PLAN 同步 |
+| IR-2 | 扩充代表性数据 | IR-1 | 4–6d | TODO：360 条（240 开发 + 120 盲测 holdout 文件）、边界对矩阵、交叉覆盖下限契约、`tests/evals/README.md` 标注规范与 changelog、三连跑报告最差值门槛 |
+| IR-3 | 强化生产路由 | IR-2 | 5–8d | TODO：服务端目标解析确定性优先 + Planner 后一致性校验（disagreement 拒绝/纠正）、`user_request` 原文保真进 Plan/Run config、explain 内部分流（状态/正文/设定/已有评估）、正则职责收敛（"前慢后快"不再误判冲突）、短路上下文保护与遥测 |
+| IR-4 | 端到端与运行闭环 | IR-3 | 4–6d | TODO：单集评估 Dispatcher 范围修复（不得静默扩大为全项目）、§9.3 端到端语义测试矩阵、低基数 Prometheus 指标（planner/target/clarification/shortcut/action）、线上失败样本回灌流程 |
+
+---
+
 ## 21. MVP 后续 Backlog
 
 只有 Release Gate 通过后再考虑：
