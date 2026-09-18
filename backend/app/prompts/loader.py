@@ -130,8 +130,18 @@ def _auto_register_domain_schemas() -> None:
         ConversationSummaryBody,
         ConversationSummaryInput,
         ConversationSummaryV2Input,
+        EpisodeDelta,
+        EpisodeSummaryV2,
+        EpisodeSummaryV2Input,
+        FactDelta,
+        FuturePlanDelta,
+        KnowledgeDelta,
+        LoopIntroductionDelta,
+        PropDelta,
+        RelationshipDelta,
         SummaryInput,
         SummaryOutput,
+        TimelineDelta,
     )
 
     # 注册核心 Schema
@@ -171,6 +181,9 @@ def _auto_register_domain_schemas() -> None:
     register_schema("SummaryInput", SummaryInput)
     register_schema("SummaryOutput", SummaryOutput)
     register_schema("ConversationSummaryInput", ConversationSummaryInput)
+    register_schema("EpisodeSummaryV2Input", EpisodeSummaryV2Input)
+    register_schema("EpisodeDelta", EpisodeDelta)
+    register_schema("EpisodeSummaryV2", EpisodeSummaryV2)
     register_schema("ConversationSummaryV2Input", ConversationSummaryV2Input)
     register_schema("ConversationSummaryBody", ConversationSummaryBody)
     register_schema("ConversationSummary", ConversationSummary)

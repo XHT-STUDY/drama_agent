@@ -1,12 +1,16 @@
-"""摘要模型 — SummaryInput 与 SummaryOutput (C-06).
+"""摘要模型 — SummaryInput 与 SummaryOutput (C-06)。
 
 Summarizer Skill 的输入/输出模型，用于在每集完成后
 生成结构化摘要并更新连续性状态。
+
+M-03 新增 v2 typed delta:LLM 只输出受 Pydantic 校验的类型化增量
+(设定事实/正文事件/角色知识/关系/伏笔/道具/时间线/作者未来计划),
+不含任何用户确认或来源 Artifact 字段——ID 与来源由服务端分配回填。
 """
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SummaryInput(BaseModel):
@@ -59,6 +63,174 @@ class SummaryOutput(BaseModel):
         default_factory=list,
         description="本集时间线事件，每项含 event_id/description/order_in_episode",
     )
+
+
+# ========================================================================
+# v2 typed delta(M-03,Agent Native W3-01/W3-02)
+# ========================================================================
+
+
+class FactDelta(BaseModel):
+    """本集新增的作者事实(正文已发生事件)。"""
+
+    model_config = {"extra": "forbid"}
+
+    fact_id: str | None = Field(
+        default=None,
+        description="既有事实 ID(仅引用时填);新事实留空,由服务端分配",
+    )
+    text: str = Field(..., description="事实描述", min_length=1)
+    source_scene: int = Field(..., description="发生场景号", ge=1)
+
+
+class KnowledgeDelta(BaseModel):
+    """角色知识变化:某角色在本集得知(或仍未得知)某事实。"""
+
+    model_config = {"extra": "forbid"}
+
+    character_id: str = Field(..., description="角色 ID", min_length=1)
+    new_fact_index: int | None = Field(
+        default=None,
+        description="指向本 delta.facts 的下标(0 起)——本集新事实", ge=0,
+    )
+    fact_id: str | None = Field(
+        default=None, description="既有事实 ID(与 new_fact_index 二选一)"
+    )
+    learned: bool = Field(default=True, description="True=得知;False=仍未得知")
+    source_scene: int = Field(..., description="得知场景号", ge=1)
+
+    @model_validator(mode="after")
+    def _exactly_one_ref(self) -> "KnowledgeDelta":
+        if (self.new_fact_index is None) == (self.fact_id is None):
+            raise ValueError(
+                "knowledge 必须且只能提供 new_fact_index 或 fact_id 之一"
+            )
+        return self
+
+
+class LoopIntroductionDelta(BaseModel):
+    """本集引入(或重开)的伏笔。"""
+
+    model_config = {"extra": "forbid"}
+
+    loop_id: str | None = Field(
+        default=None,
+        description="重开既有伏笔时填其 ID;新伏笔留空,由服务端分配",
+    )
+    description: str = Field(..., description="伏笔描述", min_length=1)
+
+
+class RelationshipDelta(BaseModel):
+    """本集关系变化。"""
+
+    model_config = {"extra": "forbid"}
+
+    from_character_id: str = Field(..., min_length=1)
+    to_character_id: str = Field(..., min_length=1)
+    before: str = Field(default="", description="变化前的关系")
+    after: str = Field(default="", description="变化后的关系")
+
+
+class TimelineDelta(BaseModel):
+    """本集时间线事件。"""
+
+    model_config = {"extra": "forbid"}
+
+    event_id: str | None = Field(
+        default=None, description="留空由服务端分配稳定 ID"
+    )
+    order_in_episode: int = Field(..., ge=1)
+    description: str = Field(..., min_length=1)
+
+
+class PropDelta(BaseModel):
+    """本集道具归属变化。"""
+
+    model_config = {"extra": "forbid"}
+
+    prop_id: str | None = Field(
+        default=None, description="新道具留空,由服务端分配;转移既有道具时填 ID"
+    )
+    holder_character_id: str = Field(..., min_length=1)
+    from_character_id: str | None = Field(
+        default=None, description="上一任持有者(首现可为空)"
+    )
+    source_scene: int = Field(..., ge=1)
+
+
+class FuturePlanDelta(BaseModel):
+    """作者未来计划——尚未发生,不得进入已发生事实。"""
+
+    model_config = {"extra": "forbid"}
+
+    text: str = Field(..., min_length=1)
+    reveal_episode: int = Field(..., description="计划揭示/发生集号", ge=1)
+
+
+class EpisodeDelta(BaseModel):
+    """单集 typed delta(v2)——Summarizer 的受校验输出。
+
+    设计约束(MEMORY_DESIGN §7.4):
+    - 不含用户确认、来源 Artifact、生效集数等字段——全部由服务端回填;
+    - 只描述本集增量;引用既有实体用稳定 ID,新实体留空 ID 由服务端分配;
+    - 未来计划只出现在 future_plans,不得同时写进 facts。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    episode_number: int = Field(..., ge=1)
+    summary: str = Field(..., min_length=1)
+    key_events: list[str] = Field(default_factory=list)
+    ending_state: str = Field(default="", description="本集结束状态描述")
+    facts: list[FactDelta] = Field(default_factory=list)
+    knowledge: list[KnowledgeDelta] = Field(default_factory=list)
+    loops_introduced: list[LoopIntroductionDelta] = Field(default_factory=list)
+    loops_resolved: list[str] = Field(default_factory=list)
+    relationships: list[RelationshipDelta] = Field(default_factory=list)
+    timeline_events: list[TimelineDelta] = Field(default_factory=list)
+    props: list[PropDelta] = Field(default_factory=list)
+    future_plans: list[FuturePlanDelta] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _future_not_in_facts(self) -> "EpisodeDelta":
+        plan_texts = {p.text.strip() for p in self.future_plans}
+        for fact in self.facts:
+            if fact.text.strip() in plan_texts:
+                raise ValueError(
+                    f"未来计划「{fact.text[:20]}」不得同时写成已发生事实"
+                )
+        return self
+
+
+class EpisodeSummaryV2Input(BaseModel):
+    """episode_summary_v2 Prompt 输入模型——供 manifest Schema 校验。"""
+
+    model_config = {"extra": "forbid"}
+
+    episode_number: str = Field(..., description="目标集号(字符串,供模板渲染)")
+    script_draft: str = Field(..., description="本集剧本 JSON")
+    continuity_context: str = Field(
+        default="{}", description="前态投影 JSON(角色/已知事实/开放伏笔/道具)"
+    )
+
+
+class EpisodeSummaryV2(BaseModel):
+    """episode_summary Artifact 的 v2 内容 envelope。
+
+    单集派生证据:摘要 + 服务端校验并分配 ID 后的 typed delta,
+    绑定确切源稿(source_script_artifact_id)与幂等输入(input_hash)。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    content_schema_version: str = Field(default="2.0", description="内容版本")
+    episode_number: int = Field(..., ge=1)
+    summary: str = Field(..., min_length=1)
+    key_events: list[str] = Field(default_factory=list)
+    ending_state: str = Field(default="")
+    delta: EpisodeDelta = Field(..., description="服务端校验后的 typed delta")
+    source_script_artifact_id: str = Field(..., min_length=1)
+    input_hash: str = Field(default="", description="派生幂等输入哈希")
 
 
 # ========================================================================

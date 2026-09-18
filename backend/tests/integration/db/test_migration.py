@@ -253,3 +253,90 @@ class TestAlembicMigration0005:
 
     def test_downgrade_is_explicitly_destructive_and_symmetric(self) -> None:
         """downgrade 对称删结构，并明确 Agent 审计数据会丢失。"""
+
+
+@pytest.mark.integration
+class TestAlembicMigration0013:
+    """M-03 剧情派生证据幂等索引(0013)结构验证。"""
+
+    def test_migration_file_exists(self) -> None:
+        import importlib.util
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parent.parent.parent.parent
+            / "migrations" / "versions" / "0013_story_state_dedup.py"
+        )
+        assert path.exists()
+        spec = importlib.util.spec_from_file_location("mig_0013", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert module.revision == "0013"
+        assert module.down_revision == "0011"
+
+    async def test_unique_index_enforces_v2_dedup(self, test_engine: Any) -> None:
+        """同 (project, type, episode, input_hash) 的 v2 派生只允许一份;
+        v1(input_hash 空或 schema 1.0)不受约束。"""
+        import uuid as _uuid
+
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        factory = async_sessionmaker(test_engine, class_=AsyncSession)
+        project_id = _uuid.uuid4()
+        input_hash = "a" * 64
+        async with factory() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO projects (id, title, status, "
+                    "target_episode_count, current_episode_count) "
+                    "VALUES (:p, 't', 'draft', 10, 0)"
+                ),
+                {"p": project_id},
+            )
+            base_row = {
+                "id": _uuid.uuid4(),
+                "project_id": project_id,
+                "type": "episode_summary",
+                "version": 1,
+                "episode_number": 1,
+                "content": "{}",
+                "status": "valid",
+                "content_schema_version": "2.0",
+                "input_hash": input_hash,
+            }
+            await session.execute(
+                text(
+                    "INSERT INTO artifacts (id, project_id, type, version, "
+                    "episode_number, content, status, content_schema_version, "
+                    "prompt_version, input_hash) VALUES (:id, :project_id, "
+                    ":type, :version, :episode_number, :content, :status, "
+                    ":content_schema_version, '', :input_hash)"
+                ),
+                base_row,
+            )
+            # v1 记录(schema 1.0,同 input_hash)不受约束
+            await session.execute(
+                text(
+                    "INSERT INTO artifacts (id, project_id, type, version, "
+                    "episode_number, content, status, content_schema_version, "
+                    "prompt_version, input_hash) VALUES (:id, :project_id, "
+                    ":type, 2, :episode_number, :content, 'valid', '1.0', '', "
+                    ":input_hash)"
+                ),
+                {**base_row, "id": _uuid.uuid4()},
+            )
+            # v2 同 input_hash 重复 → 唯一约束拒绝
+            with pytest.raises(Exception, match="uq_story_state_v2_dedup"):
+                await session.execute(
+                    text(
+                        "INSERT INTO artifacts (id, project_id, type, version, "
+                        "episode_number, content, status, "
+                        "content_schema_version, prompt_version, input_hash) "
+                        "VALUES (:id, :project_id, :type, 3, :episode_number, "
+                        ":content, 'valid', '2.0', '', :input_hash)"
+                    ),
+                    {**base_row, "id": _uuid.uuid4()},
+                )
+            await session.rollback()

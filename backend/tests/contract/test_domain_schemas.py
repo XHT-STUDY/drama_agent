@@ -51,9 +51,10 @@ class TestEnums:
         assert values == {"draft", "planning", "writing", "evaluating", "revising", "completed", "archived"}
 
     def test_artifact_type_values(self) -> None:
-        """ArtifactType 包含 MVP 所需的全部 12 种类型（D-05 增 retrieval_trace）。"""
+        """ArtifactType 包含所需全部类型（D-05 增 retrieval_trace;M-03 增 episode_summary）。"""
         values = {t.value for t in ArtifactType}
-        assert len(values) == 12
+        assert len(values) == 13
+        assert "episode_summary" in values  # M-03 单集派生证据
         assert "story_bible" in values
         assert "script_draft" in values
         assert "evaluation_report" in values

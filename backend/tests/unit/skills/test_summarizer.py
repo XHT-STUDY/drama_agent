@@ -15,13 +15,20 @@ from __future__ import annotations
 import pytest
 
 from app.agents.base import BaseAgent
-from app.domain.continuity import EpisodeSummary
-from app.domain.summary import SummaryInput, SummaryOutput
+from app.domain.continuity import CharacterState, ContinuityState, EpisodeSummary, FuturePlan
+from app.domain.summary import (
+    EpisodeDelta,
+    FactDelta,
+    KnowledgeDelta,
+    SummaryInput,
+    SummaryOutput,
+)
 from app.llm.fake import FakeLLM
 from app.prompts.loader import PromptLoader
 from app.skills.summarizer import (
     SummarizerSkill,
     SummarizerValidationError,
+    continuity_context_projection,
     extract_new_story_loops,
     extract_timeline_events,
     summary_output_to_episode_summary,
@@ -537,3 +544,143 @@ class TestHelperFunctions:
 
         assert events[0].event_id == "tl_2_001"
         assert events[1].event_id == "tl_2_002"
+
+
+# ========================================================================
+# v2 typed delta 路径(M-03)
+# ========================================================================
+
+
+@pytest.mark.unit
+class TestExecuteDelta:
+    @pytest.fixture
+    def prev_state(self) -> ContinuityState:
+        return ContinuityState(
+            content_schema_version="2.0",
+            through_episode=0,
+            character_states={
+                "char_lin": CharacterState(
+                    character_id="char_lin", last_updated_episode=0
+                )
+            },
+        )
+
+    async def test_returns_validated_delta(
+        self,
+        agent: BaseAgent,
+        fake_llm: FakeLLM,
+        prompt_loader: PromptLoader,
+        skill: SummarizerSkill,
+        prev_state: ContinuityState,
+    ) -> None:
+        """合法 typed delta 经 episode_summary_v2 Prompt 返回。"""
+        fake_llm.register(
+            "episode_summary_v2",
+            EpisodeDelta(
+                episode_number=1,
+                summary="第1集:发现契约",
+                facts=[FactDelta(text="旧宅藏契约", source_scene=1)],
+                knowledge=[
+                    KnowledgeDelta(
+                        character_id="char_lin",
+                        new_fact_index=0,
+                        learned=True,
+                        source_scene=2,
+                    )
+                ],
+            ),
+        )
+        delta = await skill.execute_delta(
+            agent,
+            prompt_loader,
+            episode_number=1,
+            script_content={"scenes": []},
+            previous_state=prev_state,
+        )
+        assert delta.episode_number == 1
+        assert delta.facts[0].text == "旧宅藏契约"
+
+    async def test_rejects_episode_mismatch(
+        self,
+        agent: BaseAgent,
+        fake_llm: FakeLLM,
+        prompt_loader: PromptLoader,
+        skill: SummarizerSkill,
+        prev_state: ContinuityState,
+    ) -> None:
+        fake_llm.register(
+            "episode_summary_v2",
+            EpisodeDelta(episode_number=3, summary="错集"),
+        )
+        with pytest.raises(SummarizerValidationError, match="不匹配"):
+            await skill.execute_delta(
+                agent,
+                prompt_loader,
+                episode_number=1,
+                script_content={},
+                previous_state=prev_state,
+            )
+
+    async def test_rejects_out_of_range_fact_index(
+        self,
+        agent: BaseAgent,
+        fake_llm: FakeLLM,
+        prompt_loader: PromptLoader,
+        skill: SummarizerSkill,
+        prev_state: ContinuityState,
+    ) -> None:
+        fake_llm.register(
+            "episode_summary_v2",
+            EpisodeDelta(
+                episode_number=1,
+                summary="s",
+                knowledge=[
+                    KnowledgeDelta(
+                        character_id="char_lin",
+                        new_fact_index=5,
+                        learned=True,
+                        source_scene=1,
+                    )
+                ],
+            ),
+        )
+        with pytest.raises(SummarizerValidationError, match="越界"):
+            await skill.execute_delta(
+                agent,
+                prompt_loader,
+                episode_number=1,
+                script_content={},
+                previous_state=prev_state,
+            )
+
+    async def test_llm_failure_raises(
+        self,
+        agent: BaseAgent,
+        prompt_loader: PromptLoader,
+        skill: SummarizerSkill,
+        prev_state: ContinuityState,
+    ) -> None:
+        """未注册 episode_summary_v2 → RuntimeError(调用方保留正文补派生)。"""
+        with pytest.raises(RuntimeError, match="episode_summary_v2"):
+            await skill.execute_delta(
+                agent,
+                prompt_loader,
+                episode_number=1,
+                script_content={},
+                previous_state=prev_state,
+            )
+
+    def test_continuity_projection_hides_plans_and_resolved(
+        self, prev_state: ContinuityState
+    ) -> None:
+        """前态投影只含可引用实体;已回收伏笔与作者计划不进入。"""
+        prev_state = prev_state.model_copy(
+            update={
+                "future_plans": [
+                    FuturePlan(text="第8集揭示", reveal_episode=8, source_episode=1)
+                ],
+            }
+        )
+        projection = continuity_context_projection(prev_state)
+        assert "char_lin" in projection
+        assert "第8集揭示" not in projection

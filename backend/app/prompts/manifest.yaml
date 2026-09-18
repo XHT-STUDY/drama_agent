@@ -107,6 +107,14 @@ prompts:
     template: episode_summary.md
     changelog: "初始版本：生成单集摘要，更新人物状态与伏笔追踪"
     user_content_vars: [script_draft]
+  - name: episode_summary_v2
+    version: "1.0.0"
+    input_schema: EpisodeSummaryV2Input
+    output_schema: EpisodeDelta
+    owner: summarizer
+    template: episode_summary_v2.md
+    changelog: "v1.0(M-03):typed delta 提取——事实/角色知识/关系/伏笔/道具/时间线/作者未来计划;引用既有实体用稳定 ID,新实体不填 ID;未来计划与已发生事实分离;不含用户确认与来源字段"
+    user_content_vars: [script_draft, continuity_context]
 
   # ---- 会话摘要（中期记忆） ----
   - name: conversation_summary

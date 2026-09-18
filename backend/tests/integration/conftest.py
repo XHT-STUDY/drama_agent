@@ -94,7 +94,13 @@ async def clean_db(test_engine: Any) -> AsyncGenerator[None, None]:
 
     依赖 test_engine 确保只在需要数据库的测试中触发（health 测试不使用 test_engine）。
     按 FK 依赖逆序删除保证无外键冲突。
+
+    清空前先排空 M-02 后台摘要任务——fire-and-forget 任务持有独立会话,
+    与截表并发会锁冲突/读到半删数据(留缺口由下次触发补做,不影响语义)。
     """
+    from app.memory.wiring import wait_for_background_summaries
+
+    await wait_for_background_summaries(timeout=10.0)
     async with test_engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             await conn.execute(table.delete())

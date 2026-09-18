@@ -20,6 +20,8 @@ import logging
 import uuid
 from typing import Any
 
+from sqlalchemy import select
+
 from app.core.config import load_settings
 from app.memory.short_term import RedisShortTermStore
 
@@ -127,11 +129,26 @@ async def _summarize_in_background(
     except RuntimeError:
         logger.warning("后台摘要跳过:数据库会话工厂未初始化")
         return
-    # 1) 等待调用方事务提交(消息可见)
+    # 1) 等待调用方事务提交(消息可见);会话被删除则放弃
     visible = False
     for _ in range(_VISIBILITY_RETRIES):
         try:
             async with factory() as session:
+                from app.db.models.conversation import Conversation
+
+                exists = (
+                    await session.execute(
+                        select(Conversation.id).where(
+                            Conversation.id == conversation_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if exists is None:
+                    logger.info(
+                        "后台摘要放弃:会话已删除(conversation=%s)",
+                        conversation_id,
+                    )
+                    return
                 count = await manager.current_message_count(
                     session, conversation_id
                 )
