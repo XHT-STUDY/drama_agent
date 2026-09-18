@@ -38,6 +38,21 @@ logger = logging.getLogger(__name__)
 WorkflowExecutor = Callable[[uuid.UUID, str, dict[str, Any], str], Awaitable[None]]
 
 
+def compose_user_instruction(user_request: Any, constraints: list[str]) -> str | None:
+    """把原始请求与结构化约束组合为修订指令（IR-3 §8.3）。
+
+    原文是完整授权边界，结构化约束是索引——两者都进入下游输入，
+    模型遗漏提取的约束可从原文恢复。旧计划无原文时沿用旧拼接。
+    """
+    parts: list[str] = []
+    if isinstance(user_request, str) and user_request.strip():
+        parts.append(f"用户原始要求（完整授权边界）：{user_request.strip()}")
+    joined = "；".join(c for c in constraints if c)
+    if joined:
+        parts.append(f"结构化约束：{joined}")
+    return "\n".join(parts) or None
+
+
 class WorkflowDispatcher:
     """用数据库租约领取、续租并执行 WorkflowRun。"""
 
@@ -406,9 +421,7 @@ async def _execute_workflow(
             if agent_action_id_cfg:
                 from app.application.agent_action_lifecycle import AgentActionLifecycle
 
-                await AgentActionLifecycle().mark_running(
-                    db, uuid.UUID(str(agent_action_id_cfg))
-                )
+                await AgentActionLifecycle().mark_running(db, uuid.UUID(str(agent_action_id_cfg)))
 
             # I-01：登记 per-run LLM 预算（软/硬上限来自 Settings）；并读取
             # 上一轮 state_summary 作为 retry 恢复的基底（全新 run 为 None）。
@@ -474,8 +487,12 @@ async def _execute_workflow(
                 )
                 return
             if action not in (
-                "create_script", "evaluate", "revise", "revise_script",
-                "revise_outline", "import",
+                "create_script",
+                "evaluate",
+                "revise",
+                "revise_script",
+                "revise_outline",
+                "import",
             ):
                 raise AppError(
                     detail=f"不支持的 Workflow action: {action}",
@@ -546,9 +563,7 @@ async def _execute_workflow(
                     "stop_after": options.get("stop_after") or "",
                     "stage_gate": "",
                     "stage_generation": run.stage_generation,
-                    "target_episode_count": int(
-                        options.get("outline_count", options.get("script_count", 3))
-                    ),
+                    "target_episode_count": int(options.get("outline_count", options.get("script_count", 3))),
                     "current_episode": 1,
                     "status": "running",
                     "needs_user_input": False,
@@ -621,8 +636,10 @@ async def _execute_workflow(
                     "action": action,
                     "source_script_artifact_id": str(source_script_id),
                     "user_constraints": constraints,
-                    # 用户约束拼接后作为 user_instruction 写入 RevisionPlan
-                    "user_instruction": "；".join(c for c in constraints if c) or None,
+                    # IR-3 §8.3：原文是完整授权边界，结构化约束是索引；
+                    # 两者冲突时修订侧应停止并暴露，不自行扩权
+                    "user_request": options.get("user_request"),
+                    "user_instruction": compose_user_instruction(options.get("user_request"), constraints),
                     "script_artifact_ids": {},
                     "evaluation_artifact_ids": {},
                     "needs_revision_decision": False,
@@ -642,9 +659,7 @@ async def _execute_workflow(
                     "input_hashes": {},
                     "prompt_versions": {},
                 }
-                workflow = build_conversational_revision_workflow(
-                    checkpointer=checkpointer
-                )
+                workflow = build_conversational_revision_workflow(checkpointer=checkpointer)
             elif action == "revise_outline":
                 # action=revise_outline → 对话式大纲修订（J-08）：单节点工作流，
                 # 目标由服务端解析的 source outline ID 决定；合法输出落库为
@@ -663,7 +678,8 @@ async def _execute_workflow(
                     "action": action,
                     "source_outline_artifact_id": str(source_outline_id),
                     "user_constraints": constraints,
-                    "user_instruction": "；".join(c for c in constraints if c) or None,
+                    "user_request": options.get("user_request"),
+                    "user_instruction": compose_user_instruction(options.get("user_request"), constraints),
                     "outline_set_artifact_id": None,
                     "outline_impact": {},
                     "script_artifact_ids": {},
@@ -953,12 +969,8 @@ async def _execute_workflow(
                     event_type="run.completed",
                     payload={
                         "message": "大纲修订完成",
-                        "old_outline_artifact_id": final_state.get(
-                            "source_outline_artifact_id"
-                        ),
-                        "new_outline_artifact_id": final_state.get(
-                            "outline_set_artifact_id"
-                        ),
+                        "old_outline_artifact_id": final_state.get("source_outline_artifact_id"),
+                        "new_outline_artifact_id": final_state.get("outline_set_artifact_id"),
                         "changed_episodes": impact.get("changed_episodes", []),
                         "dependent_script_ids": impact.get("dependent_script_ids", []),
                         "follow_ups": impact.get("follow_ups", []),
@@ -977,23 +989,15 @@ async def _execute_workflow(
                     payload={
                         "message": "对话式剧本修订完成",
                         "episode": episode,
-                        "source_script_artifact_id": final_state.get(
-                            "source_script_artifact_id"
-                        ),
+                        "source_script_artifact_id": final_state.get("source_script_artifact_id"),
                         "new_script_artifact_id": (
                             final_state.get("script_artifact_ids", {}).get(str(episode))
                             if episode is not None
                             else None
                         ),
-                        "revision_plan_artifact_id": final_state.get(
-                            "revision_plan_artifact_id"
-                        ),
-                        "continuity_check_artifact_id": final_state.get(
-                            "continuity_check_artifact_id"
-                        ),
-                        "evaluation_artifact_ids": final_state.get(
-                            "evaluation_artifact_ids", {}
-                        ),
+                        "revision_plan_artifact_id": final_state.get("revision_plan_artifact_id"),
+                        "continuity_check_artifact_id": final_state.get("continuity_check_artifact_id"),
+                        "evaluation_artifact_ids": final_state.get("evaluation_artifact_ids", {}),
                     },
                     autocommit=True,
                 )
@@ -1027,9 +1031,7 @@ async def _execute_workflow(
                         final_state=final_state,
                     )
                 except Exception:
-                    logger.exception(
-                        "AgentAction 终态回写失败（可由 reconciliation 补写）: run=%s", run_id
-                    )
+                    logger.exception("AgentAction 终态回写失败（可由 reconciliation 补写）: run=%s", run_id)
                     await db.rollback()
 
             # 兜底提交：确保所有变更已持久化

@@ -4,6 +4,54 @@
 
 ---
 
+## IR-3 意图识别优化：强化生产路由（2026-09-18）
+
+**任务 ID：** IR-3（Phase IR，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §8）
+**状态：** DONE
+**日期：** 2026-09-18
+
+### 做了什么
+
+1. **目标一致性校验（§8.2）**：`domain/agent_planner.py` 新增纯函数 `resolve_plan_target`（文本明确对象/集数 > 合法活动上下文 > 模型推断）；Skill 在模型输出后执行校验——集数分歧规范化为文本集数并记录低基数 disagreement（episode_normalized/context_normalized）；点名大纲/设定却要改剧本（object_mismatch）转澄清不生成 Action。revise_outline 文本中的集数识别为大纲条目引用，不做规范化。
+2. **正则收敛（§8.5）**：多目标确定性澄清只在对象不可判定时触发——文本指向单一大纲/设定对象时，多个集数是条目引用（"修改大纲，第2集和第3集合并"现在正确放行）；"前慢后快"类合理节奏表达本就不命中冲突正则，补单测固化。集数/对象/指代词表从 skill 上移 domain（`extract_episode_numbers`/`explicit_objects`/`CONTEXT_REFERENCE_RE`），skill 保留 re-export。
+3. **约束保真（§8.3）**：`AgentActionPlan`、`ReviseScriptCommand`、`ReviseOutlineCommand` 新增可选 `user_request`（旧 JSON 加载为 None=legacy）；原文贯穿 Plan → Run options → Dispatcher（`compose_user_instruction`：原文=完整授权边界 + 结构化约束=索引）→ 工作流状态 `user_request` → 修订指令；前端 `api.ts` 类型同步，ActionPlanCard 显示约束与原始请求（确认前可发现遗漏）。
+4. **explain 分流（§8.4）**：`build_explanation_context` 新增"查看已有评估"路由（`_EVALUATION_VIEW_RE`）——读 evaluation Artifact（按集或项目最新），不再误读剧本正文；`ExplanationSourceText.kind` 增加 `evaluation`。
+5. **短路保护（§8.6）**：确认类短语只有在会话内最近 assistant 消息仍是 `action_plan`/`action_result`（覆盖确认门通知）时才直接执行，否则回落 Planner——"澄清之后的好的"不再误确认旧计划；新增 fallback_stale_context/executed_plan/executed_gate 低基数遥测日志；复合长表达本就不命中整句短路正则（IR-2 数据集覆盖）。
+6. 数据集 v5：cmd-036/175 恢复多集数大纲表达作为正则修复的回归样本；Schema 向后兼容契约测试（legacy 计划加载、user_request roundtrip）；API_CONTRACT、DEV_PLAN §20.7 同步。
+
+### 为什么这么做
+
+- 目标一致性放在 Skill 层（模型输出后、服务端建计划前）：Planner 输出经过 `_validate_output` 白名单校验后立即规范化，`_build_action_plan` 拿到的 target 已是确定性结果，不需要改六个 intent 分支。
+- object_mismatch 只拒绝"文本明确大纲/设定 → 改剧本"这一个方向：反向（文本只有集数 → 改大纲）可能由活动上下文或对话历史合法给出，误拒会伤害多轮大纲修订；此风险由确认卡片（用户可见"修订大纲"计划）兜底。
+- 原文保真走数据而非 Prompt：组合指令把"完整授权边界"作为数据标签随 user_instruction 流入既有修订模板，避免又改一轮 Prompt 与 golden fixture；Prompt 未变（v1.4），Skill metadata 升 1.1。
+- 短路保护用消息 kind 判定而非时间戳：时间戳无法区分"计划后跟了新一轮澄清"，而 kind 是会话语义的事实。
+
+### 修改文件
+
+- `backend/app/domain/agent_planner.py`、`app/domain/agent_command.py`
+- `backend/app/skills/agent_command_planner.py`
+- `backend/app/application/agent_context_service.py`、`agent_command_service.py`、`workflow_dispatcher.py`
+- `backend/app/workflows/state.py`
+- `backend/tests/unit/skills/test_agent_command_planner.py`、`tests/contract/test_agent_command_schemas.py`、`tests/integration/api/test_agent_shortcut.py`
+- `backend/tests/evals/agent_commands{,_holdout}.json`（v5）
+- `frontend/src/types/api.ts`、`frontend/src/features/agent/ActionPlanCard.tsx`
+- `docs/API_CONTRACT.md`、`docs/DEV_PLAN.md`、`docs/DEV_LOG.md`
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python -m pytest`（后端全量） | 通过 |
+| `pnpm typecheck` / `pnpm test`（前端 219 测试） | 通过 |
+| `ruff check app/ tests/` + `mypy app/` | 通过（188 文件） |
+| preflight 一致性契约（360 条，含恢复的多集数样本） | 通过 |
+
+### 学到了什么
+
+确定性保护的关键是"方向性"：只拒绝有文本证据的方向冲突（点名大纲→改剧本），不要反向臆断（无大纲字样→可能是上下文给的）。每加一条确定性规则都要问：多轮对话里有没有合法路径会触发它？评测数据集（IR-2 的 recent_dialog 用例）正是在这里发挥了作用——没有这些样本，反向规则会静默伤害多轮修订。
+
+---
+
 ## IR-2 意图识别优化：扩充代表性评测数据（2026-09-18）
 
 **任务 ID：** IR-2（Phase IR，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §7）

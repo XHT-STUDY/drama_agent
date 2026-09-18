@@ -79,7 +79,7 @@ COVERAGE_VOCAB = {
     "multi_turn",
 }
 RISK_VOCAB = {"write_op", "read_only", "out_of_scope", "safety"}
-DATASET_VERSION = 4
+DATASET_VERSION = 5
 # §7.2 合并分布（开发集 + 盲测集，恰好 360）
 DISTRIBUTION_QUOTA = {
     "create_script": 45,

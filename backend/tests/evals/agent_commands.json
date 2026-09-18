@@ -1,6 +1,6 @@
 {
-  "version": 4,
-  "changelog": "v4（IR-2）：扩充为 240 条开发/回归集——新增 152 条覆盖题材多样性、多轮澄清与补充（recent_dialog 注入上一轮对话，与生产 project_context 最近消息路径一致）、错别字/口语/中英混合、复合请求、查看已有评估 vs 重跑、合理节奏变化 vs 真冲突、范围外与攻击性指令。盲测集见 agent_commands_holdout.json（120 条，不进 Prompt 示例）。v3（IR-1）：期望输出对齐 Prompt v1.4，新增 continue 基础集与目标冲突用例，新增 split/target_type/batch_size/risk/coverage 标注。",
+  "version": 5,
+  "changelog": "v5（IR-3）：多目标正则收敛——文本指向单一大纲/设定对象时，多个集数是大纲条目引用而非多目标；cmd-036/175 恢复多集数大纲表达作为修复回归样本。v4（IR-2）：扩充为 240 开发 + 120 盲测。",
   "splits": {
     "dev": 240
   },
@@ -975,7 +975,7 @@
     {
       "id": "cmd-036",
       "split": "dev",
-      "user_request": "调整大纲，把前两集的冲突线合并",
+      "user_request": "调整大纲，第 2 集和第 3 集合并冲突线",
       "active_context": null,
       "available_intents": [
         "create_script",
@@ -995,7 +995,7 @@
       "preflight_deterministic": false,
       "risk": "write_op",
       "coverage": [],
-      "note": "revise_outline → target=outline"
+      "note": "大纲内并集：多集数+单一大纲对象不再触发多目标正则（IR-3 §8.5 修复后回归样本）"
     },
     {
       "id": "cmd-037",
@@ -5021,7 +5021,7 @@
     {
       "id": "cmd-175",
       "split": "dev",
-      "user_request": "修改大纲，把开头两集的冲突线合并",
+      "user_request": "修改大纲，第 2 集和第 4 集的冲突线合并",
       "active_context": {
         "artifact_id": "00000000-0000-0000-0000-000000000010",
         "artifact_type": "story_bible",
@@ -5048,7 +5048,7 @@
         "outline_edit",
         "context_conflict"
       ],
-      "note": "大纲内并集（对象唯一=大纲；避免多集数触发多目标正则，见 README 已知边界）"
+      "note": "大纲内并集：多集数+单一大纲对象不再触发多目标正则（IR-3 §8.5 修复后回归样本）"
     },
     {
       "id": "cmd-176",

@@ -736,8 +736,21 @@ export type AgentCommand =
       stop_after?: "outline" | null;
     }
   | { intent: "explain"; target: ActionTarget }
-  | { intent: "revise_outline"; source_outline_id: string; constraints: string[] }
-  | { intent: "revise_script"; source_script_id: string; episode_number: number; constraints: string[] }
+  | {
+      intent: "revise_outline";
+      source_outline_id: string;
+      constraints: string[];
+      /** IR-3 §8.3：用户原始请求（完整授权边界），旧计划缺省 null */
+      user_request?: string | null;
+    }
+  | {
+      intent: "revise_script";
+      source_script_id: string;
+      episode_number: number;
+      constraints: string[];
+      /** IR-3 §8.3：用户原始请求（完整授权边界），旧计划缺省 null */
+      user_request?: string | null;
+    }
   | { intent: "evaluate"; scope: "project" | "episode"; episode_number?: number | null }
   | { intent: "continue"; target_run_id: string; batch_size?: number | null };
 
@@ -750,6 +763,8 @@ export interface AgentActionPlan {
   constraints: string[];
   steps: ActionStep[];
   expected_impact: string[];
+  /** IR-3 §8.3：触发计划的用户原始请求，旧计划（legacy）缺省 null */
+  user_request?: string | null;
 }
 
 /** Outcome 可选的一次后续动作建议 */

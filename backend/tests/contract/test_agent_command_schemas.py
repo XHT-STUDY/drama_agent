@@ -75,6 +75,46 @@ class TestAgentCommandSchemas:
         with pytest.raises(ValidationError):
             ActionTarget.model_validate({"target_type": "project", "unexpected": "not allowed"})
 
+    def test_user_request_field_is_backward_compatible(self) -> None:
+        """IR-3 §8.3：user_request 可选字段——旧计划 JSON 可加载（legacy），
+        新计划原文可从 Plan 追踪到 command。"""
+        from app.domain.agent_command import (
+            AgentActionPlan,
+            ReviseOutlineCommand,
+            ReviseScriptCommand,
+        )
+
+        legacy_plan = AgentActionPlan.model_validate(
+            {
+                "goal": "旧计划",
+                "intent": "revise_outline",
+                "command": {
+                    "intent": "revise_outline",
+                    "source_outline_id": "00000000-0000-0000-0000-000000000002",
+                    "constraints": ["节奏加快"],
+                },
+                "target": {"target_type": "outline"},
+                "constraints": [],
+                "steps": [
+                    {"step_id": "revise", "title": "修订", "description": "按约束修订大纲"}
+                ],
+                "expected_impact": [],
+            }
+        )
+        assert legacy_plan.user_request is None, "旧计划缺原文时为 legacy（None）"
+
+        command = ReviseScriptCommand.model_validate(
+            {
+                "intent": "revise_script",
+                "source_script_id": "00000000-0000-0000-0000-000000000001",
+                "episode_number": 3,
+                "constraints": ["对白更口语"],
+                "user_request": "第3集对白太书面了，改口语一点",
+            }
+        )
+        assert command.user_request == "第3集对白太书面了，改口语一点"
+        assert ReviseOutlineCommand.model_fields["user_request"].default is None
+
     def test_outcome_replan_depth_is_bounded(self) -> None:
         """结果建议只能描述后续动作，递归深度由 0/1 约束。"""
         outcome = AgentOutcome(

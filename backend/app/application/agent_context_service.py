@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -21,10 +22,10 @@ from app.domain.agent_planner import (
     TARGET_OUTLINE_RE,
     TARGET_STORY_BIBLE_RE,
     ExplanationSourceText,
+    extract_episode_numbers,
 )
 from app.domain.context import TaskKind
 from app.memory.context_builder import ContextBuilder, ContextManifest
-from app.skills.agent_command_planner import extract_episode_numbers
 
 
 @dataclass
@@ -68,9 +69,7 @@ def _story_bible_text(artifact: Artifact) -> str:
     loops = c.get("story_loops") or c.get("loops") or []
     for loop in loops[:5]:
         if isinstance(loop, dict):
-            lines.append(
-                f"loop: {loop.get('title', '')} — {loop.get('description', '')}"
-            )
+            lines.append(f"loop: {loop.get('title', '')} — {loop.get('description', '')}")
     return "\n".join(lines)
 
 
@@ -83,8 +82,7 @@ def _episode_outline_text(artifact: Artifact, episode: int | None) -> str:
             continue
         if episode is None or item.get("episode_number") == episode:
             lines.append(
-                f"E{item.get('episode_number', '?')} {item.get('title', '')}: "
-                f"{item.get('objective', '')}"
+                f"E{item.get('episode_number', '?')} {item.get('title', '')}: {item.get('objective', '')}"
             )
     return "\n".join(lines)
 
@@ -117,9 +115,7 @@ class AgentContextService:
                 "conversation 不属于当前 project", code="INVALID_CONVERSATION_CONTEXT"
             )
         messages = await self._recent_messages(db, conversation.id)
-        request = (
-            user_request if user_request is not None else self._latest_user_request(messages)
-        ).strip()
+        request = (user_request if user_request is not None else self._latest_user_request(messages)).strip()
         active: Artifact | None = None
         if active_context is not None:
             active = await self._load_active(db, project, active_context)
@@ -140,9 +136,7 @@ class AgentContextService:
                 "Planner 上下文中，需要通过 Artifact 引用。"
             ),
             user_request=request,
-            story_bible_outline=self._project_context(
-                project, story_bible, outline, scripts, evaluations
-            ),
+            story_bible_outline=self._project_context(project, story_bible, outline, scripts, evaluations),
             previous_summary_continuity=self._history_context(messages, summary),
             current_target=self._artifact_summary(active),
             protected_sections={"user_request", "current_target"},
@@ -187,12 +181,21 @@ class AgentContextService:
 
         target: Artifact | None = None
         scene_filter: int | None = None
+        # 0) 查看已有评估（IR-3 §8.4）：读 evaluation Artifact，
+        #    不读剧本正文、不触发新评估
+        if _EVALUATION_VIEW_RE.search(request):
+            target = await repo.get_latest_valid(
+                project.id, "evaluation_report", episodes[0] if episodes else 1
+            )
+            if target is None and not episodes:
+                # 未指定集数：项目内最新一份评估
+                target = await self._latest_any_evaluation(db, project.id)
         # 1) 文本显式对象/集数优先（不匹配的活动上下文被忽略）
-        if TARGET_OUTLINE_RE.search(request):
+        if target is None and TARGET_OUTLINE_RE.search(request):
             target = await repo.get_latest_valid(project.id, "episode_outline_set", 1)
-        elif TARGET_STORY_BIBLE_RE.search(request):
+        elif target is None and TARGET_STORY_BIBLE_RE.search(request):
             target = await repo.get_latest_valid(project.id, "story_bible", 1)
-        elif episodes:
+        elif target is None and episodes:
             target = await repo.get_latest_valid(project.id, "script_draft", episodes[0])
         # 2) 活动上下文（含历史版本——只读解释允许）
         if target is None and active_context is not None:
@@ -243,6 +246,20 @@ class AgentContextService:
                     kind="outline",
                     label="分集大纲",
                     text=_episode_outline_text(target, episodes[0] if episodes else None),
+                )
+            )
+        elif target.type == "evaluation_report":
+            index += 1
+            sources.append(
+                ExplanationSourceText(
+                    source_index=index,
+                    kind="evaluation",
+                    label=(
+                        f"第 {target.episode_number} 集评估报告 v{target.version}"
+                        if target.episode_number
+                        else f"评估报告 v{target.version}"
+                    ),
+                    text=_evaluation_text(target),
                 )
             )
         else:
@@ -318,6 +335,20 @@ class AgentContextService:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def _latest_any_evaluation(self, db: AsyncSession, project_id: uuid.UUID) -> Artifact | None:
+        """项目内最新一份有效评估（未指定集数的评估查看）。"""
+        result = await db.execute(
+            select(Artifact)
+            .where(
+                Artifact.project_id == project_id,
+                Artifact.type == "evaluation_report",
+                Artifact.status == "valid",
+            )
+            .order_by(Artifact.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def _load_active(
         self, db: AsyncSession, project: Project, active: ActiveArtifactContext
     ) -> Artifact:
@@ -335,12 +366,9 @@ class AgentContextService:
                 raise InvalidActiveContextError("scene_number 仅对剧本 Artifact 合法")
             scenes = (artifact.content or {}).get("scenes") or []
             if not any(
-                isinstance(sc, dict) and sc.get("scene_number") == active.scene_number
-                for sc in scenes
+                isinstance(sc, dict) and sc.get("scene_number") == active.scene_number for sc in scenes
             ):
-                raise InvalidActiveContextError(
-                    f"第 {active.scene_number} 场不存在于该剧本版本"
-                )
+                raise InvalidActiveContextError(f"第 {active.scene_number} 场不存在于该剧本版本")
         if active.version is not None and artifact.version != active.version:
             raise InvalidActiveContextError("活动 Artifact 版本不匹配")
         if active.checksum is not None and artifact.checksum != active.checksum:
@@ -358,8 +386,11 @@ class AgentContextService:
 
     @staticmethod
     def _project_context(
-        project: Project, story_bible: Artifact | None, outline: Artifact | None,
-        scripts: list[Artifact], evaluations: list[Artifact]
+        project: Project,
+        story_bible: Artifact | None,
+        outline: Artifact | None,
+        scripts: list[Artifact],
+        evaluations: list[Artifact],
     ) -> str:
         lines = [
             f"项目: {project.title or '未命名项目'} "
@@ -383,7 +414,8 @@ class AgentContextService:
             episodes = c.get("episodes") or []
             index = "; ".join(
                 f"E{x.get('episode_number', '?')}: {x.get('title', '')} / {x.get('objective', '')}"
-                for x in episodes if isinstance(x, dict)
+                for x in episodes
+                if isinstance(x, dict)
             )
             lines.append(
                 f"分集大纲: artifact_id={outline.id}, version={outline.version}, "
@@ -417,30 +449,42 @@ class AgentContextService:
             f"episode={artifact.episode_number}, version={artifact.version}"
         )
         if artifact.type == "script_draft":
-            return prefix + "\n" + "\n".join(
-                [
-                    f"title={c.get('title', '')}",
-                    f"scene_count={len(c.get('scenes') or [])}",
-                    f"word_count={c.get('word_count', 0)}",
-                    f"dialogue_ratio={c.get('dialogue_ratio', 0)}",
-                    "plain_text=omitted",
-                ]
+            return (
+                prefix
+                + "\n"
+                + "\n".join(
+                    [
+                        f"title={c.get('title', '')}",
+                        f"scene_count={len(c.get('scenes') or [])}",
+                        f"word_count={c.get('word_count', 0)}",
+                        f"dialogue_ratio={c.get('dialogue_ratio', 0)}",
+                        "plain_text=omitted",
+                    ]
+                )
             )
         if artifact.type == "evaluation_report":
-            return prefix + "\n" + "\n".join(
-                [
-                    f"overall_score={c.get('overall_score', 0)}",
-                    f"need_revision={c.get('need_revision', False)}",
-                    f"issue_count={len(c.get('issues') or [])}",
-                ]
+            return (
+                prefix
+                + "\n"
+                + "\n".join(
+                    [
+                        f"overall_score={c.get('overall_score', 0)}",
+                        f"need_revision={c.get('need_revision', False)}",
+                        f"issue_count={len(c.get('issues') or [])}",
+                    ]
+                )
             )
         if artifact.type == "story_bible":
-            return prefix + "\n" + "\n".join(
-                [
-                    f"title={c.get('title', '')}",
-                    f"logline={c.get('logline', '')}",
-                    f"locked_facts={_compact(c.get('locked_facts') or [])}",
-                ]
+            return (
+                prefix
+                + "\n"
+                + "\n".join(
+                    [
+                        f"title={c.get('title', '')}",
+                        f"logline={c.get('logline', '')}",
+                        f"locked_facts={_compact(c.get('locked_facts') or [])}",
+                    ]
+                )
             )
         if artifact.type == "episode_outline_set":
             return prefix + f"\nepisodes={len(c.get('episodes') or [])}"
@@ -480,3 +524,35 @@ def _evaluation_line(episode: int, artifact: Artifact) -> str:
         f"score={c.get('overall_score', 0)} "
         f"need_revision={c.get('need_revision', False)}"
     )
+
+
+# 查看已有评估的表达（IR-3 §8.4）：命中时读 evaluation Artifact，
+# 不读剧本正文、不触发新评估
+_EVALUATION_VIEW_RE = re.compile(
+    r"(评估|评分|打分|得分|扣分)[^。！？!?]{0,24}"
+    r"(结果|报告|意见|建议|得分|分数|扣分|维度)"
+    r"|(上次|最近)的?评估|看看.{0,8}评估"
+)
+
+
+def _evaluation_text(artifact: Artifact) -> str:
+    """把 evaluation_report 内容渲染为可引用的评估原文文本。"""
+    c = artifact.content or {}
+    lines = [
+        f"评估版本 v{artifact.version}，总体得分 {c.get('overall_score', '?')}，"
+        f"是否需要修订：{'是' if c.get('need_revision') else '否'}"
+    ]
+    for dim, score in (c.get("dimension_scores") or {}).items():
+        lines.append(f"- {dim}: {score} 分")
+    issues = c.get("issues") or []
+    if issues:
+        lines.append("主要问题：")
+        for issue in issues[:20]:
+            if isinstance(issue, dict):
+                lines.append(
+                    f"- [{issue.get('severity', '?')}] {issue.get('dimension', '?')}: "
+                    f"{issue.get('description') or issue.get('evidence') or issue.get('issue_id', '')}"
+                )
+            else:
+                lines.append(f"- {issue}")
+    return "\n".join(lines)[:60000]

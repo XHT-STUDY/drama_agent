@@ -61,6 +61,9 @@ class CreationState(TypedDict, total=False):
     """服务端解析的修订目标剧本 Artifact UUID（对话式修订入口，不由 Planner 决定）。"""
     user_constraints: list[str]
     """用户约束（来自确认的 ActionPlan），拼接后写入 RevisionPlan 的 user_instruction。"""
+    user_request: str | None
+    """用户原始请求（IR-3 §8.3 完整授权边界）：与结构化约束并行进入修订输入，
+    可从 ActionPlan → Run config → 工作流状态追踪；旧 Run 缺省 None。"""
 
     # ---- 分段创作（L-2）----
     stop_after: str

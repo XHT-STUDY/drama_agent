@@ -1,6 +1,6 @@
 {
-  "version": 4,
-  "changelog": "v4（IR-2）：盲测集初版 120 条。不进入 Prompt 示例、不按单条失败调词；候选版本冻结后整体运行并以最差一次执行发布门槛。与开发集 agent_commands.json（240 条）合并后满足优化方案 §7.2 分布与交叉覆盖下限。",
+  "version": 5,
+  "changelog": "v5（IR-3）：与开发集同步版本。v4（IR-2）：盲测集初版 120 条。",
   "splits": {
     "holdout": 120
   },
