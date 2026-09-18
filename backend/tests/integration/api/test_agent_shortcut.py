@@ -362,7 +362,7 @@ async def test_confirm_falls_back_when_latest_message_is_clarification(
     await db_session.commit()
     stub_skill.output = _clarification_output()
 
-    body = await _post_turn(
+    await _post_turn(
         agent_api, project_id, "好的", conversation_id=str(action.conversation_id)
     )
 

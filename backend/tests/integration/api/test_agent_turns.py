@@ -620,3 +620,63 @@ async def test_project_target_episode_count_used_as_fallback(
         )).json()["plan"]["command"]
     )
     assert command2["outline_count"] == 5
+
+
+# ========================================================================
+# M-02:主入口消息触发累计摘要(统一 MessageService 工厂)
+# ========================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_turns_trigger_cumulative_summary_at_threshold(
+    agent_api: AsyncClient, planner_llm: FakeLLM, db_session: AsyncSession
+) -> None:
+    """M-02 验收:从前端使用的 /agent/turns 连续发送消息,达到阈值后
+    产生累计 v2 摘要(后台补做,不占消息响应延迟)。"""
+    from app.db.models.artifact import Artifact
+    from app.memory.wiring import wait_for_background_summaries
+
+    project_id = await _create_project(agent_api)
+    planner_llm.register("agent_command_planner", _answer_output())
+
+    conversation_id: str | None = None
+    # 阈值 24:answer Turn 每轮 1 user + 1 assistant 消息 → 12 轮
+    for i in range(12):
+        resp = await agent_api.post(
+            f"/api/v1/projects/{project_id}/agent/turns",
+            json=_turn_body(
+                f"创作问题 {i}:主角设定怎么强化", f"sum-{i}", conversation_id
+            ),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert conversation_id in (None, body["conversation_id"])
+        conversation_id = body["conversation_id"]
+
+    await wait_for_background_summaries(timeout=10.0)
+
+    messages = (await db_session.execute(
+        select(Message).where(Message.conversation_id == uuid.UUID(conversation_id))
+    )).scalars().all()
+    total = len(messages)
+    assert total >= 24, f"12 轮 answer Turn 应产生至少 24 条消息,实际 {total}"
+
+    rows = (await db_session.execute(
+        select(Artifact).where(
+            Artifact.project_id == uuid.UUID(project_id),
+            Artifact.type == "conversation_summary",
+        )
+    )).scalars().all()
+    assert rows, "达到阈值后应产生会话摘要(主入口共享记忆挂载)"
+
+    latest = max(rows, key=lambda a: (a.content.get("covered_to_sequence", 0), a.version))
+    content = latest.content
+    assert content["conversation_id"] == conversation_id
+    assert content["content_schema_version"] == "2.0"
+    assert content["covered_from_sequence"] == 1
+    # 累计覆盖终点 = 已提交消息数 - 短期窗口(12)
+    assert content["covered_to_sequence"] == total - 12
+    assert content["previous_summary_artifact_id"] is None  # 首版累计
+    assert content["source_message_digest"]
+    assert latest.content_schema_version == "2.0"

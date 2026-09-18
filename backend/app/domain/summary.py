@@ -83,36 +83,63 @@ class ConversationSummaryBody(BaseModel):
 
 
 class ConversationSummary(BaseModel):
-    """会话摘要 Artifact 内容（G-01）。
+    """会话摘要 Artifact 内容(G-01;M-02 升级为累计语义 v2)。
 
-    记录摘要覆盖的消息序号范围（covered_from/to），供后续创作读取
-    —— 项目记忆以"摘要 Artifact 指针"形式存在，不复制全文。
+    v1(分段):covered_from/to 描述本段覆盖区间,summary 只含本段增量。
+    v2(累计):covered_from 通常为 1,summary 含截至 covered_to 的全部
+    历史意图;新增 content_schema_version / previous_summary_artifact_id /
+    source_message_digest 三个 v2 字段(v1 内容缺省,保持可读)。
+    确定性字段(conversation_id/覆盖范围/来源链)由服务端回填。
     """
 
     model_config = {"extra": "forbid"}
 
     conversation_id: str = Field(..., description="所属会话 ID")
-    summary: str = Field(..., description="会话摘要文本", min_length=1)
+    summary: str = Field(..., description="累计会话摘要文本", min_length=1)
     topics: list[str] = Field(
-        default_factory=list, description="本次摘要覆盖内容的主题标签列表"
+        default_factory=list, description="累计主题标签列表"
     )
     covered_from_sequence: int = Field(
-        ..., description="本段摘要覆盖的起始消息序号", ge=1
+        ..., description="累计覆盖起始消息序号(v2 通常为 1)", ge=1
     )
     covered_to_sequence: int = Field(
-        ..., description="本段摘要覆盖的结束消息序号", ge=1
+        ..., description="已压缩到的最后消息序号", ge=1
     )
-    message_count: int = Field(..., description="本段摘要覆盖的消息条数", ge=0)
+    message_count: int = Field(..., description="累计覆盖消息条数", ge=0)
+    content_schema_version: str = Field(
+        default="1.0",
+        description="摘要内容版本:v1=分段语义,v2=累计语义(M-02)",
+    )
+    previous_summary_artifact_id: str | None = Field(
+        default=None,
+        description="上一版累计摘要 Artifact ID(v2 链;迁移场景为最新 v1)",
+    )
+    source_message_digest: str | None = Field(
+        default=None,
+        description="本次新增消息区间的确定性摘要哈希(幂等输入之一)",
+    )
 
 
 class ConversationSummaryInput(BaseModel):
-    """会话摘要 Prompt 输入模型（G-01）—— 供 manifest Schema 校验。"""
+    """会话摘要 Prompt 输入模型(G-01)—— 供 manifest Schema 校验。"""
 
     model_config = {"extra": "forbid"}
 
     conversation_transcript: str = Field(
-        ..., description="会话消息逐条转录文本（含序号与角色）"
+        ..., description="会话消息逐条转录文本(含序号与角色)"
     )
     message_count: str = Field(
-        default="", description="转录消息条数（字符串，供模板渲染）"
+        default="", description="转录消息条数(字符串,供模板渲染)"
+    )
+
+
+class ConversationSummaryV2Input(ConversationSummaryInput):
+    """累计会话摘要 Prompt 输入模型(M-02)。
+
+    v2 渲染把上一版累计摘要与新增区间一起交给模型:
+    summary_k = summarize(summary_{k-1}, messages[new_from:new_to])。
+    """
+
+    previous_summary: str = Field(
+        default="", description="上一版累计摘要文本(首版为空)"
     )

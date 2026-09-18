@@ -129,6 +129,7 @@ def _auto_register_domain_schemas() -> None:
         ConversationSummary,
         ConversationSummaryBody,
         ConversationSummaryInput,
+        ConversationSummaryV2Input,
         SummaryInput,
         SummaryOutput,
     )
@@ -170,6 +171,7 @@ def _auto_register_domain_schemas() -> None:
     register_schema("SummaryInput", SummaryInput)
     register_schema("SummaryOutput", SummaryOutput)
     register_schema("ConversationSummaryInput", ConversationSummaryInput)
+    register_schema("ConversationSummaryV2Input", ConversationSummaryV2Input)
     register_schema("ConversationSummaryBody", ConversationSummaryBody)
     register_schema("ConversationSummary", ConversationSummary)
     register_schema("ImportClassificationInput", ImportClassificationInput)

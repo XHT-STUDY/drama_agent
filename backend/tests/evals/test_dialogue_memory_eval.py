@@ -174,12 +174,12 @@ class TestDeterminism:
 
 @pytest.mark.unit
 class TestProductionWiringProbe:
-    def test_agent_turns_service_has_no_summary_mount(self) -> None:
-        """基线事实(锁定,供 MEMORY_EVAL_REPORT 引用):
-        AgentCommandService / AgentActionLifecycle 默认构造的 MessageService
-        无摘要与短期记忆挂载——/agent/turns 目前不触发摘要。
-        M-02 统一 MessageService 工厂后此断言应更新为"已挂载"。"""
+    def test_all_message_entrances_share_summary_mount(self) -> None:
+        """M-02 后的生产事实:AgentCommandService / AgentActionLifecycle /
+        conversations API 共享统一 MessageService 工厂——摘要调度已挂载,
+        任何真实消息入口都会触发累计摘要(M-01 基线曾为"否")。"""
         from app.agents.base import BaseAgent
+        from app.api.v1.conversations import _get_msg_service
         from app.application.agent_action_lifecycle import AgentActionLifecycle
         from app.application.agent_command_service import AgentCommandService
         from app.application.conversation_service import MessageService
@@ -191,21 +191,17 @@ class TestProductionWiringProbe:
             planner_agent=BaseAgent(name="planner", llm=FakeLLM()),
         )
         inner = cast(MessageService, cmd_service._message_service)
-        assert inner._summary is None  # type: ignore[attr-defined]
-        assert inner._short_term is None  # type: ignore[attr-defined]
+        assert inner._summary_scheduler is not None  # type: ignore[attr-defined]
+        assert inner._short_term is not None  # type: ignore[attr-defined]
 
         lifecycle_service = AgentActionLifecycle()
         inner2 = cast(MessageService, lifecycle_service._messages)
-        assert inner2._summary is None  # type: ignore[attr-defined]
+        assert inner2._summary_scheduler is not None  # type: ignore[attr-defined]
 
-    def test_conversations_api_service_has_summary_mount(self) -> None:
-        """对照:普通消息 API 的 MessageService 挂载了记忆(M-02 的目标
-        是让所有真实消息入口共享同一构造方式)。"""
-        from app.api.v1.conversations import _get_msg_service
-
-        svc = _get_msg_service()
-        assert svc._summary is not None  # type: ignore[attr-defined]
-        assert svc._short_term is not None  # type: ignore[attr-defined]
+        api_service = _get_msg_service()
+        assert isinstance(api_service, MessageService)
+        assert api_service._summary_scheduler is not None  # type: ignore[attr-defined]
+        assert api_service._short_term is not None  # type: ignore[attr-defined]
 
 
 # ========================================================================

@@ -76,6 +76,7 @@ from app.domain.agent_command import (
 from app.domain.agent_planner import AgentPlannerInput, AgentPlannerOutput
 from app.domain.conversation import ConversationCreate, MessageCreate
 from app.llm.budget import enter_run, exit_run
+from app.memory.wiring import get_message_service
 from app.prompts.loader import PromptLoader
 from app.skills.agent_command_planner import (
     DEFAULT_AVAILABLE_INTENTS,
@@ -317,7 +318,8 @@ class AgentCommandService:
         self._planner_skill = planner_skill or AgentCommandPlannerSkill()
         self._run_service = run_service or RunService()
         self._context_service = context_service or AgentContextService(settings=settings)
-        self._message_service = message_service or MessageService()
+        # M-02:与其他消息入口共享统一记忆挂载工厂(短期记忆+累计摘要)
+        self._message_service = message_service or get_message_service()
         self._conversation_service = ConversationService()
 
     # ========================================================================

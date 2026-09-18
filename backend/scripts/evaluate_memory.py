@@ -49,9 +49,12 @@ def _wiring_probe() -> dict[str, Any]:
             planner_agent=BaseAgent(name="planner", llm=FakeLLM()),
         )
         return {
-            "agent_turns(CommandService)": cmd._message_service._summary is not None,
-            "action_lifecycle": AgentActionLifecycle()._messages._summary is not None,
-            "conversations_api": _get_msg_service()._summary is not None,
+            "agent_turns(CommandService)":
+                cmd._message_service._summary_scheduler is not None,
+            "action_lifecycle":
+                AgentActionLifecycle()._messages._summary_scheduler is not None,
+            "conversations_api":
+                _get_msg_service()._summary_scheduler is not None,
         }
     except Exception as exc:  # noqa: BLE001 — 探针失败也写入报告
         return {"error": True, "detail": str(exc)}
@@ -196,13 +199,21 @@ def render_report(dialogue: dict[str, Any], story: dict[str, Any],
             lines.append(f"- 探针执行失败:{mounted} / {wiring.get('detail')}")
             continue
         lines.append(f"- **{name}**:摘要挂载 = {'是' if mounted else '否'}")
-    lines += [
-        "",
-        "**结论:截至本基线,`/agent/turns`(AgentCommandService)与 Action 生命周期"
-        "(AgentActionLifecycle)构造的 `MessageService` 无摘要挂载,"
-        "从主入口发送消息不会触发会话摘要;只有普通消息 API"
-        "(`/conversations/{id}/messages`)挂载了记忆。M-02 的目标即统一该构造。**",
-        "",
+    mounted = [v for k, v in wiring.items() if k != "error"]
+    if mounted and all(mounted):
+        conclusion = (
+            "**结论:自 M-02 起,`/agent/turns`、Action 生命周期与普通消息 API "
+            "共享统一 MessageService 工厂(app.memory.wiring),摘要调度全部挂载——"
+            "任何真实消息入口都会触发累计摘要。**"
+            "(M-01 基线时主入口曾为「否」:AgentCommandService / AgentActionLifecycle "
+            "构造的 MessageService 无摘要挂载,摘要只在普通消息 API 触发。)"
+        )
+    else:
+        conclusion = (
+            "**结论:存在未挂载摘要的消息入口——任何真实消息入口都应共享"
+            "app.memory.wiring.get_message_service() 的构造(M-02 契约)。**"
+        )
+    lines += ["", conclusion, "",
         "## 2. 对话记忆(写入/召回/使用/成本)",
         "",
         *_dialogue_table(dialogue),

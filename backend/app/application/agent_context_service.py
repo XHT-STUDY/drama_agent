@@ -93,11 +93,20 @@ class AgentContextService:
         *,
         settings: Settings | None = None,
         context_builder: ContextBuilder | None = None,
+        short_term_store: Any = None,
     ) -> None:
         self.settings = settings or Settings(app_env="test")
         self.context_builder = context_builder or ContextBuilder(
             budget_tokens=self.settings.agent_context_budget_tokens
         )
+        # M-02:最近消息经注入的 ShortTermStore 读取——Redis 命中走缓存,
+        # miss/连接失败自动回源 PostgreSQL;测试可注入 InMemory 实现。
+        if short_term_store is not None:
+            self._short_term_store = short_term_store
+        else:
+            from app.memory.wiring import build_short_term_store
+
+            self._short_term_store = build_short_term_store()
 
     async def build(
         self,
@@ -308,12 +317,23 @@ class AgentContextService:
             checksum=artifact.checksum or "",
         )
 
-    async def _recent_messages(self, db: AsyncSession, conversation_id: uuid.UUID) -> list[Message]:
+    async def _recent_messages(
+        self, db: AsyncSession, conversation_id: uuid.UUID
+    ) -> list[Any]:
+        """最近消息:优先短期记忆缓存,miss/失败回源 PostgreSQL(M-02)。"""
+        limit = max(0, self.settings.agent_recent_message_limit)
+        try:
+            cached = await self._short_term_store.recent(db, conversation_id, limit)
+        except Exception:  # noqa: BLE001 — Redis 故障不阻断上下文构建
+            cached = []
+        if cached:
+            return list(cached)
+        # 缓存为空(新会话或 Redis 清空且回源仍空)时直查事实源兜底
         stmt = (
             select(Message)
             .where(Message.conversation_id == conversation_id)
             .order_by(Message.sequence.desc(), Message.id.desc())
-            .limit(max(0, self.settings.agent_recent_message_limit))
+            .limit(limit)
         )
         result = await db.execute(stmt)
         return list(reversed(result.scalars().all()))
@@ -321,6 +341,13 @@ class AgentContextService:
     async def _latest_summary(
         self, db: AsyncSession, project_id: uuid.UUID, conversation_id: uuid.UUID
     ) -> Artifact | None:
+        """会话最新摘要——按 covered_to → 版本 → 创建时间稳定排序(M-02)。
+
+        只在本会话内比较 sequence;跨会话合并由
+        memory.summary.merged_project_summaries 负责。
+        """
+        from app.memory.summary import summary_sort_key
+
         stmt = (
             select(Artifact)
             .where(
@@ -330,10 +357,20 @@ class AgentContextService:
                 Artifact.content["conversation_id"].astext == str(conversation_id),
             )
             .order_by(Artifact.version.desc(), Artifact.created_at.desc())
-            .limit(1)
+            .limit(100)
         )
         result = await db.execute(stmt)
-        return result.scalar_one_or_none()
+        items = list(result.scalars().all())
+        if not items:
+            return None
+        return max(
+            items,
+            key=lambda a: summary_sort_key({
+                "content": a.content or {},
+                "version": a.version,
+                "created_at": a.created_at.isoformat() if a.created_at else "",
+            }),
+        )
 
     async def _latest_any_evaluation(self, db: AsyncSession, project_id: uuid.UUID) -> Artifact | None:
         """项目内最新一份有效评估（未指定集数的评估查看）。"""

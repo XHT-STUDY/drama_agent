@@ -76,6 +76,17 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """返回当前会话工厂(后台任务自建短事务用)。
+
+    Raises:
+        RuntimeError: 数据库未初始化。
+    """
+    if _async_session_factory is None:
+        raise RuntimeError("数据库未初始化，请先调用 init_db(settings)")
+    return _async_session_factory
+
+
 async def close_db() -> None:
     """关闭数据库引擎，释放所有连接池资源。
 

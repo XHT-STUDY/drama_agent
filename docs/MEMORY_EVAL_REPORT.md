@@ -1,16 +1,16 @@
 # Memory 评测基线报告(M-01)
 
-> 生成时间:2026-09-18T15:07:37+00:00  provider:`fake`  样本:对话 32 组 / 剧情 10 组  耗时:1.2s
+> 生成时间:2026-09-18T15:38:14+00:00  provider:`fake`  样本:对话 32 组 / 剧情 10 组  耗时:1.0s
 
 评测依据 [MEMORY_DESIGN.md §10](MEMORY_DESIGN.md) 与[MEMORY_IMPLEMENTATION_PLAN.md §3](MEMORY_IMPLEMENTATION_PLAN.md)。摘要器为确定性抽取(FakeLLM 语义),四组差异只在记忆策略;剧情 structured 组是 M-03 typed delta 的可执行规格。
 
 ## 1. 生产链路探针:/agent/turns 是否实际触发摘要
 
-- **agent_turns(CommandService)**:摘要挂载 = 否
-- **action_lifecycle**:摘要挂载 = 否
+- **agent_turns(CommandService)**:摘要挂载 = 是
+- **action_lifecycle**:摘要挂载 = 是
 - **conversations_api**:摘要挂载 = 是
 
-**结论:截至本基线,`/agent/turns`(AgentCommandService)与 Action 生命周期(AgentActionLifecycle)构造的 `MessageService` 无摘要挂载,从主入口发送消息不会触发会话摘要;只有普通消息 API(`/conversations/{id}/messages`)挂载了记忆。M-02 的目标即统一该构造。**
+**结论:自 M-02 起,`/agent/turns`、Action 生命周期与普通消息 API 共享统一 MessageService 工厂(app.memory.wiring),摘要调度全部挂载——任何真实消息入口都会触发累计摘要。**(M-01 基线时主入口曾为「否」:AgentCommandService / AgentActionLifecycle 构造的 MessageService 无摘要挂载,摘要只在普通消息 API 触发。)
 
 ## 2. 对话记忆(写入/召回/使用/成本)
 
