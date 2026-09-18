@@ -4,6 +4,35 @@
 
 ---
 
+## Memory 系统设计与实施计划（2026-09-18）
+
+### 做了什么
+
+1. 新增 `docs/MEMORY_DESIGN.md`，明确原始事件、工作记忆、累计对话摘要和版本化剧情状态四层边界，以及 `ContextBuilder` 的读取与裁剪职责。
+2. 新增 `docs/MEMORY_IMPLEMENTATION_PLAN.md`，把后续工作拆成 M-01 至 M-05，覆盖评测基线、对话链路修正、剧情状态持久化、消费者统一和退出验收。
+3. 在 `README.md` 与 `CLAUDE.md` 增加文档入口，并保持 `docs/DEV_PLAN.md` 为项目状态的权威来源。
+4. 记录当前实现缺口：Agent 主入口可能绕过 Memory 挂载、Redis 短期窗口未成为主要读取路径、会话摘要不是累计语义、完整剧情状态尚未接入持久化工作流。
+
+### 为什么这么做
+
+- 先建立可复现的 Memory 评测，再修改生产实现，避免用“生成结果看起来更连贯”代替证据。
+- 锁定事实、采用版本和剧情状态继续由 PostgreSQL 与不可变 Artifact 管理；Mem0 只保留为未来软偏好召回的候选方案。
+- 复用 Agent Native 阶段三的 W3-01 至 W3-07，避免出现两套剧情状态模型和两套实施状态。
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `check_punctuation.py --lang zh docs/MEMORY_DESIGN.md` | 通过 |
+| `check_punctuation.py --lang zh docs/MEMORY_IMPLEMENTATION_PLAN.md` | 通过 |
+| `git diff --check` | 通过 |
+
+### 学到了什么
+
+Memory 的主要风险不是容量不足，而是错误信息取得了事实地位。对话摘要、语义召回和剧情状态必须按权威性分层，并为每条强事实保留来源、版本和失效条件。
+
+---
+
 ## 2026-09-13 — W1-07 E2E 环境兼容、流程实测与阶段一收口
 
 **任务 ID：** W1-07（AGENT_NATIVE 阶段一收尾）  
