@@ -170,7 +170,7 @@ class TestRealModelOutcomeEval:
             for key, value in dotenv_values(repo_root / ".env").items()
             if value and key.startswith(("LLM_", "RUN_"))
         }
-        settings = Settings(app_env="local", **real)
+        settings = Settings(app_env="local", **cast("dict[str, Any]", real))
         agent = BaseAgent(name="planner", llm=OpenAICompatibleLLM(settings))
         skill = AgentOutcomeEvaluatorSkill()
         loader = PromptLoader()

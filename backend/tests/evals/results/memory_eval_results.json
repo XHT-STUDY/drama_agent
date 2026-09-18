@@ -1,10 +1,10 @@
 {
   "meta": {
-    "generated_at": "2026-09-18T15:38:14+00:00",
+    "generated_at": "2026-09-18T16:37:23+00:00",
     "provider": "fake",
     "dialogue_cases": 32,
     "story_cases": 10,
-    "elapsed_seconds": 1.013431462999506,
+    "elapsed_seconds": 0.8127170810003008,
     "real": null
   },
   "wiring": {

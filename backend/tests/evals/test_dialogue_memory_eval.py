@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -190,18 +190,18 @@ class TestProductionWiringProbe:
             settings=Settings(app_env="test"),
             planner_agent=BaseAgent(name="planner", llm=FakeLLM()),
         )
-        inner = cast(MessageService, cmd_service._message_service)
-        assert inner._summary_scheduler is not None  # type: ignore[attr-defined]
-        assert inner._short_term is not None  # type: ignore[attr-defined]
+        inner = cmd_service._message_service
+        assert inner._summary_scheduler is not None
+        assert inner._short_term is not None
 
         lifecycle_service = AgentActionLifecycle()
-        inner2 = cast(MessageService, lifecycle_service._messages)
-        assert inner2._summary_scheduler is not None  # type: ignore[attr-defined]
+        inner2 = lifecycle_service._messages
+        assert inner2._summary_scheduler is not None
 
         api_service = _get_msg_service()
         assert isinstance(api_service, MessageService)
-        assert api_service._summary_scheduler is not None  # type: ignore[attr-defined]
-        assert api_service._short_term is not None  # type: ignore[attr-defined]
+        assert api_service._summary_scheduler is not None
+        assert api_service._short_term is not None
 
 
 # ========================================================================
@@ -220,4 +220,4 @@ class TestReportShape:
 
 def get_summary() -> dict[str, Any]:
     """供脚本/其他测试复用的汇总入口。"""
-    return cast(dict[str, Any], _SUMMARY)
+    return _SUMMARY

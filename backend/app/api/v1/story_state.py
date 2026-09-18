@@ -138,8 +138,81 @@ async def get_story_state(
     )
     service = StoryStateService(BaseAgent(name="summarizer", llm=llm))
     status = await service.resolve_status(db, workset, through)
+    projection = await _state_projection(db, status.get("state_artifact_id"))
     return {
         "project_id": str(project_id),
         "run_id": str(run_id) if run_id else None,
         **status,
+        "projection": projection,
+    }
+
+
+async def _state_projection(
+    db: AsyncSession, state_artifact_id: str | None
+) -> dict[str, Any] | None:
+    """把链头状态投影为面板可展示的分账视图(只读,零模型调用)。
+
+    区分:作者事实(已发生,带来源)/角色已知信息/未闭合伏笔/
+    道具归属/作者未来计划(未发生)——不暴露内部"摘要任务"概念。
+    """
+    if not state_artifact_id:
+        return None
+    from app.db.repositories.artifacts import ArtifactRepository
+    from app.domain.continuity import ContinuityState
+
+    artifact = await ArtifactRepository(db).get(uuid.UUID(state_artifact_id))
+    if artifact is None:
+        return None
+    try:
+        state = ContinuityState.model_validate(artifact.content)
+    except Exception:  # noqa: BLE001 — 坏内容按无投影处理
+        return None
+    return {
+        "through_episode": state.through_episode,
+        "author_facts": [
+            {
+                "fact_id": fid,
+                "text": f.text,
+                "source_episode": f.source_episode,
+                "source_scene": f.source_scene,
+                "source_artifact_id": f.source_artifact_id,
+            }
+            for fid, f in sorted(state.facts.items())
+        ],
+        "character_known_facts": [
+            {
+                "character_id": cid,
+                "facts": [
+                    {
+                        "fact_id": k.fact_id,
+                        "learned_episode": k.learned_episode,
+                        "source_scene": k.source_scene,
+                    }
+                    for k in cs.known_facts
+                ],
+            }
+            for cid, cs in sorted(state.character_states.items())
+            if cs.known_facts
+        ],
+        "open_loops": [
+            {"loop_id": lp.loop_id, "description": lp.description}
+            for lp in state.open_loops
+        ],
+        "resolved_loops": [
+            {"loop_id": lp.loop_id, "description": lp.description}
+            for lp in state.resolved_loops
+        ],
+        "props": [
+            {"prop_id": pid, "holder_character_id": p.holder_character_id}
+            for pid, p in sorted(state.props.items())
+        ],
+        "future_plans": [
+            {
+                "text": plan.text,
+                "reveal_episode": plan.reveal_episode,
+                "revealed": plan.revealed,
+            }
+            for plan in state.future_plans
+        ],
+        "locked_facts": list(state.locked_facts),
     }

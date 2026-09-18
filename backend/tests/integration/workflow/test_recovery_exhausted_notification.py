@@ -84,10 +84,10 @@ async def _seed_exhausted_scenario(
         run.config_snapshot = {"agent_action_id": str(action.id)}
         run_id, action_id = run.id, action.id
     async with factory() as db:
-        return (
-            await db.get(WorkflowRun, run_id),  # type: ignore[return-value]
-            await db.get(AgentAction, action_id),  # type: ignore[return-value]
-        )
+        fetched_run = await db.get(WorkflowRun, run_id)
+        fetched_action = await db.get(AgentAction, action_id)
+        assert fetched_run is not None and fetched_action is not None
+        return fetched_run, fetched_action
 
 
 @pytest.mark.integration

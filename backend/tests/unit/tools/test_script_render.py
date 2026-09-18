@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from app.tools.script_render import (
@@ -12,7 +14,7 @@ from app.tools.script_render import (
 )
 
 
-def make_scene(**overrides):
+def make_scene(**overrides) -> dict[str, Any]:
     scene = {
         "scene_number": 1,
         "location": "冰封荒原-风雪坡",

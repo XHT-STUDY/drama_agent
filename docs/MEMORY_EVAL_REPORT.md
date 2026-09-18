@@ -1,6 +1,6 @@
 # Memory 评测基线报告(M-01)
 
-> 生成时间:2026-09-18T15:38:14+00:00  provider:`fake`  样本:对话 32 组 / 剧情 10 组  耗时:1.0s
+> 生成时间:2026-09-18T16:37:23+00:00  provider:`fake`  样本:对话 32 组 / 剧情 10 组  耗时:0.8s
 
 评测依据 [MEMORY_DESIGN.md §10](MEMORY_DESIGN.md) 与[MEMORY_IMPLEMENTATION_PLAN.md §3](MEMORY_IMPLEMENTATION_PLAN.md)。摘要器为确定性抽取(FakeLLM 语义),四组差异只在记忆策略;剧情 structured 组是 M-03 typed delta 的可执行规格。
 

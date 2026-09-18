@@ -270,17 +270,18 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                 raise
 
             # 3. 发布事件 + 提交
+            ep_progress = min(1.0, 0.40 + ep_num * 0.15)
             await publisher.publish(
                 db, run_id=run_id, event_type="artifact.created",
                 payload={
                     "artifact_id": str(artifact.id), "artifact_type": "script_draft",
                     "episode": ep_num, "version": artifact.version,
-                    "progress": 0.40 + ep_num * 0.15,
+                    "progress": ep_progress,
                     "message": f"第 {ep_num} 集剧本已完成",
                 },
                 autocommit=True,
             )
-            progress("write_episodes", f"ep_{ep_num}_done", 0.40 + ep_num * 0.15)
+            progress("write_episodes", f"ep_{ep_num}_done", ep_progress)
 
         continuity_text = ContinuityManager.get_context_for_episode_v2(
             current_state, script_count + 1, character_names=character_names

@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -496,9 +496,7 @@ class TestStoryStateServiceDerivation:
 
         head_id = uuid.UUID(outcome.state_artifact_id)
         artifact = await artifact_service.get_version(db_session, head_id)
-        reloaded = ContinuityStateModel.model_validate(
-            cast(dict[str, Any], artifact.content)
-        )
+        reloaded = ContinuityStateModel.model_validate(artifact.content)
         assert reloaded.content_schema_version == "2.0"
         assert reloaded.props["prop_01_01"].holder_character_id == "char_lin"
         assert len(reloaded.character_states["char_lin"].known_facts) == 1

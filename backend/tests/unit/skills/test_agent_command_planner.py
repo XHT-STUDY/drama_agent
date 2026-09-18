@@ -200,7 +200,7 @@ class TestExplicitTargetDirectW103:
         )
 
     def test_extract_episode_numbers_arabic_and_chinese(self) -> None:
-        from app.skills.agent_command_planner import extract_episode_numbers
+        from app.domain.agent_planner import extract_episode_numbers
 
         assert extract_episode_numbers("修改第3集剧本") == [3]
         assert extract_episode_numbers("改第三集") == [3]

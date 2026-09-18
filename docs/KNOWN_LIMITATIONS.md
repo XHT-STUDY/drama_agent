@@ -56,3 +56,22 @@
 
 - 上传 / 导出临时文件：见 SECURITY.md §数据删除；`var/uploads`、`var/exports` 按需清理。
 - Artifact 为**不可变版本**，删除需显式运维操作（V1 未提供 UI 删除）。
+
+
+## 6. Memory 改造（M-01～M-05，2026-09-18）已知边界
+
+1. **真实模型 Memory 评测尚未执行**：`scripts/evaluate_memory.py --provider real`
+   需要 `EVAL_LLM_ENABLED=1` 与真实 Key（固定子集：每长度档 2 例）。CI 全部
+   为 FakeLLM 确定性评测；真实模型固定集按退出门槛要求补跑并记录于
+   `docs/MEMORY_EVAL_REPORT.md` §5。
+2. **剧情状态刷新无独立 Run action**：`GET /projects/{id}/story-state` 只读；
+   stale/pending 的重建入口是继续创作 Run（Writer 写前会按工作集补齐派生）。
+   W3-04 设想的受限 `action=refresh_story_state` 未实现——避免在无明确
+   工作集来源时后台静默重算。
+3. **采用（adoption）事务尚未落地**：当前"采用集合"= 各集最新 valid 剧本的
+   近似；Agent Native 阶段二的显式采用头与 artifact_operations 落地后，
+   story-state 的工作集解析应切换到采用头。
+4. **旧项目惰性派生**：v1 项目（只有标题摘要回放）首次进入 v2 写作路径时
+   按当前工作集重新派生全链；旧 `continuity_state_text` 语义不再用于恢复。
+5. **累计摘要后台任务为进程内 best effort**：无外部队列；进程重启丢失的
+   摘要缺口由下一次阈值触发或创作 Run 按 `covered_to_sequence` 补齐。

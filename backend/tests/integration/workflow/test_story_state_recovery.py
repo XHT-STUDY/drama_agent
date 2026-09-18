@@ -165,7 +165,7 @@ async def _load_state_artifact(
     db: Any, artifact_service: ArtifactService, artifact_id: str
 ) -> ContinuityState:
     resp = await artifact_service.get_version(db, uuid.UUID(artifact_id))
-    return ContinuityState.model_validate(cast(dict[str, Any], resp.content))
+    return ContinuityState.model_validate(resp.content)
 
 
 @pytest.mark.integration

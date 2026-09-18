@@ -3462,6 +3462,24 @@ Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋�
 
 ---
 
+## 20.8 Phase M 规划（Memory 改造，2026-09-18 登记；M-01～M-05 已交付）
+
+> 依据：[MEMORY_DESIGN.md](MEMORY_DESIGN.md) 与
+> [MEMORY_IMPLEMENTATION_PLAN.md](MEMORY_IMPLEMENTATION_PLAN.md)。
+> 对应 Agent Native 阶段三 W3-01～W3-04/W3-06/W3-07。
+
+| # | 任务 | 估算 | 状态 |
+|---:|---|---:|---|
+| M-01 | Memory 评测基线（对话 32 组×4 长度档 + 剧情 10 组×10 集；四消融组；四层评分；生产探针） | 1.5d | ✅ DONE（2026-09-18）：`tests/golden/memory/`、`tests/evals/memory_harness/`、`scripts/evaluate_memory.py`、`docs/MEMORY_EVAL_REPORT.md`；基线缺口量化——current 组 96/192 条消息约束召回坍缩为 0、剧情标题摘要路径无角色知识 |
+| M-02 | 对话 Memory 生产链路 | 2d | ✅ DONE（2026-09-18）：统一 `app/memory/wiring.py` 工厂（/agent/turns·Action·普通消息 API 共享挂载）；累计摘要 v2（conversation_summary@2.0.0，previous/digest/幂等输入，v1 迁移种子）；摘要调度移出响应路径（后台短事务+可见性等待）；项目级有界合并（跨会话不比较 sequence）；AgentContextService 走 ShortTermStore |
+| M-03 | 持久化剧情证据与 ContinuityState | 3d | ✅ DONE（2026-09-18）：typed delta（EpisodeDelta）+ v2 envelope（basis/事实/知识/道具/计划，区间与引用校验，v1 兼容）；ContinuityManager.apply_episode_delta 纯 reducer（服务端稳定 ID）；StoryStateService（episode_summary_v2 Prompt、语义引用校验 fail closed、input_hash 幂等、正文/派生分账）；迁移 0013 部分唯一索引；M-01 剧情数据集经生产 reducer 消费通过 |
+| M-04 | 统一写作/修订/恢复/失效读取 | 3.5d | ✅ DONE（2026-09-18）：write_episodes 按 Run 工作集加载 through=N-1 确切前态、写后即派生、失败保留正文（derivation_pending_episode）；Run State v2 字段；continuity_check 弃标题回放走同一服务；resolve_status（ready/pending/stale/gap/missing）+ `GET /projects/{id}/story-state`（零模型调用）；ContextBuilder strict_required（REQUIRED_CONTEXT_MISSING / PROTECTED_CONTEXT_TOO_LARGE）；一次 5 集 vs 1+1+3 前态一致、重启续写不丢知识 |
+| M-05 | 状态可见性与退出验收 | 1.5d | ✅ DONE（2026-09-18）：前端 StoryStatePanel（状态徽章/工作集基准/作者事实来源跳转/角色已知/未发生计划分账，恢复入口）+ AgentWorkspace 集成 + 9 组件测试；API_CONTRACT/TEST_PLAN/KNOWN_LIMITATIONS/EVAL_REPORT/DEV_LOG 更新。**待办**：真实模型固定集评测（EVAL_LLM_ENABLED=1） |
+
+退出验收（2026-09-18）：后端 ruff/mypy/pytest 全量全绿；前端 lint/tsc/228 组件测试全绿；
+迁移 0013 upgrade/downgrade 验证通过；v1 摘要与旧 Run 兼容读取保持。
+真实模型评测与 Mem0 决策门未触发（见 KNOWN_LIMITATIONS §6）。
+
 ## 21. MVP 后续 Backlog
 
 只有 Release Gate 通过后再考虑：

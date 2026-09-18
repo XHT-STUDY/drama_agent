@@ -602,6 +602,36 @@ F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
 | 403 | `CROSS_PROJECT_ACCESS` | artifact 不属于给定 project_id |
 | 404 | `EXPORT_FILE_MISSING` | Artifact 不存在 / 非 export_file / 存储文件已丢失 |
 
+## GET /projects/{id}/story-state — 剧情状态只读查询（M-04/M-05）
+
+解析剧情连续性状态相对某工作集的就绪度。**只读**：不调用模型、不触发派生；
+显式刷新由继续创作 Run 完成，不在 GET 中执行。
+
+### 请求
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `through_episode` | int | 否 | 目标集数（1-200）；缺省取工作集内最大集数 |
+| `run_id` | UUID | 否 | 指定 Run 的冻结工作集；缺省用当前采用集合（各集最新 valid 剧本） |
+
+### 响应（200）
+
+| 字段 | 说明 |
+|------|------|
+| `status` | `ready`（链头覆盖到请求）/ `pending`（派生落后）/ `stale`（采用变化，后缀待复核）/ `gap`（有集缺正文）/ `missing`（尚无链） |
+| `through_episode` | 链头已覆盖集数 |
+| `stale_from_episode` | stale 时最早待复核集数 |
+| `missing_episodes` | gap 时缺失正文的集数列表 |
+| `state_artifact_id` / `basis` | 链头 Artifact 与工作集引用（StoryBible/大纲/各集剧本/单集证据） |
+| `projection` | 面板分账视图：作者事实（带来源 Artifact+场次）、角色已知信息、未闭合/已回收伏笔、道具归属、作者未来计划（未发生）、锁定事实 |
+| `warnings` | 人类可读提示 |
+
+### 错误码
+
+| 状态码 | code | 含义 |
+|--------|------|------|
+| 404 | `PROJECT_NOT_FOUND` / `RUN_NOT_FOUND` / `ARTIFACT_NOT_FOUND` | 项目 / Run / StoryBible·大纲缺失 |
+
 ## Artifact 类型
 
 | Type | 说明 | 集数 |
@@ -610,10 +640,11 @@ F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
 | `story_bible` | StoryBible | — |
 | `episode_outline_set` | 10 集分集大纲 | — |
 | `script_draft` | 单集剧本 | 1-3 |
-| `continuity_state` | 连续性状态 | — |
 | `evaluation_report` | 评估报告（绑定被评估剧本版本） | 1-3 |
 | `revision_plan` | 修订计划（引用原稿 / 评估 / 锁定事实） | 1-3 |
 | `continuity_check` | 修订稿连续性检查结果 | 1-3 |
-| `conversation_summary` | 会话滚动摘要（G-01，消息数达阈值触发） | — |
+| `conversation_summary` | 会话累计摘要（G-01；M-02 起 v2 累计语义，content_schema_version=2.0） | — |
+| `episode_summary` | 单集剧情证据（M-03，typed delta + 源稿绑定，content_schema_version=2.0） | 1-N |
+| `continuity_state` | 连续性状态（M-03/M-04 起 v2 绑定工作集；v1 兼容可读） | — |
 | `import_classification` | 导入分类结果（G-04，`content_type` + 路由依据） | — |
 | `export_file` | 导出文件元数据（G-05/G-06，`storage_key` 指向 FileStore） | — |

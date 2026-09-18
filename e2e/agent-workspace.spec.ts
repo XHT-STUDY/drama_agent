@@ -45,12 +45,13 @@ async function createProjectViaWorkspace(page: Page): Promise<string> {
   return pid;
 }
 
-/** 等待工作台计划卡到达终态徽标 */
+/** 等待工作台计划卡到达终态徽标（同一会话可能有多张计划卡，取任一终态） */
 async function waitCardTerminal(page: Page, timeout = 90_000): Promise<void> {
   await expect(
-    page.getByText("已完成", { exact: true }).or(
-      page.getByText("需人工复核", { exact: true }),
-    ),
+    page
+      .getByText("已完成", { exact: true })
+      .or(page.getByText("需人工复核", { exact: true }))
+      .first(),
   ).toBeVisible({ timeout });
 }
 

@@ -389,10 +389,15 @@ class TestSummaryFailureDoesNotBlockMessage:
 
         tasks: list[asyncio.Task[None]] = []
 
+        async def _failing_summarize(conv_id: uuid.UUID, count: int) -> None:
+            await bad_manager.maybe_summarize(
+                db_session, conv_id, message_count=count
+            )
+
         def failing_scheduler(conv_id: uuid.UUID, count: int) -> None:
             tasks.append(
                 asyncio.get_running_loop().create_task(
-                    bad_manager.maybe_summarize(db_session, conv_id, message_count=count)
+                    _failing_summarize(conv_id, count)
                 )
             )
 

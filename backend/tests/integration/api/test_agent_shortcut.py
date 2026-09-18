@@ -129,7 +129,7 @@ async def _post_turn(
         f"/api/v1/projects/{project_id}/agent/turns", json=payload
     )
     assert resp.status_code == 200
-    return resp.json()
+    return dict(resp.json())
 
 
 def _create_script_plan() -> AgentActionPlan:
@@ -263,7 +263,10 @@ async def _seed_scripts_gate_run(
     db_session.add(run)
     await db_session.flush()
     # WorkflowRun 无会话列；门通知会话通过实例属性透传给测试
-    run.gate_conversation_id = conversation.id if with_gate_message else None
+    object.__setattr__(
+        run, "gate_conversation_id",
+        conversation.id if with_gate_message else None,
+    )
     await db_session.commit()
     return run
 
@@ -325,10 +328,11 @@ async def test_confirm_phrase_on_gated_run_continues(
     """无 proposed Action 但有门上 Run 时，"确认"即续跑（对齐按钮语义）。"""
     run = await _seed_scripts_gate_run(db_session)
     project_id = str(run.project_id)
-    assert run.gate_conversation_id is not None
+    gate_conversation_id = getattr(run, "gate_conversation_id", None)
+    assert gate_conversation_id is not None
 
     body = await _post_turn(
-        agent_api, project_id, "确认", conversation_id=str(run.gate_conversation_id)
+        agent_api, project_id, "确认", conversation_id=str(gate_conversation_id)
     )
 
     assert body["status"] == "answered"

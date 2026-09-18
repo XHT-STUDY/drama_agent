@@ -287,5 +287,18 @@ E2E 场景断言（`tests/integration/api/test_fake_scenario.py`）保证 fixtur
 
 - 报告：`docs/MEMORY_EVAL_REPORT.md`（含 `/agent/turns` 是否实际触发摘要的生产探针结论）。
 - 门槛断言（CI）：structured 组跨项目泄漏 0、最新事实 ≥95%、否决召回 ≥95%、96 条后约束召回 ≥90%、虚构 ≤1%；剧情知识越界 0、伏笔 F1 ≥90%、相对 none 违规下降 ≥50%、来源正确率 100%、重放一致。
-- 基线锁定断言（CI）：current 组 96 档约束召回 <50%（分段摘要只读最新一段的缺口），M-02 修复后该断言转绿并更新。
+- 基线锁定断言（CI）：current 组 96 档约束召回 <50%（分段摘要只读最新一段的缺口）——该组描述的是**历史语义**，M-02 后生产已实现累计摘要，断言保留作为消融对照。
+
+### 12.4 M-03/M-04/M-05 用例映射（2026-09-18 更新）
+
+| 契约 | 用例 |
+|---|---|
+| 累计摘要 v2（链/幂等/迁移/失败不阻断/合并/响应不等待 LLM） | `tests/integration/memory/test_summary.py` |
+| 主入口阈值触发累计摘要 | `tests/integration/api/test_agent_turns.py::test_turns_trigger_cumulative_summary_at_threshold` |
+| typed delta 校验与 reducer（M-01 数据集消费） | `tests/contract/test_story_state_v2.py` |
+| 派生幂等/分账/跨项目/唯一索引 | `tests/integration/memory/test_story_state_service.py`、`tests/integration/db/test_migration.py::TestAlembicMigration0013` |
+| 一次 5 集 vs 1+1+3 同前态；重启续写；失败保留正文；fail closed；RAG 可选 | `tests/integration/workflow/test_story_state_recovery.py` |
+| 采用变化后缀 stale/前缀复用；GET 零模型调用 | `tests/integration/artifacts/test_story_state_invalidation.py` |
+| strict required / PROTECTED_CONTEXT_TOO_LARGE | `tests/unit/memory/test_context_budget.py::TestStrictRequiredSections` |
+| 状态面板分账展示/恢复入口/作者语言 | `frontend/tests/story-state-panel.test.tsx` |
 
