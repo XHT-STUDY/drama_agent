@@ -4,6 +4,50 @@
 
 ---
 
+## IR-2 意图识别优化：扩充代表性评测数据（2026-09-18）
+
+**任务 ID：** IR-2（Phase IR，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §7）
+**状态：** DONE
+**日期：** 2026-09-18
+
+### 做了什么
+
+1. `agent_commands.json` 65→240 条（dataset v4）：新增 152 条——题材多样性创作请求（25 类题材）、查看已有评估 vs 重跑评估、合理节奏变化 vs 真互斥约束、单集多约束 plan、口语/错别字（"剧木/大刚"）/中英混合、多轮澄清回答与约束补充（recent_dialog 注入上一轮，与生产 project_context 最近消息路径一致）、范围外产品请求/攻击指令/闲聊。
+2. 新增 `agent_commands_holdout.json` 盲测集 120 条（hold-001~120，独立 ID 命名空间）：不进 Prompt 示例（契约做逐字归一化比对）、不按单条失败调词。
+3. 合并分布恰为 §7.2 配额（create 45 / explain 50 / evaluate 45 / revise_script 55 / revise_outline 45 / continue 40 / clarification+范围外 80 = 360）；交叉覆盖下限全部达标：active context 62/60、目标×上下文冲突 32/30、多轮 60/60、口语 50/50、复合请求 40/40、白名单漂移 45/40、明确集数 100/80、范围外 40/40。
+4. harness 升级：双文件契约（分布精确匹配、交叉覆盖下限、ID 全局唯一、盲测不进 Prompt、**preflight 一致性**——期望 plan/answer 的用例不得被确定性 preflight 拦截、pf=1 用例必须被拦截）；真实评测支持 `EVAL_SPLIT`（dev/holdout/all，默认 all）× `EVAL_REPEATS`（发版 3 次），报告含每次失败明细与逐门槛均值/最差值，**门槛按最差一次判定**。
+5. `tests/evals/README.md`：字段合同、v1.4 期望语义要点、split 纪律、5 条已知边界（preflight 多集数正则过度触发等）、changelog；AGENT_EVAL_REPORT/METHOD、TEST_PLAN、DEV_PLAN §20.7 同步。
+
+### 为什么这么做
+
+- preflight 一致性契约是本轮最有价值的发现工具：它扫出 3 条"标注为 plan 但会被确定性正则拦截"的潜伏错误（cmd-036/175 的双集数+修订动词、cmd-192 的 pf 误标）——这类错误在只跑 pf=1 用例的旧 harness 里永远不可见，真实评测时才会爆。
+- 多轮覆盖不造新机制：生产里对话历史已经通过 project_context 的"最近消息"进入 Planner，评测只需按同一格式注入，避免评测路径与生产路径分叉。
+- 合并分布用精确相等而非下限断言：§7.2 的表格是构成合同，"接近即可"会让后续增删用例时静默漂移；交叉覆盖才用下限（允许同 case 计入多维）。
+- 盲测集与 Prompt 的逐字比对只做确定性部分（去空白归一化子串）；"近似重复"留给人工复核纪律——机器检查假装能测语义近似反而是假安全。
+
+### 修改文件
+
+- `backend/tests/evals/agent_commands.json`（240 条，v4）
+- `backend/tests/evals/agent_commands_holdout.json`（新增，120 条）
+- `backend/tests/evals/test_agent_command_eval.py`（契约 + 真实评测升级）
+- `backend/tests/evals/README.md`（新增）
+- `docs/AGENT_EVAL_REPORT.md`、`docs/AGENT_EVAL_METHOD.md`、`docs/TEST_PLAN.md`、`docs/DEV_PLAN.md`、`docs/DEV_LOG.md`
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python -m pytest tests/evals/test_agent_command_eval.py -q` | 通过（契约 12 + preflight + 评分器 14；1 skipped=结果新鲜度） |
+| `python -m pytest`（全量后端） | 通过 |
+| `ruff check` / `ruff format` / `mypy`（evals） | 通过 |
+| 合并分布 / 交叉覆盖 / ID 唯一 | 360 条精确匹配 §7.2；全部下限达标；ID 全局唯一 |
+
+### 学到了什么
+
+数据集的"尺子"和模型一样会撒谎：65→360 的扩充过程中，最大的工作量不是写句子，而是让每条标注与确定性 preflight 的真实行为一致——标注者以为的语义边界和正则实际匹配的边界是两回事（"改大纲同时改第3集剧本"里的裸"改"不命中修订词表）。给标注加机器一致性检查（preflight_consistency）比加更多标注规范文档有效。
+
+---
+
 ## IR-1 意图识别优化：修正评测尺子（2026-09-18）
 
 **任务 ID：** IR-1（Phase IR，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §6）

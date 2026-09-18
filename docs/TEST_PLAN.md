@@ -242,8 +242,8 @@ def test_real_llm_story_bible() -> None: ...
 
 | 层 | 运行方式 | 内容 |
 |---|---|---|
-| CI 契约评测 | `make test`（默认） | `tests/evals/`：数据集契约（commands ≥85 / outcomes ≥30；v1.4 期望语义——explain 属 answer 分支、plan 不得带 explain；split/target_type/batch_size/risk/coverage 标注合同；continue ≥20）、preflight 澄清召回 100%（14 条确定性歧义/越界/冲突用例，零模型调用）、评分器单测（伪造结果验证 target/batch 指标、失败分类与门槛判定）、Outcome 确定性规则一致率 100%（26 条） |
-| 真实模型评测 | `pytest -m eval_real`（需 `EVAL_LLM_ENABLED=1` + 真实 Key，默认被 addopts 排除） | commands 联合指标（turn_type → intent → target → batch，micro/macro、混淆矩阵、失败分类）+ §3.3 发版门槛判定（任一不达标即非零退出；`EVAL_REPORT_ONLY=1` 只产报告）；outcomes 语义约束 goal_status 一致率；结果落盘 `tests/evals/results/`（写入 dataset 版本、git commit、Prompt 版本、模型、运行时间），报告见 `docs/AGENT_EVAL_REPORT.md`（不得写模拟数字；旧结果自动归档 `results/archive/`，新鲜度由契约测试守护） |
+| CI 契约评测 | `make test`（默认） | `tests/evals/`：数据集契约（commands 240 + holdout 120 = 360 且合并分布恰为 §7.2 配额、交叉覆盖下限、ID 全局唯一、盲测原文不进 Prompt 模板、preflight 标注与真实行为一致；v1.4 期望语义——explain 属 answer 分支、plan 不得带 explain）、preflight 澄清召回 100%（14 条确定性歧义/越界/冲突用例，零模型调用）、评分器单测（伪造结果验证 target/batch 指标、失败分类与门槛判定）、Outcome 确定性规则一致率 100%（26 条） |
+| 真实模型评测 | `pytest -m eval_real`（需 `EVAL_LLM_ENABLED=1` + 真实 Key，默认被 addopts 排除） | commands 联合指标（turn_type → intent → target → batch，micro/macro、混淆矩阵、失败分类）+ §3.3 发版门槛判定（EVAL_SPLIT=dev/holdout/all × EVAL_REPEATS，门槛按最差一次判定；任一不达标即非零退出；`EVAL_REPORT_ONLY=1` 只产报告）；outcomes 语义约束 goal_status 一致率；结果落盘 `tests/evals/results/`（写入 dataset 版本、git commit、Prompt 版本、模型、运行时间），报告见 `docs/AGENT_EVAL_REPORT.md`（不得写模拟数字；旧结果自动归档 `results/archive/`，新鲜度由契约测试守护） |
 | E2E | `make e2e REPEAT=5` | `e2e/agent-workspace.spec.ts`（FAKE_LLM_SCENARIO=agent_e2e） |
 
 ### 11.2 CI 恢复/并发契约与用例映射

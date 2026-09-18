@@ -3456,7 +3456,7 @@ Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋�
 | # | 任务 | 依赖 | 估算 | 要点 |
 |---:|---|---|---:|---|
 | IR-1 | 修正评测尺子 | — | 2–3d | ✅ DONE（2026-09-18）：`agent_commands.json` 升级 dataset v3（88 条）——6 条旧 `plan/explain` 按 v1.4 重标为 answer 分支、新增 21 条 continue 基础集与 2 条明确目标×上下文冲突用例、新增 split/target_type/batch_size/risk/coverage 标注；新增纯函数评分器 `tests/evals/command_scorer.py`（turn_type→intent→target→batch 分层、micro/macro、混淆矩阵、§4.3 失败分类、§3.3 发版门槛）；harness 重写（评分器单测用伪造结果验证 target/batch 指标与门槛；结果文件新鲜度契约防旧结果冒充；`EVAL_REPORT_ONLY=1` 开发期只产报告，默认发版模式门槛不达标即非零退出）；v1.3 旧结果归档 `results/archive/`；AGENT_EVAL_REPORT/METHOD/TEST_PLAN 同步 |
-| IR-2 | 扩充代表性数据 | IR-1 | 4–6d | TODO：360 条（240 开发 + 120 盲测 holdout 文件）、边界对矩阵、交叉覆盖下限契约、`tests/evals/README.md` 标注规范与 changelog、三连跑报告最差值门槛 |
+| IR-2 | 扩充代表性数据 | IR-1 | 4–6d | ✅ DONE（2026-09-18）：`agent_commands.json` 扩至 240 条（dataset v4）+ 新增 `agent_commands_holdout.json` 120 条，合并分布恰为 §7.2 配额（45/50/45/55/45/40/80）；交叉覆盖下限全部达标（active ctx 62/60、冲突 32/30、多轮 60/60、口语 50/50、复合 40/40、白名单漂移 45/40、明确集数 100/80、范围外 40/40）；契约测试守护分布/下限/ID 全局唯一/盲测原文不进 Prompt/preflight 标注与真实行为一致（发现并修复 3 条 preflight 误触发标注）；多轮用例经 recent_dialog 走生产 project_context 最近消息路径；真实评测支持 EVAL_SPLIT×EVAL_REPEATS，门槛按最差一次判定；`tests/evals/README.md` 标注规范+纪律+已知边界+changelog |
 | IR-3 | 强化生产路由 | IR-2 | 5–8d | TODO：服务端目标解析确定性优先 + Planner 后一致性校验（disagreement 拒绝/纠正）、`user_request` 原文保真进 Plan/Run config、explain 内部分流（状态/正文/设定/已有评估）、正则职责收敛（"前慢后快"不再误判冲突）、短路上下文保护与遥测 |
 | IR-4 | 端到端与运行闭环 | IR-3 | 4–6d | TODO：单集评估 Dispatcher 范围修复（不得静默扩大为全项目）、§9.3 端到端语义测试矩阵、低基数 Prometheus 指标（planner/target/clarification/shortcut/action）、线上失败样本回灌流程 |
 
