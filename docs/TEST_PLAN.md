@@ -265,3 +265,27 @@ def test_real_llm_story_bible() -> None: ...
 | `agent_e2e` | 低分 | **内容感知桩**（修改+集数→revise_script；大纲→revise_outline；评估→evaluate；解释→explain；其余→create_script），另注册 outline_reviser | J-12 Agent E2E（单后端服务全部意图） |
 
 E2E 场景断言（`tests/integration/api/test_fake_scenario.py`）保证 fixtures 与桩行为不被无意识改动。
+
+## 12. Memory 评测专项说明（M-01）
+
+### 12.1 数据集与指标
+
+- **对话集**：`backend/tests/golden/memory/dialogue_cases.json`——8 题材 × 4 长度档（24/48/96/192）= 32 组，覆盖偏好、否决、改口、未决问题、跨项目近似设定与无关闲聊；关键事实以【设定】【改口】【否决】【要求】【问题】标签嵌入可审查消息。
+- **剧情集**：`backend/tests/golden/memory/story_cases.json`——10 组 × 10 集，每组含 typed delta 真值（作者事实/角色知识/伏笔/道具/关系/时间线/作者未来计划）与确定性探针。
+- **四消融组**：`none` / `recent_only` / `current`（复刻生产分段摘要 + 标题摘要路径）/ `structured`（累计摘要 + typed delta 规格，即 M-02/M-03 目标）。
+- **评分四层**：写入（覆盖区间连续完整）、召回（最新事实胜率、否决/约束召回、虚构、跨项目泄漏）、使用（经 `ContextBuilder` 组装后的到达率与 Manifest 一致性）、成本（相对完整历史的 token 节省）。全部确定性代码评分，不使用 LLM Judge 总分。
+
+### 12.2 运行方式
+
+| 层 | 命令 | 内容 |
+|---|---|---|
+| CI（默认） | `uv run pytest tests/evals/test_dialogue_memory_eval.py tests/evals/test_story_memory_eval.py` | 数据集契约、structured 组设计门槛（MEMORY_DESIGN §10.1/§10.2）、current 基线缺口锁定、同 seed 重跑一致、`/agent/turns` 摘要挂载探针 |
+| 脚本 | `uv run python scripts/evaluate_memory.py --provider fake` | 全量跑四组，产出 `tests/evals/results/memory_eval_results.json` 与 `docs/MEMORY_EVAL_REPORT.md` |
+| 真实模型 | `EVAL_LLM_ENABLED=1 uv run python scripts/evaluate_memory.py --provider real` | 对话摘要由真实 LLM 生成（生产 conversation_summary Prompt），固定子集（每长度档 2 例），记录模型/Prompt 版本/样本/调用数/token/耗时；评分仍为确定性标记匹配 |
+
+### 12.3 结果与门槛
+
+- 报告：`docs/MEMORY_EVAL_REPORT.md`（含 `/agent/turns` 是否实际触发摘要的生产探针结论）。
+- 门槛断言（CI）：structured 组跨项目泄漏 0、最新事实 ≥95%、否决召回 ≥95%、96 条后约束召回 ≥90%、虚构 ≤1%；剧情知识越界 0、伏笔 F1 ≥90%、相对 none 违规下降 ≥50%、来源正确率 100%、重放一致。
+- 基线锁定断言（CI）：current 组 96 档约束召回 <50%（分段摘要只读最新一段的缺口），M-02 修复后该断言转绿并更新。
+
