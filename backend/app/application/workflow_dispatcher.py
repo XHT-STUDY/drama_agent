@@ -38,6 +38,47 @@ logger = logging.getLogger(__name__)
 WorkflowExecutor = Callable[[uuid.UUID, str, dict[str, Any], str], Awaitable[None]]
 
 
+async def collect_evaluation_scripts(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    options: dict[str, Any],
+) -> dict[int, str]:
+    """按评估执行范围契约收集受评估剧本（IR-4 §9.2）。
+
+    scope=episode：只取指定集最新 valid 剧本；缺失即抛错——绝不退化
+    为全项目评估。scope=project：每集最新 valid 剧本。返回 集号→ID。
+    """
+    from app.artifacts.store import ArtifactStore
+    from app.db.repositories.artifacts import ArtifactRepository
+
+    scope = options.get("scope", "project")
+    latest_per_episode: dict[int, str] = {}
+    if scope == "episode":
+        episode_number = options.get("episode_number")
+        if episode_number is None:
+            raise AppError(
+                detail="单集评估缺少集数（episode scope requires episode_number）",
+                status_code=400,
+                code="INVALID_EVALUATION_SCOPE",
+            )
+        target = await ArtifactRepository(db).get_latest_valid(
+            project_id, "script_draft", int(episode_number)
+        )
+        if target is None:
+            raise AppError(
+                detail=f"第 {episode_number} 集没有可评估的有效剧本",
+                status_code=404,
+                code="SCRIPT_NOT_FOUND",
+            )
+        latest_per_episode[int(episode_number)] = str(target.id)
+        return latest_per_episode
+    scripts = await ArtifactStore().list_by_project(db, project_id, "script_draft", offset=0, limit=1000)
+    for artifact in scripts:
+        if artifact.status == "valid" and artifact.episode_number not in latest_per_episode:
+            latest_per_episode[artifact.episode_number] = str(artifact.id)
+    return latest_per_episode
+
+
 def compose_user_instruction(user_request: Any, constraints: list[str]) -> str | None:
     """把原始请求与结构化约束组合为修订指令（IR-3 §8.3）。
 
@@ -575,15 +616,15 @@ async def _execute_workflow(
                 }
                 workflow = build_creation_workflow(checkpointer=checkpointer)
             elif action == "evaluate":
-                # action=evaluate → 收集项目已有剧本（每集最新 valid），走独立评估工作流
-                store = ArtifactStore()
-                scripts = await store.list_by_project(
-                    db, run.project_id, "script_draft", offset=0, limit=1000
+                # action=evaluate → 独立评估工作流。
+                # IR-4 §9.2 执行范围契约：scope=episode 只评估指定集最新
+                # valid 剧本；指定集缺失时明确失败——绝不退化为全项目评估；
+                # 只有 scope=project 才收集全部每集最新 valid 剧本
+                latest_per_episode = await collect_evaluation_scripts(
+                    db,
+                    run.project_id,
+                    (run.config_snapshot or {}).get("options", {}),
                 )
-                latest_per_episode: dict[int, str] = {}
-                for a in scripts:
-                    if a.status == "valid" and a.episode_number not in latest_per_episode:
-                        latest_per_episode[a.episode_number] = str(a.id)
                 initial_state = {
                     "run_id": str(run_id),
                     "project_id": str(run.project_id),

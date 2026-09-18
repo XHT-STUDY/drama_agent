@@ -1401,8 +1401,13 @@ class AgentCommandService:
         artifacts: list[Artifact] = []
         if episode is not None:
             latest = await artifact_repo.get_latest_valid(project_id, "script_draft", episode)
-            if latest is not None:
-                artifacts = [latest]
+            if latest is None:
+                # IR-4 §9.2：单集评估目标不存在时在计划阶段明确失败，
+                # 不产出空快照计划、更不能静默退化为全项目评估
+                raise ScriptNotFoundForRevisionError(
+                    detail=f"第 {episode} 集没有可评估的有效剧本"
+                )
+            artifacts = [latest]
         else:
             artifacts = await artifact_repo.list_by_project(project_id, "script_draft", offset=0, limit=1000)
             # 每集只保留版本号最高的 valid 版本。

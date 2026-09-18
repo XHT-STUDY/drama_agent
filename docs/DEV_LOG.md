@@ -4,6 +4,29 @@
 
 ---
 
+## IR-4 意图识别优化：单集评估执行范围契约（2026-09-18）
+
+**任务 ID：** IR-4（部分，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §9）
+**状态：** DONE（§9.2 范围修复；指标/端到端矩阵/回灌待后续）
+**日期：** 2026-09-18
+
+### 做了什么
+
+1. Dispatcher 新增 `collect_evaluation_scripts`：`scope=episode` 只取指定集最新 valid 剧本，指定集缺失或未带集数 → 明确 AppError（SCRIPT_NOT_FOUND / INVALID_EVALUATION_SCOPE），**绝不退化为全项目评估**；`scope=project` 才收集每集最新 valid。修复 P0-6（单集请求被静默扩大为全项目评估）。
+2. 计划层 `_script_snapshots` 对"指定集无有效剧本"从静默空快照改为明确失败（Turn failed + 可读错误）——空快照计划确认后正是触发 Dispatcher 全量收集的入口。
+3. 4 条范围契约测试（单集只含该集 / 缺集失败不退化 / 缺集数失败 / 项目范围全收集）。
+
+### 为什么这么做
+
+- 修复必须在 Dispatcher（执行边界）而不只在计划层：确认后的 Run 可能因暂停期间剧本变化而与计划快照不一致，执行边界是最后一道闸。
+- "错误的单集请求静默扩大为全项目执行"属于 §12.3 列出的不可回滚恢复的不诚实行为，优先级高于指标建设。
+
+### 验证结果
+
+`python -m pytest`（后端全量）通过；`mypy app/` 通过；范围契约 4 条新增测试通过。
+
+---
+
 ## IR-3 意图识别优化：强化生产路由（2026-09-18）
 
 **任务 ID：** IR-3（Phase IR，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §8）
