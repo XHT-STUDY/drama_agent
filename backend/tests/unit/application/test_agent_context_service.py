@@ -102,7 +102,7 @@ def test_protected_user_request_is_not_silently_truncated() -> None:
             current_target="",
             protected_sections={"user_request", "current_target"},
         )
-    assert getattr(exc_info.value, "code", None) == "CONTEXT_TOO_LARGE"
+    assert getattr(exc_info.value, "code", None) == "PROTECTED_CONTEXT_TOO_LARGE"
 
 
 def test_agent_budget_defaults() -> None:

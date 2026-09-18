@@ -38,7 +38,17 @@ class CreationState(TypedDict, total=False):
 
     # ---- 连续性（轻量文本，非全文）----
     continuity_state_text: str
-    """当前连续性状态的文本快照，由 ContinuityManager 生成。仅存文本摘要，非完整结构。"""
+    """当前连续性状态的文本快照。M-04 起仅为旧执行语义兼容保留;
+    v2 语义以 continuity_state_artifact_id 指向的结构化状态为准。"""
+    continuity_state_artifact_id: str
+    """v2 连续性状态链头 Artifact UUID(M-04/W3-03)。"""
+    episode_summary_artifact_ids: dict[str, str]
+    """集号 → 单集派生证据(episode_summary)Artifact UUID(M-04)。"""
+    derivation_pending_episode: int
+    """派生失败待补的集号(M-04/W3-02):正文已保留,retry 只补派生。"""
+    story_state_semantics_version: int
+    """剧情状态执行语义版本(M-04):2 = 按工作集读确切前态 + typed delta;
+    旧 Run 缺省旧语义(标题摘要回放)。"""
 
     # ---- 评估与修订决策 ----
     needs_revision_decision: bool

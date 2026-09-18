@@ -1238,6 +1238,10 @@ def _register_fake_fixtures(llm: Any) -> None:
     )
     llm.register("outline", EpisodeOutlineSet.model_validate(_load("outline_set_valid")))
     llm.register("write_episode", ScriptDraft.model_validate(_load("script_draft_valid")))
+    # M-03/M-04:单集 typed delta 派生用内容感知桩(集数随集变化)
+    from app.llm.fake import episode_delta_factory
+
+    llm.register_factory("episode_summary_v2", episode_delta_factory)
     # 评估 fixture：默认 golden 高分报告（服务端回填 need_revision=False → 走 finalize/completed）。
     # E2E 场景开关 FAKE_LLM_SCENARIO=revision：注册低分报告 → 全部集 need_revision=True →
     # F-05 确定性选最低分集（平局取最小集号）恰好只修 1 集。默认行为不变。

@@ -451,6 +451,119 @@ class ContinuityManager:
             timeline_events=new_timeline,
         )
 
+    # ---- v2 上下文渲染(M-04) ----
+
+    @staticmethod
+    def get_context_for_episode_v2(
+        state: ContinuityState,
+        episode: int,
+        *,
+        character_names: dict[str, str] | None = None,
+    ) -> str:
+        """为第 episode 集生成 v2 连续性上下文(结构化状态投影)。
+
+        分区:前情摘要 / 已发生事实(带来源) / 角色已知信息(与作者事实
+        分账)/ 未闭合与已回收伏笔 / 道具归属 / 关系 / 时间线 / 锁定事实 /
+        作者未来计划(显式标注"未发生,不得写成正文事实")。
+        只含 source_episode < episode 的内容——检查/写作第 N 集使用
+        through=N-1 前态,不得把第 N 集候选新稿写入前态。
+        """
+        names = character_names or {}
+        parts: list[str] = []
+
+        prev = [x for x in state.episode_summaries if x.episode_number < episode]
+        if prev:
+            parts.append("## 前集摘要")
+            for x in sorted(prev, key=lambda i: i.episode_number):
+                parts.append(f"### 第 {x.episode_number} 集")
+                parts.append(x.summary)
+                if x.key_events:
+                    parts.append("**关键事件**: " + "；".join(x.key_events))
+            parts.append("")
+
+        facts = {fid: f for fid, f in state.facts.items()
+                 if f.source_episode < episode}
+        if facts:
+            parts.append("## 已发生事实(作者视角)")
+            for fid, f in sorted(facts.items()):
+                parts.append(
+                    f"- [{fid}] {f.text}"
+                    f"(第{f.source_episode}集第{f.source_scene}场)"
+                )
+            parts.append("")
+
+        knowledge_lines: list[str] = []
+        for cid, cs in state.character_states.items():
+            known = sorted(
+                (k.fact_id, k.learned_episode) for k in cs.known_facts
+                if k.learned_episode < episode
+            )
+            if known:
+                label = names.get(cid, cid)
+                items = "、".join(f"{fid}(第{ep}集得知)" for fid, ep in known)
+                knowledge_lines.append(f"- {label}({cid})已知: {items}")
+        if knowledge_lines:
+            parts.append("## 角色已知信息(未列出的角色不知道这些事实)")
+            parts.extend(knowledge_lines)
+            parts.append("")
+
+        open_loops = list(state.open_loops)
+        if open_loops:
+            parts.append("## 未闭合伏笔")
+            for lp in open_loops:
+                intro = f"第{lp.introduced_episode}集" if lp.introduced_episode else "StoryBible"
+                parts.append(f"- [{lp.loop_id}] {lp.description}({intro}引入)")
+            parts.append("")
+        resolved = [lp for lp in state.resolved_loops
+                    if (lp.resolved_episode or 0) < episode]
+        if resolved:
+            parts.append("## 已回收伏笔(不得重复回收)")
+            for lp in resolved:
+                parts.append(f"- [{lp.loop_id}] {lp.description}")
+            parts.append("")
+
+        props = {pid: p for pid, p in state.props.items()
+                 if p.source_episode < episode}
+        if props:
+            parts.append("## 道具归属")
+            for pid, p in sorted(props.items()):
+                holder = names.get(p.holder_character_id, p.holder_character_id)
+                parts.append(f"- {pid} 现由 {holder}({p.holder_character_id}) 持有")
+            parts.append("")
+
+        relations = [r for r in state.relationship_changes
+                     if r.episode_number < episode]
+        if relations:
+            parts.append("## 关系变化")
+            for r in relations:
+                a = names.get(r.from_character_id, r.from_character_id)
+                b = names.get(r.to_character_id, r.to_character_id)
+                parts.append(f"- 第{r.episode_number}集: {a}→{b}: {r.before or '?'} → {r.after}")
+            parts.append("")
+
+        events = [t for t in state.timeline_events
+                  if t.episode_number < episode]
+        if events:
+            events = sorted(events, key=lambda t: (t.episode_number, t.order_in_episode))
+            parts.append("## 时间线(已发生)")
+            for t in events:
+                parts.append(f"- 第{t.episode_number}集: {t.description}")
+            parts.append("")
+
+        if state.locked_facts:
+            parts.append("## 锁定事实(不可修改)")
+            parts.extend(f"- {x}" for x in state.locked_facts)
+            parts.append("")
+
+        pending_plans = [plan for plan in state.future_plans if not plan.revealed]
+        if pending_plans:
+            parts.append("## 作者未来计划(未发生,不得写成已发生事实)")
+            for plan in pending_plans:
+                parts.append(f"- (计划,第{plan.reveal_episode}集揭示) {plan.text}")
+            parts.append("")
+
+        return "\n".join(parts)
+
     # ---- locked facts 管理 ----
 
     @staticmethod

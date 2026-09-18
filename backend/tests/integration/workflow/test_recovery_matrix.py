@@ -64,6 +64,9 @@ def _register_golden(llm: FakeLLM, *, high_score: bool = True) -> None:
     llm.register("story_bible", StoryBible.model_validate(_load_golden("story_bible_football")))
     llm.register("outline", EpisodeOutlineSet.model_validate(_load_golden("outline_set_valid")))
     llm.register("write_episode", ScriptDraft.model_validate(_load_golden("script_draft_valid")))
+    from app.llm.fake import episode_delta_factory
+
+    llm.register_factory("episode_summary_v2", episode_delta_factory)
     if high_score:
         llm.register(
             "evaluate_episode",

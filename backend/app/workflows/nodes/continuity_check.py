@@ -16,7 +16,8 @@ from langgraph.config import get_config
 
 from app.agents.base import BaseAgent
 from app.application.artifact_service import ArtifactService
-from app.domain.continuity import ContinuityState, EpisodeSummary
+from app.application.story_state_service import StoryStateService, StoryWorkset
+from app.domain.continuity import ContinuityState
 from app.domain.outline import EpisodeOutlineSet
 from app.domain.revision import (
     ContinuityCheckInput,
@@ -26,7 +27,6 @@ from app.domain.revision import (
 from app.domain.script import ScriptDraft
 from app.domain.story_bible import StoryBible
 from app.events.publisher import EventPublisher
-from app.memory.continuity import ContinuityManager
 from app.prompts.loader import PromptLoader
 from app.skills.continuity_check import ContinuityCheckSkill
 from app.workflows.checkpoint import node_failure, raise_if_cancelled
@@ -46,35 +46,38 @@ def _find_ep_outline(outline_set: EpisodeOutlineSet, ep_num: int) -> dict[str, A
     return None
 
 
-async def _reconstruct_continuity_state(
-    story_bible: StoryBible,
+async def _load_pre_state(
+    agent: BaseAgent,
+    project_id: uuid.UUID,
+    story_bible_artifact_id: str | None,
+    outline_artifact_id: str | None,
     script_artifact_ids: dict[str, str],
-    artifact_svc: ArtifactService,
+    candidate_episode: int,
     db: Any,
-    up_to_episode: int,
 ) -> ContinuityState:
-    """回放 1..up_to_episode-1 集的剧本摘要，重建修订前的连续性状态。
+    """加载检查第 N 集使用的 through=N-1 确切前态(M-04/W3-03)。
 
-    与 write_episode 节点使用的构建方式一致：初始状态来自 StoryBible，
-    每完成一集追加一条 EpisodeSummary（标题 / 关键事件 / 结尾钩子）。
-    候选集本身（up_to_episode）尚未完成，故不含其摘要。
+    与 Writer 同一 StoryStateService:前缀证据复用;候选新稿
+    (第 N 集及之后)不进入工作集——修订稿不写入前态。
+    派生缺失时在本 Run 内补齐(模型调用);正文缺失 fail closed。
     """
-    state = ContinuityManager.create_initial_state(story_bible)
-    for ep in range(1, up_to_episode):
-        sid = script_artifact_ids.get(str(ep))
-        if sid is None:
-            continue
-        # 候选集之后新替换的稿不参与回放；此处只取既有集的原稿
-        artifact = await _load_artifact_content(db, artifact_svc, sid)
-        draft = ScriptDraft.model_validate(artifact)
-        summary = EpisodeSummary(
-            episode_number=ep,
-            summary=f"第 {ep} 集完成: {draft.title}",
-            key_events=[s.action[:30] for s in draft.scenes[:3]],
-            ending_state=draft.ending_hook[:50],
-        )
-        state = ContinuityManager.update_after_episode(state, summary)
-    return state
+    if not story_bible_artifact_id or not outline_artifact_id:
+        raise ValueError("缺少 StoryBible/大纲 Artifact,无法加载修订前态")
+    state_service = StoryStateService(agent)
+    workset = StoryWorkset(
+        project_id=project_id,
+        story_bible_artifact_id=uuid.UUID(story_bible_artifact_id),
+        outline_artifact_id=uuid.UUID(outline_artifact_id),
+        scripts={
+            int(ep): uuid.UUID(aid)
+            for ep, aid in script_artifact_ids.items()
+            if ep.isdigit() and int(ep) < candidate_episode
+        },
+    )
+    outcome = await state_service.ensure_state_through(
+        db, workset, candidate_episode - 1
+    )
+    return outcome.state
 
 
 async def _load_artifact_content(
@@ -141,9 +144,10 @@ async def continuity_check_node(state: CreationState) -> dict[str, Any]:
         if episode_outline is None:
             raise ValueError(f"大纲中未找到第 {candidate_ep} 集")
 
-        continuity_state = await _reconstruct_continuity_state(
-            story_bible, state.get("script_artifact_ids", {}),
-            artifact_svc, db, candidate_ep,
+        continuity_state = await _load_pre_state(
+            agent, project_id,
+            state["story_bible_artifact_id"], state["outline_set_artifact_id"],
+            state.get("script_artifact_ids", {}), candidate_ep, db,
         )
 
         check_input = ContinuityCheckInput(

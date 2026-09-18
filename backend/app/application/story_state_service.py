@@ -131,6 +131,114 @@ class StoryStateService:
             return None
         return state, head
 
+    async def resolve_status(
+        self,
+        db: AsyncSession,
+        workset: StoryWorkset,
+        through_episode: int,
+    ) -> dict[str, Any]:
+        """只读状态解析(M-04/W3-04):不调用模型、不写库。
+
+        Returns:
+            {status, through_episode(链头), requested_through, missing_episodes,
+             stale_from_episode, state_artifact_id, basis, warnings}
+            status: ready(链头覆盖到请求) | pending(派生落后) |
+                    stale(前缀来源不同,后缀待复核) | gap(正文缺失) |
+                    missing(尚无链)
+        """
+        warnings: list[str] = []
+        missing = [
+            ep for ep in range(1, through_episode + 1)
+            if workset.scripts.get(ep) is None
+        ]
+        result: dict[str, Any] = {
+            "requested_through": through_episode,
+            "missing_episodes": missing,
+            "stale_from_episode": None,
+            "state_artifact_id": None,
+            "basis": None,
+            "warnings": warnings,
+        }
+        if missing:
+            result["status"] = "gap"
+            warnings.append(f"第 {missing[0]} 集正文 Artifact 缺失")
+            return result
+
+        repo = ArtifactRepository(db)
+        artifacts = await repo.list_by_project(
+            workset.project_id, "continuity_state", offset=0, limit=100
+        )
+        v2_states = [
+            a for a in artifacts
+            if a.status == "valid" and a.content_schema_version == "2.0"
+        ]
+        if not v2_states:
+            result["status"] = "missing"
+            warnings.append("尚无 v2 剧情状态链(首次创作/旧项目未派生)")
+            return result
+
+        loaded = await self.load_latest_state(db, workset)
+        longest_through = max(a.episode_number for a in v2_states)
+        if loaded is None:
+            # 存在状态链但与当前工作集前缀不匹配 → 相对新工作集 stale
+            closest = self._closest_prefix_mismatch(
+                v2_states, workset, through_episode
+            )
+            result["status"] = "stale"
+            result["stale_from_episode"] = closest
+            warnings.append(
+                f"已有状态与当前工作集来源不同,自第 {closest} 集起待复核"
+            )
+            return result
+
+        state, head = loaded
+        result["state_artifact_id"] = str(head.id)
+        result["through_episode"] = state.through_episode
+        result["basis"] = (
+            state.basis.model_dump(mode="json") if state.basis else None
+        )
+        result["episode_summary_artifact_ids"] = _summary_refs(state)
+        if state.through_episode >= through_episode:
+            result["status"] = "ready"
+        elif longest_through > state.through_episode:
+            # 曾有更长链但其来源与当前工作集不同(采用变化)→ 后缀待复核
+            result["status"] = "stale"
+            result["stale_from_episode"] = state.through_episode + 1
+            warnings.append(
+                f"第 {state.through_episode + 1} 集起的派生相对当前工作集"
+                "待复核(来源已变化)"
+            )
+        else:
+            result["status"] = "pending"
+            warnings.append(
+                f"状态链头仅到第 {state.through_episode} 集,"
+                f"第 {state.through_episode + 1}..{through_episode} 集待派生"
+            )
+        return result
+
+    @staticmethod
+    def _closest_prefix_mismatch(
+        states: list[Artifact], workset: StoryWorkset, through: int
+    ) -> int:
+        """找出与工作集最早不一致的集数(保守:最早变化集)。"""
+        best = through
+        best_score = -1
+        for artifact in states:
+            basis = (artifact.content or {}).get("basis") or {}
+            refs = basis.get("script_artifact_ids") or {}
+            first_mismatch = None
+            for ep in range(1, min(through, artifact.episode_number) + 1):
+                if refs.get(str(ep)) != str(workset.scripts.get(ep)):
+                    first_mismatch = ep
+                    break
+            if first_mismatch is None:
+                first_mismatch = artifact.episode_number + 1
+            score = artifact.episode_number
+            if score > best_score:
+                best_score = score
+                best = first_mismatch
+        return max(1, min(best, through))
+
     # ---- 派生 ----
 
     async def ensure_state_through(

@@ -54,6 +54,11 @@ class TaskContextPolicy(BaseModel):
     model_config = {"extra": "forbid"}
 
     task: TaskKind = Field(..., description="任务类型")
+    strict_required: bool = Field(
+        default=False,
+        description="True 时 required_sections 缺失抛 REQUIRED_CONTEXT_MISSING"
+        "(fail closed);False 时仅记录警告(如规划类任务允许无当前目标)",
+    )
     ratios: dict[ContextSection, float] = Field(
         ..., description="各分段权重（不含 current_target，可不必和为 1）"
     )
@@ -116,6 +121,7 @@ _POLICIES: dict[TaskKind, TaskContextPolicy] = {
     ),
     TaskKind.WRITER: TaskContextPolicy(
         task=TaskKind.WRITER,
+        strict_required=True,
         ratios={
             ContextSection.SYSTEM_RULES: 0.10,
             ContextSection.USER_REQUEST: 0.08,
@@ -127,6 +133,7 @@ _POLICIES: dict[TaskKind, TaskContextPolicy] = {
     ),
     TaskKind.EVALUATOR: TaskContextPolicy(
         task=TaskKind.EVALUATOR,
+        strict_required=True,
         ratios={
             ContextSection.SYSTEM_RULES: 0.10,
             ContextSection.USER_REQUEST: 0.10,
@@ -138,6 +145,7 @@ _POLICIES: dict[TaskKind, TaskContextPolicy] = {
     ),
     TaskKind.REVISER: TaskContextPolicy(
         task=TaskKind.REVISER,
+        strict_required=True,
         ratios={
             ContextSection.SYSTEM_RULES: 0.10,
             ContextSection.USER_REQUEST: 0.10,
@@ -169,7 +177,8 @@ class ContextTooLargeError(AppError):
     """
 
     status_code = 413
-    code = "CONTEXT_TOO_LARGE"
+    # M-04/W3-06:稳定错误码 PROTECTED_CONTEXT_TOO_LARGE(旧值 CONTEXT_TOO_LARGE)
+    code = "PROTECTED_CONTEXT_TOO_LARGE"
 
 
 class TokenEstimator(ABC):

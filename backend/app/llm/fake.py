@@ -22,6 +22,7 @@ I-01：与真实客户端一致接入重试层与 per-run 预算——
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -58,6 +59,7 @@ class FakeLLM(LLMClient):
         self.seed = seed
         self.retry_policy = retry_policy
         self._registry: dict[str, BaseModel] = {}
+        self._factories: dict[str, Callable[[list[dict[str, str]]], BaseModel]] = {}
         self._faults: dict[int, FakeFault] = {}
         self._call_history: list[LLMCallResult] = []
         self._attempt_count = 0
@@ -73,6 +75,16 @@ class FakeLLM(LLMClient):
             result: 要返回的 Pydantic 对象实例
         """
         self._registry[prompt_name] = result
+
+    def register_factory(
+        self, prompt_name: str, factory: Callable[[list[dict[str, str]]], BaseModel]
+    ) -> None:
+        """注册内容感知工厂:按 Prompt 消息动态构造返回值。
+
+        用于集数相关等无法用静态 fixture 表达的确定性桩
+        (如 episode_summary_v2 按集号生成 typed delta)。
+        """
+        self._factories[prompt_name] = factory
 
     def set_default(self, result: BaseModel) -> None:
         """设置未匹配 prompt_name 时的默认返回值。"""
@@ -180,13 +192,19 @@ class FakeLLM(LLMClient):
             record_call()
             return result
 
-        # 查找 fixture
+        # 查找 fixture:动态工厂优先(内容感知,如按集数生成 typed delta),
+        # 其次静态注册表,最后默认值。
         prompt_name = kwargs.get("prompt_name", "")
         if not prompt_name and messages:
             last_content = messages[-1].get("content", "")
             prompt_name = last_content[:50]
 
-        fixture = self._registry.get(prompt_name, self._default_result)
+        factory = self._factories.get(prompt_name)
+        fixture: BaseModel | None
+        if factory is not None:
+            fixture = factory(messages)
+        else:
+            fixture = self._registry.get(prompt_name, self._default_result)
 
         duration_ms = int((time.monotonic() - start) * 1000)
 
@@ -225,3 +243,22 @@ class FakeLLM(LLMClient):
         self._attempt_count = 0
         self._call_history.clear()
         self._faults.clear()
+
+
+def episode_delta_factory(messages: list[dict[str, str]]) -> BaseModel:
+    """episode_summary_v2 的确定性内容感知桩(M-03/M-04 测试基建)。
+
+    从渲染后的 Prompt 标题行提取集号,返回最小合法 typed delta;
+    需要更丰富结构的测试可在 FakeLLM 子类/工厂上覆盖。
+    """
+    import re
+
+    from app.domain.summary import EpisodeDelta
+
+    match = re.search(r"第 (\d+) 集剧本", messages[-1]["content"])
+    episode = int(match.group(1)) if match else 1
+    return EpisodeDelta(
+        episode_number=episode,
+        summary=f"第{episode}集完成",
+        key_events=[f"第{episode}集关键事件"],
+    )

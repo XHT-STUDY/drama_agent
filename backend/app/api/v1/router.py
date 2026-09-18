@@ -22,6 +22,7 @@ from app.api.v1.knowledge import router as knowledge_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.revisions import router as revisions_router
 from app.api.v1.runs import router as runs_router
+from app.api.v1.story_state import router as story_state_router
 from app.api.v1.uploads import router as uploads_router
 from app.core.errors import ServiceUnavailableError
 from app.core.logging import get_logger
@@ -139,6 +140,7 @@ async def health_ready(request: Request) -> dict[str, Any]:
 
 # ---- 子路由注册 ----
 router.include_router(projects_router)
+router.include_router(story_state_router)
 router.include_router(agent_router)
 router.include_router(conversations_router)
 router.include_router(artifacts_router)
