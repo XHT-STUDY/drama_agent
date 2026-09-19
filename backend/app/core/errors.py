@@ -349,6 +349,41 @@ class MCPToolTimeoutError(AppError):
     code = "MCP_TOOL_TIMEOUT"
 
 
+class MCPToolNotAvailableError(AppError):
+    """MCP Tool 不存在或不在白名单（404 MCP_TOOL_NOT_AVAILABLE）。"""
+
+    status_code = 404
+    code = "MCP_TOOL_NOT_AVAILABLE"
+
+
+class MCPToolStaleError(AppError):
+    """MCP Tool 定义在计划后已变化（409 MCP_TOOL_STALE）。"""
+
+    status_code = 409
+    code = "MCP_TOOL_STALE"
+
+
+class MCPToolArgumentInvalidError(AppError):
+    """MCP Tool 输入参数未通过 JSON Schema 校验（422 MCP_TOOL_ARGUMENT_INVALID）。"""
+
+    status_code = 422
+    code = "MCP_TOOL_ARGUMENT_INVALID"
+
+
+class MCPToolError(AppError):
+    """MCP Tool 远程执行返回错误（502 MCP_TOOL_ERROR）。"""
+
+    status_code = 502
+    code = "MCP_TOOL_ERROR"
+
+
+class MCPToolResultInvalidError(AppError):
+    """MCP Tool 结构化输出未通过 outputSchema 校验（502 MCP_TOOL_RESULT_INVALID）。"""
+
+    status_code = 502
+    code = "MCP_TOOL_RESULT_INVALID"
+
+
 # ---- 辅助函数 ----
 
 

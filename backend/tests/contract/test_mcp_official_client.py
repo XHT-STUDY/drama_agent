@@ -1,10 +1,11 @@
-"""官方 mcp SDK Client 契约测试（MCP-01）。
+"""官方 mcp SDK Client 契约测试（MCP-01/MCP-02）。
 
 使用官方 in-process MCPServer（无真实网络）验证：
 - 协议协商后可读取协议版本、Server 信息与 capabilities；
 - tools/list 自动发现、tools/call 调用、isError 语义；
 - 多 Server 并存与同名 Tool 按 server_id 隔离；
-- 超时取消、并发上限、Token 请求头注入与跨源重定向拒绝。
+- 超时取消、并发上限、Token 请求头注入与跨源重定向拒绝；
+- MCP-02：catalog→ToolRegistry 注册、执行服务端到端校验。
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import pytest
 from app.core.errors import (
     MCPConfigInvalidError,
     MCPServerUnavailableError,
+    MCPToolArgumentInvalidError,
     MCPToolTimeoutError,
 )
 from app.integrations.mcp.client import MCPServerClient
@@ -114,12 +116,13 @@ class TestNegotiationAndDiscovery:
         manager = await _started_manager([_config("research")], {"research": _make_server("research")})
         try:
             tools = manager.list_tools("research")
-            names = [t.name for t in tools]
-            assert "search" in names and "boom" in names and "slow" in names
+            # catalog 只包含 allowlist 内的工具（boom/slow 在 Server 上存在但被过滤）
+            assert [t.tool_name for t in tools] == ["search"]
             search = manager.get_tool("research", "search")
             assert search is not None
             assert search.description
             assert search.input_schema.get("type") == "object"
+            assert search.qualified_tool_name == "mcp__research__search"
         finally:
             await manager.shutdown()
 
@@ -414,3 +417,86 @@ class TestMCPServerClientDirect:
         await manager.shutdown()
         with pytest.raises(MCPServerUnavailableError):
             await manager.call_tool("research", "search", {})
+
+
+# ======================================================================
+# MCP-02：catalog → ToolRegistry 注册与执行服务端到端
+# ======================================================================
+
+
+class TestMCPRemoteToolContract:
+    async def test_two_servers_same_tool_registered_and_called(self) -> None:
+        """两个 Server 的同名工具可同时注册、独立调用（in-process 端到端）。"""
+        from app.integrations.mcp.adapter import register_mcp_remote_tools
+        from app.tools.registry import ToolRegistry
+
+        manager = await _started_manager(
+            [_config("research"), _config("assets")],
+            {"research": _make_server("research"), "assets": _make_server("assets")},
+        )
+        try:
+            registry = ToolRegistry()
+            names = register_mcp_remote_tools(registry, manager)
+            assert sorted(names) == ["mcp__assets__search", "mcp__research__search"]
+            for server_id in ("research", "assets"):
+                result = await registry.get(f"mcp__{server_id}__search").execute(query="q")
+                assert result.llm_readable_text() == f"{server_id}:q"
+                assert result.is_error is False
+                assert result.protocol_version
+        finally:
+            await manager.shutdown()
+
+    async def test_invalid_arguments_blocked_before_remote_call(self) -> None:
+        """输入校验失败 → 远端调用计数为 0（真实 in-process Server）。"""
+        from app.integrations.mcp.adapter import register_mcp_remote_tools
+        from app.integrations.mcp.execution import MCPExecutionService
+        from app.tools.registry import ToolRegistry
+
+        calls: list[dict[str, Any]] = []
+
+        from mcp.server.mcpserver import MCPServer
+
+        server = MCPServer(name="counting")
+
+        @server.tool()
+        def search(query: str) -> str:
+            """Search."""
+            calls.append({"query": query})
+            return f"hit:{query}"
+
+        config = _config("counting", allowed_tools=["search"])
+        manager = await _started_manager([config], {"counting": server})
+        try:
+            registry = ToolRegistry()
+            register_mcp_remote_tools(registry, manager)
+            tool = registry.get("mcp__counting__search")
+            with pytest.raises(MCPToolArgumentInvalidError):
+                await tool.execute(query=123)  # type: ignore[arg-type]
+            assert calls == [], "输入校验失败不得触达远端"
+            # 合法调用正常抵达
+            result = await tool.execute(query="ok")
+            assert result.llm_readable_text() == "hit:ok"
+            assert len(calls) == 1
+            _ = MCPExecutionService  # 执行服务经 MCPRemoteTool 内部委托
+        finally:
+            await manager.shutdown()
+
+    async def test_stale_digest_detected_end_to_end(self) -> None:
+        """计划后工具定义变化（digest 不一致）→ MCP_TOOL_STALE，不发调用。"""
+        from app.core.errors import MCPToolStaleError
+        from app.integrations.mcp.execution import MCPExecutionService, MCPToolCallCommand
+
+        manager = await _started_manager([_config("research")], {"research": _make_server("research")})
+        try:
+            service = MCPExecutionService(manager)
+            with pytest.raises(MCPToolStaleError):
+                await service.execute(
+                    MCPToolCallCommand(
+                        server_id="research",
+                        tool_name="search",
+                        arguments={"query": "q"},
+                        expected_definition_digest="1" * 64,
+                    )
+                )
+        finally:
+            await manager.shutdown()

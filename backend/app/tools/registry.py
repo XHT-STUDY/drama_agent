@@ -46,3 +46,11 @@ class ToolRegistry:
     def list_metadata(self) -> list[ToolMetadata]:
         """列出全部工具元数据（I-04，含 input_schema/output_schema 声明）。"""
         return [t.metadata for t in self._tools.values()]
+
+    def remove(self, name: str) -> None:
+        """移除已注册工具（不存在时幂等；供外部工具目录刷新使用，MCP-02）。"""
+        self._tools.pop(name, None)
+
+    def list_by_execution_kind(self, kind: str) -> list[Tool]:
+        """按执行位置筛选（local / external）。"""
+        return [t for t in self._tools.values() if t.metadata.execution_kind == kind]

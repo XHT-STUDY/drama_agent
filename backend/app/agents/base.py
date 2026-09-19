@@ -81,7 +81,12 @@ class BaseAgent:
         )
 
     async def call_tool(self, name: str, **kwargs: Any) -> Any:
-        """调用已注册的 Tool。"""
+        """调用已注册的 Tool。
+
+        内部（local）确定性工具可直接调用；外部工具（execution_kind=
+        external，如 MCP）必须经确认链路（AgentAction → WorkflowRun →
+        MCPExecutionService）执行，不得由模型侧直接触发。
+        """
         tool = self.tools.get(name)
         return await tool.execute(**kwargs)
 

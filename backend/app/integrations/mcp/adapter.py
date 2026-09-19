@@ -1,35 +1,122 @@
-"""MCPToolAdapter — 把外部 MCP 工具映射为内部 Tool 协议（I-04）。
+"""MCP Tool → 内部 Tool 协议适配（MCP-02）。
 
-通过 HTTP JSON-RPC 调用外部工具：
-- 注册名 = `prefix + 外部工具名`（默认前缀 `mcp_`），重名由 ToolRegistry 抛 409；
-- 429 / 5xx 按 I-01 退避策略重试（尊重 Retry-After）；
-- 超时 → EXTERNAL_TOOL_TIMEOUT（504）；外部错误 / 响应异常 → 泛化
-  EXTERNAL_TOOL_ERROR（502），detail 不泄漏内部连接信息；
-- 无 MCP 配置（默认关）时本类不被实例化，主流程不受影响。
+- ``MCPRemoteTool``（ExternalTool）：一个 catalog 中的 MCP 工具定义对应
+  一个内部 Tool。内部注册名 = ``mcp__{server_id}__{tool_name}``；
+  execute 只委托 MCPExecutionService（Schema 校验、digest 校验、结果
+  规范化与大小限制），不自行管理网络连接。
+- ``register_mcp_remote_tools``：把 catalog 中全部 available 工具注册到
+  ToolRegistry（allowlist 已在 catalog 构建时过滤）。
 
-复用 I-01 的 RetryPolicy 与 parse_retry_after（退避机制一致）。
+弃用（I-04 手写 JSON-RPC Adapter，保留一个发布周期）：
+- ``MCPToolAdapter`` / ``register_mcp_tools``：非标准请求格式，无协议
+  协商，协议底层已由官方 SDK 取代；确认无调用方后删除。
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from collections.abc import Callable
 from typing import Any
 
 import httpx
 
 from app.core.errors import ExternalToolError, ExternalToolTimeoutError
+from app.integrations.mcp.catalog import MCPToolDefinition
+from app.integrations.mcp.execution import MCPExecutionService, MCPToolCallCommand
 from app.integrations.mcp.protocol import MCPAdapterConfig, MCPToolSpec
 from app.llm.retry import RetryPolicy, parse_retry_after
-from app.tools.protocol import Tool, ToolMetadata
+from app.tools.protocol import (
+    ExternalTool,
+    ExternalToolHints,
+    Tool,
+    ToolMetadata,
+)
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 
+class MCPRemoteTool(ExternalTool):
+    """catalog 中的 MCP 工具 → 内部 ExternalTool。"""
+
+    def __init__(
+        self,
+        definition: MCPToolDefinition,
+        execution: MCPExecutionService,
+    ) -> None:
+        self.definition = definition
+        self._execution = execution
+        hints = definition.annotations
+        self.metadata = ToolMetadata(
+            name=definition.qualified_tool_name,
+            version="1.0",
+            description=definition.description or f"MCP 外部工具：{definition.tool_name}",
+            input_schema=definition.input_schema,
+            output_schema=definition.output_schema or {},
+            execution_kind="external",
+            source_id=definition.server_id,
+            requires_confirmation=True,
+            network_access=True,
+            external_hints=(
+                ExternalToolHints(
+                    title=hints.title,
+                    read_only_hint=hints.read_only_hint,
+                    destructive_hint=hints.destructive_hint,
+                    idempotent_hint=hints.idempotent_hint,
+                    open_world_hint=hints.open_world_hint,
+                )
+                if hints is not None
+                else None
+            ),
+        )
+
+    async def execute(self, **kwargs: Any) -> Any:
+        """经 MCPExecutionService 执行（前置校验 + 结果规范化）。"""
+        command = MCPToolCallCommand(
+            server_id=self.definition.server_id,
+            tool_name=self.definition.tool_name,
+            arguments=dict(kwargs),
+            expected_definition_digest=self.definition.definition_digest,
+        )
+        return await self._execution.execute(command)
+
+
+def register_mcp_remote_tools(
+    registry: ToolRegistry,
+    manager: Any,
+    *,
+    execution: MCPExecutionService | None = None,
+) -> list[str]:
+    """把 catalog 中全部 available 的 MCP 工具注册到 ToolRegistry。
+
+    Args:
+        registry: 内部 ToolRegistry 实例。
+        manager: MCPClientManager（提供 catalog）。
+        execution: 可选共享执行服务；缺省按 manager 构建。
+
+    Returns:
+        实际注册的内部工具名列表（无可用工具时为空）。
+    """
+    service = execution or MCPExecutionService(manager)
+    registered: list[str] = []
+    for definition in manager.catalog.list_available():
+        tool = MCPRemoteTool(definition, service)
+        registry.register(tool)
+        registered.append(tool.metadata.name)
+    if registered:
+        logger.info("MCP 外部工具注册完成: count=%d", len(registered))
+    return registered
+
+
+# ======================================================================
+# 弃用：I-04 手写 JSON-RPC Adapter（保留一个发布周期）
+# ======================================================================
+
+
 class MCPToolAdapter(Tool):
-    """一个外部 MCP 工具 → 一个内部 Tool。"""
+    """一个外部 MCP 工具 → 一个内部 Tool（弃用：手写 JSON-RPC）。"""
 
     def __init__(
         self,
@@ -40,15 +127,13 @@ class MCPToolAdapter(Tool):
         retry_policy: RetryPolicy | None = None,
         request_id_fn: Callable[[], int] | None = None,
     ) -> None:
-        """初始化适配器。
-
-        Args:
-            spec: 外部工具描述
-            config: 连接配置（base_url / timeout / prefix）
-            transport: 可选 httpx transport（测试注入 MockTransport，生产为 None）
-            retry_policy: 退避策略；默认 RetryPolicy()（I-01）
-            request_id_fn: JSON-RPC id 生成器；默认自增计数器
-        """
+        """初始化适配器（弃用）。"""
+        warnings.warn(
+            "MCPToolAdapter 为弃用实现（手写 JSON-RPC，非标准 tools/call）；"
+            "请迁移到官方 SDK 的 MCPRemoteTool，将在下个发布周期移除",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.spec = spec
         self.config = config
         self._transport = transport
@@ -75,19 +160,7 @@ class MCPToolAdapter(Tool):
         return self._request_id
 
     async def execute(self, **kwargs: Any) -> Any:
-        """调用外部工具（JSON-RPC over HTTP）。
-
-        Args:
-            **kwargs: 工具入参（对应 JSON-RPC params）
-
-        Returns:
-            外部工具返回的 result（原样透传，不本地解析）
-
-        Raises:
-            ExternalToolTimeoutError: 超时（504 EXTERNAL_TOOL_TIMEOUT）
-            ExternalToolError: 连接失败 / HTTP 错误 / JSON-RPC error /
-                响应无法解析（502 EXTERNAL_TOOL_ERROR，泛化不泄漏内部信息）
-        """
+        """调用外部工具（JSON-RPC over HTTP，弃用路径）。"""
         payload: dict[str, Any] = {
             "jsonrpc": "2.0",
             "method": self.spec.name,
@@ -162,21 +235,7 @@ def register_mcp_tools(
     transport: httpx.AsyncBaseTransport | None = None,
     retry_policy: RetryPolicy | None = None,
 ) -> list[str]:
-    """把一组外部工具注册到内部 ToolRegistry。
-
-    注册名 = `config.prefix + 外部工具名`；重名注册会抛
-    TOOL_ALREADY_REGISTERED（409），由调用方决定是否捕获。
-
-    Args:
-        registry: 内部 ToolRegistry 实例
-        specs: 外部工具描述列表
-        config: MCP 连接配置（enabled=False 时不注册）
-        transport: 可选测试注入 transport
-        retry_policy: 可选退避策略
-
-    Returns:
-        实际注册的内部工具名列表（enabled=False 时返回空列表）
-    """
+    """把一组外部工具注册到内部 ToolRegistry（弃用路径）。"""
     if not config.enabled:
         return []
     registered: list[str] = []

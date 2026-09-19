@@ -23,6 +23,11 @@ from app.core.errors import (
     MCPToolTimeoutError,
 )
 from app.core.logging import get_logger
+from app.integrations.mcp.catalog import (
+    MCPToolCatalog,
+    MCPToolDefinition,
+    build_server_definitions,
+)
 from app.integrations.mcp.client import HttpClientFactory, MCPServerClient, ServerLike
 from app.integrations.mcp.protocol import MCPServerConfig, MCPServerState
 from app.integrations.mcp.security import assert_resolved_hosts_public, validate_server_url
@@ -116,6 +121,8 @@ class MCPClientManager:
             config.id: _ServerEntry(config) for config in configs
         }
         self._closed = False
+        # 工具目录（allowlist 过滤后的定义 + digest，MCP-02）
+        self.catalog = MCPToolCatalog()
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -145,6 +152,7 @@ class MCPClientManager:
                     logger.warning("MCP Server 关闭异常: server=%s", entry.config.id)
                 entry.client = None
             entry.state.status = "disabled"
+            self.catalog.remove_server(entry.config.id)
 
     async def _connect_and_discover(self, entry: _ServerEntry) -> None:
         """连接单个 Server：安全校验 → 协商 → 发现，失败标记 degraded。"""
@@ -209,15 +217,21 @@ class MCPClientManager:
             entry.state.server_name = client.server_name
             entry.state.server_version = client.server_version
             entry.state.capabilities = dict(client.capabilities_summary)
-            entry.state.tool_count = len(entry.tools)
+            entry.state.tool_count = len(self.catalog.list_for_server(config.id))
             logger.info(
-                "MCP Server 发现完成: server=%s tools=%d", config.id, len(entry.tools)
+                "MCP Server 发现完成: server=%s tools=%d（allowlist 过滤后）",
+                config.id,
+                entry.state.tool_count,
             )
 
     async def _connect_discover(self, client: MCPServerClient, entry: _ServerEntry) -> None:
-        """协商 + tools/list（在 wait_for 内执行，整体受超时约束）。"""
+        """协商 + tools/list + allowlist 过滤 + catalog 原子发布。"""
         await client.connect()
         entry.tools = await client.list_tools()
+        definitions = build_server_definitions(
+            entry.config.id, entry.tools, entry.config.allowed_tools
+        )
+        self.catalog.replace_server_tools(entry.config.id, definitions)
 
     # ------------------------------------------------------------------
     # 查询
@@ -236,16 +250,13 @@ class MCPClientManager:
         return [sid for sid, e in self._entries.items() if e.state.status == "available"]
 
     def list_tools(self, server_id: str) -> list[Any]:
-        """返回最近一次发现的原始 Tool 定义（不发网络请求）。"""
+        """返回该 Server 的 catalog 工具定义（allowlist 过滤后，不发网络请求）。"""
         entry = self._require_entry(server_id)
-        return list(entry.tools)
+        return self.catalog.list_for_server(entry.config.id)
 
-    def get_tool(self, server_id: str, tool_name: str) -> Any | None:
-        """按原始工具名查找定义；不存在返回 None。"""
-        for tool in self.list_tools(server_id):
-            if getattr(tool, "name", None) == tool_name:
-                return tool
-        return None
+    def get_tool(self, server_id: str, tool_name: str) -> MCPToolDefinition | None:
+        """按原始工具名查找 catalog 定义；不存在返回 None。"""
+        return self.catalog.get_by_names(server_id, tool_name)
 
     # ------------------------------------------------------------------
     # 调用
@@ -291,7 +302,10 @@ class MCPClientManager:
                 raise MCPProtocolError(detail=f"MCP Tool 协议错误: {tool_name}") from exc
 
     async def refresh_tools(self, server_id: str) -> list[Any]:
-        """重新执行 tools/list 并更新缓存（stale 恢复入口）。
+        """重新执行 tools/list 并原子更新 catalog（stale 恢复入口）。
+
+        刷新失败：catalog 中该 Server 全部工具转 stale（不允许新调用），
+        异常分类后抛出。
 
         Raises:
             MCPServerUnavailableError: Server 非 available。
@@ -303,17 +317,24 @@ class MCPClientManager:
                 detail=f"MCP Server 不可用: {server_id}（{entry.state.error_code or '未知状态'}）"
             )
         try:
-            entry.tools = await asyncio.wait_for(
+            tools = await asyncio.wait_for(
                 entry.client.list_tools(), timeout=entry.config.timeout_seconds
             )
         except TimeoutError:
+            self.catalog.mark_server_stale(server_id)
             raise MCPToolTimeoutError(
                 detail=f"MCP 工具列表刷新超时（>{entry.config.timeout_seconds}s）"
             ) from None
         except BaseException as exc:  # noqa: BLE001
+            self.catalog.mark_server_stale(server_id)
             raise MCPProtocolError(detail="MCP 工具列表刷新失败") from exc
-        entry.state.tool_count = len(entry.tools)
-        return list(entry.tools)
+        entry.tools = tools
+        self.catalog.replace_server_tools(
+            server_id,
+            build_server_definitions(server_id, tools, entry.config.allowed_tools),
+        )
+        entry.state.tool_count = len(self.catalog.list_for_server(server_id))
+        return self.catalog.list_for_server(server_id)
 
     # ------------------------------------------------------------------
     # 内部

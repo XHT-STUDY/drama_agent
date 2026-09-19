@@ -61,3 +61,55 @@ class TestToolRegistry:
         d = meta.model_dump()
         assert d["name"] == "test"
         assert d["version"] == "2.0"
+
+    def test_metadata_defaults_keep_local_semantics(self) -> None:
+        """MCP-02：默认元数据保持内部工具语义（local / 无需确认 / 无网络）。"""
+        meta = ToolMetadata(name="echo").model_dump()
+        assert meta["execution_kind"] == "local"
+        assert meta["requires_confirmation"] is False
+        assert meta["network_access"] is False
+        assert meta["source_id"] is None
+        assert meta["external_hints"] is None
+
+    def test_remove_registered_tool(self) -> None:
+        """remove 移除工具；不存在时幂等（MCP-02 catalog 刷新用）。"""
+        registry = ToolRegistry()
+        registry.register(EchoTool())
+        registry.remove("echo")
+        registry.remove("echo")  # 幂等
+        with pytest.raises(AppError):
+            registry.get("echo")
+
+    def test_list_by_execution_kind(self) -> None:
+        """按 local / external 分区列出（MCP-02）。"""
+        from app.tools.protocol import ExternalTool, LocalDeterministicTool
+
+        class LocalEcho(LocalDeterministicTool):
+            metadata = ToolMetadata(name="local_echo")
+
+            async def execute(self, **kwargs):
+                return kwargs
+
+        class RemoteThing(ExternalTool):
+            metadata = ToolMetadata(
+                name="mcp__s__thing",
+                execution_kind="external",
+                source_id="s",
+                requires_confirmation=True,
+                network_access=True,
+            )
+
+            async def execute(self, **kwargs):
+                return kwargs
+
+        registry = ToolRegistry()
+        registry.register(EchoTool())
+        registry.register(LocalEcho())
+        registry.register(RemoteThing())
+        assert {t.metadata.name for t in registry.list_by_execution_kind("local")} == {
+            "echo",
+            "local_echo",
+        }
+        assert [t.metadata.name for t in registry.list_by_execution_kind("external")] == [
+            "mcp__s__thing"
+        ]
