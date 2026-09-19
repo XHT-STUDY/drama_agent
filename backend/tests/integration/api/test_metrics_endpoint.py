@@ -46,6 +46,37 @@ class TestMetricsEndpoint:
         finally:
             registry.reset()
 
+    async def test_mcp_metrics_rendered_with_low_cardinality_labels(
+        self, app: Any, async_client: AsyncClient
+    ) -> None:
+        """MCP-04：四个 MCP 指标可渲染，标签只含 server_id/status。"""
+        from app.observability.metrics import (
+            mcp_call_duration_seconds,
+            mcp_call_total,
+            mcp_discovery_total,
+            mcp_server_status,
+        )
+
+        registry.reset()
+        try:
+            mcp_server_status.set(1, server_id="research")
+            mcp_discovery_total.inc(server_id="research", status="ok")
+            mcp_call_total.inc(server_id="research", status="ok")
+            mcp_call_total.inc(server_id="research", status="timeout")
+            mcp_call_duration_seconds.observe(0.12, server_id="research")
+            resp = await async_client.get("/metrics")
+            assert resp.status_code == 200
+            body = resp.text
+            assert 'mcp_server_status{server_id="research"} 1' in body
+            assert 'mcp_discovery_total{server_id="research",status="ok"} 1' in body
+            assert 'mcp_call_total{server_id="research",status="timeout"} 1' in body
+            assert 'mcp_call_duration_seconds_count{server_id="research"} 1' in body
+            # Tool 名与业务 ID 不进入任何 MCP 指标标签
+            assert "tool_name=" not in body
+            assert "action_id=" not in body
+        finally:
+            registry.reset()
+
     async def test_metrics_no_high_cardinality_labels(
         self, app: Any, async_client: AsyncClient
     ) -> None:

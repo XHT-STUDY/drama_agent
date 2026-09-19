@@ -4,6 +4,50 @@
 
 ---
 
+## MCP 能力建设：官方 SDK Tools-only Host/Client（2026-09-19）
+
+**任务 ID：** MCP-01 / MCP-02 / MCP-03 / MCP-04（见 `docs/MCP_IMPLEMENTATION_PLAN.md`）
+**状态：** DONE（四张任务卡全部验收）
+**日期：** 2026-09-19
+
+### 做了什么
+
+1. **MCP-01 官方 SDK 与 ClientManager**：依赖锁定 `mcp>=2,<3`（2.2.0），协议底层交由官方 SDK（Streamable HTTP 生产传输）。`MCPServerConfig`/`MCP_SERVERS_JSON` 多 Server 配置（旧 `MCP_BASE_URL` 映射 id=default 兼容一个发布周期）；`security.py` HTTPS 强制 + 回环/私网/link-local 拒绝 + DNS 解析校验；`MCPServerClient` 协商/发现/调用（Bearer 只在连接时读环境变量）；`MCPClientManager` 多 Server 并发连接、degraded 降级（MCP_CONFIG_INVALID/UNAVAILABLE/PROTOCOL_ERROR/DISCOVERY_TIMEOUT 四类错误码，不阻断启动）、per-Server 并发信号量、asyncio.wait_for 总超时取消在途调用；FastAPI lifespan 可选加载。
+2. **MCP-02 catalog 与执行契约**：内部 ID `mcp__{server_id}__{tool_name}`；稳定 definition digest（名称/输入/输出/annotations，规范化 JSON SHA-256）；catalog 按 Server 原子替换、刷新失败标 stale；`allowed_tools` 硬白名单（空列表=全部不可调用）；`MCPExecutionService` 八步安全边界（JSON Schema 2020-12 输入校验失败零远程请求、256KiB 按内容块截断、outputSchema 校验、isError→脱敏摘要）；Tool 协议拆 Local/External；`MCPRemoteTool` 注册到 ToolRegistry；旧 I-04 Adapter 标记 DeprecationWarning。
+3. **MCP-03 接入 AgentAction/WorkflowRun**：`use_external_tool` 意图全链路——Planner 只从服务端有界目录（≤20，按描述匹配，经 user_content_vars 非可信边界注入）选择 qualified_tool_name；服务端在计划构建与确认时双重校验（目录成员/allowlist/Schema/digest，定义变化→ACTION_STALE）；确认创建 `WorkflowRun(action=mcp_tool_call)`（幂等键与单活跃 Run 复用既有约束）；单节点工作流经 MCPExecutionService 调用一次，取消轮询中断在途 SDK 调用；结果写成 `action_result` 消息（metadata.mcp_result，不创建 Artifact）；前端 McpToolActionCard（参数折叠、密钥字段隐藏）与 McpToolResult（text/structured/resource link/暂不支持类型/截断）；迁移 0014 只扩 intent CHECK（无新字段）。
+4. **MCP-04 安全可观测与发布**：四个低基数指标（mcp_server_status/mcp_discovery_total/mcp_call_total/mcp_call_duration_seconds，仅 server_id/status 标签）；执行审计日志含协议版本/参数字段名/输出字节数（Token 与完整参数/返回体不进日志）；18 例安全测试（SSRF/DNS rebinding/跨源重定向/Token 缺失与日志脱敏/超大响应截断/注入文本仅作内容/二进制不进 LLM）；2 例性能测试（1000 工具 catalog 处理与有界目录构建 p95<300ms）；本地 TCP smoke（官方 Server + 真实 Streamable HTTP + Bearer，`scripts/mcp_smoke.py`，报告 `docs/MCP_TEST_REPORT.md`）。
+
+### 为什么这么做
+
+- **官方 SDK 负责协议**：手写 JSON-RPC 无版本协商、非标准 tools/call 格式，升级与互操作性不可证；SDK 的 Streamable HTTP 传输默认不跟随跨源重定向（同源内跟随），SSRF 边界直接落在传输层。
+- **模型没有执行权限**：Planner 只输出选择器（qualified ID + 参数），目录外工具名/URL/SQL 被 `_scan_strings` 与目录成员校验双重拒绝；服务端在计划与确认两个时点校验 digest，堵住"计划后工具被改"的窗口。
+- **非幂等外部写不自动重试**：tools/call 无条件失败返回（429/5xx/超时/断连均如此），与旧 Adapter 的退避重试刻意不同；发现/catalog 刷新才可退避。
+- **isError 是结果不是异常**：官方 SDK v2 中工具执行失败返回 `CallToolResult.is_error=True`（不抛异常），错误摘要脱敏后经 MCP_TOOL_ERROR 透出；协议/传输错误才走异常分类。
+- **迁移只扩 CHECK**：workflow_runs.action 本无约束，agent_actions.intent 的 CHECK 是唯一需要迁移的点——不新增表/字段，回滚安全（downgrade 先清理 use_external_tool 行）。
+
+### 修改文件
+
+- 后端新增：`app/integrations/mcp/{client,manager,security,catalog,execution,runtime}.py`、`app/workflows/mcp_tool_call.py`、`migrations/versions/0014_*.py`、`scripts/mcp_smoke.py`、测试 8 个文件（unit/contract/integration/workflow/security/performance）
+- 后端修改：`integrations/mcp/{protocol,adapter,__init__}.py`、`core/{config,errors}.py`、`main.py`、`api/dependencies.py`、`tools/{protocol,registry}.py`、`agents/base.py`、`domain/{agent_command,agent_planner}.py`、`skills/agent_command_planner.py`、`application/{agent_command_service,agent_action_lifecycle,workflow_dispatcher}.py`、`prompts/templates/agent_command_planner.md`、`prompts/manifest.yaml`、`observability/metrics.py`、`pyproject.toml`、`uv.lock`
+- 前端：`types/api.ts`、`features/agent/{McpToolActionCard,McpToolResult,ActionPlanCard,MessageList}.tsx`、`tests/mcp-tool-card.test.tsx`
+- 文档：`EXTENSIONS.md`、`API_CONTRACT.md`、`DEV_PLAN.md`、`MCP_TEST_REPORT.md`、`TEST_PLAN.md`、`TEST_REPORT.md`、`README.md`、`.env.example`
+
+### 验证结果
+
+- 后端：`uv run pytest`（全量，含 MCP_ENABLED=false 回归）通过；`uv run ruff check app tests` 通过；`uv run mypy app` 通过（0 错误）
+- 前端：`pnpm test`（233 passed）/`pnpm lint`/`pnpm typecheck` 通过
+- 安全/性能：`tests/security/test_mcp_security.py` 18 passed；`tests/performance/test_mcp_catalog.py -m performance` 2 passed（p95<300ms）
+- smoke：`scripts/mcp_smoke.py` 真实 TCP 互操作通过（SDK 2.2.0 / 协议 2026-07-28 / 调用 7ms / 错误映射正确 / 清理无遗留）
+
+### 学到了什么
+
+- 官方 SDK v2（2.x）与 v1 API 差异大：`FastMCP`→`MCPServer`、`streamablehttp_client`→`streamable_http_client`、工具错误返回 `is_error=True` 而非抛异常——契约测试把这些语义固化，SDK 升级时先跑契约层。
+- anyio TaskGroup 会用 ExceptionGroup 包装子异常，连接错误分类必须展平异常树（`_iter_exception_tree`），否则一切都会被误判为协议错误。
+- 测试目录带 `__init__.py` 但父目录缺失时，pytest 的 basedir 导入会把 `tests/unit/integrations/mcp` 提升为顶层包 `mcp`，遮蔽官方 SDK——新测试目录必须层层补 `__init__.py`。
+- e2e planner 桩依赖"用户请求是模板最后一个 user_content_vars 内容段"的隐式契约：新增注入段必须放在用户请求之前，否则桩会把工具目录文本当成用户请求。
+
+---
+
 ## IR-4 意图识别优化：单集评估执行范围契约（2026-09-18）
 
 **任务 ID：** IR-4（部分，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §9）

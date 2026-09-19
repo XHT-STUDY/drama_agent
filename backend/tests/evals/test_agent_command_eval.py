@@ -278,6 +278,7 @@ class TestCommandDatasetContract:
                 active_context="null",
                 project_context="",
                 unresolved_turn_count="0",
+                external_tools="",
             )
         )
         normalized_template = "".join(template.split())

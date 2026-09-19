@@ -92,3 +92,18 @@ Phase J 新增约 100 个测试的同时新增了等量生产代码（Agent 服�
 - 性能测试需 `make up`（真实 DB/Redis），不进入普通 CI（默认排除 performance 标记）。
 - SSE 测试在客户端断开风暴时会产生 asyncio 连接级日志噪声（uvicorn 记录
   `protocol.data_received() call failed`），属预期行为，不影响结果与连接释放断言。
+
+## 8. MCP 能力回归（2026-09-19，MCP-04）
+
+- 新增测试：单元 77（config/catalog/execution）+ 契约 22（official client 19 +
+  remote tool 3）+ 集成 3（lifespan）+ 工作流 6（mcp_tool_call）+ API 集成 7
+  （对话链路）+ Planner 9 + 安全 18 + 性能 2（`-m performance`）+ registry 3；
+  旧 Adapter 契约 18 继续通过（弃用兼容期）。
+- 性能实测：1000 工具 catalog 解析+过滤+digest p95 < 300ms（本机远低于阈值）；
+  有界 Planner 目录（20 上限）构建 p95 < 300ms。
+- 指标：`/metrics` 渲染 `mcp_server_status` / `mcp_discovery_total` /
+  `mcp_call_total` / `mcp_call_duration_seconds`，标签仅 `server_id`/`status`。
+- `MCP_ENABLED=false` 全量回归与改造前一致（默认关闭，主流程零影响）。
+- 本地互操作 smoke：官方 SDK Server（Streamable HTTP + Bearer）真实 TCP
+  协商/发现/调用/错误映射/清理全部通过，记录见
+  [MCP_TEST_REPORT.md](MCP_TEST_REPORT.md)。

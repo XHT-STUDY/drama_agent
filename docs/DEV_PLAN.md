@@ -3009,6 +3009,10 @@ Prompt 必须区分：
 | W1-02 | 同屏作品画布与 URL 状态 | 3d | W1-01..05 | DONE | AI Agent | 2026-09-13：三区布局（导航/画布/常驻会话，窄屏双 tab 不卸载）；use-workspace-location（artifact/scene/conversation/panel/compare/run，首载 replace/切稿 push/非法值清理+粘性提示）；ArtifactCanvas 复用五组件（评估按 source_script 匹配/跨版本禁跳转/diff/导出/资料/历史版本横幅）；active_context 从画布派生；草稿 sessionStorage + 会话切换清理；项目活跃 Run 状态区；旧路由兼容重定向（/versions 保留，决策见 DEV_LOG）；GET /artifacts/{id} 增 project_id 归属校验。测试：location 7/布局/草稿隔离/重定向/跨项目 404；前端 212 + 后端全量绿；详见 DEV_LOG 2026-09-13 |
 
 | W1-07 | E2E 环境兼容、流程实测与阶段一收口 | 1.5d | W1-01..06 | DONE | AI Agent | 2026-09-13：e2e_process.py（start_new_session 跨平台进程组，macOS 无 setsid 自动回退；仅清本轮进程组）+4 例自校验；首次创作用例改结果自动回写断言（不依赖刷新）+Run 门/终态驱动消息失效（产品修复）；修复 Composer 发送竞态（new-conversation in-flight 禁用+草稿迁移）、EpisodeNav 未写集禁用；spec 全面适配 W1-02/W1-04 新语义（门消息文本断言/导航选上下文/证据与剩余约束如实断言）；**`bash scripts/e2e.sh REPEAT=1` 13/13 passed（34.6s）、REPEAT=5 65/65 passed**；详见 DEV_LOG 2026-09-13 |
+| MCP-01 | 官方 SDK 与 ClientManager | 2.5d | I-04 | DONE | AI Agent | 2026-09-19：mcp>=2,<3（lock 2.2.0）；protocol.py（MCPServerConfig/MCPServerState/MCP_SERVERS_JSON 解析+旧 BASE_URL 兼容映射）、security.py（HTTPS 强制/回环·私网·link-local 拒绝/DNS 解析校验）、client.py（MCPServerClient 协商/发现/调用，Bearer 仅连接时读 env）、manager.py（多 Server 并发连接、degraded 降级分类、per-Server 信号量、总超时取消在途调用、tools/list 翻页）；lifespan 可选加载+dependencies.get_mcp_manager；MCP_* 错误类 5 个；契约 19+单元 36+集成 3 测试（in-process/ASGI 零真实网络） |
+| MCP-02 | Tool catalog 与内部执行契约 | 2d | MCP-01 | DONE | AI Agent | 2026-09-19：catalog.py（qualified mcp__{server}__{tool}、稳定 definition digest、按 Server 原子替换、stale、allowlist 过滤空列表=全禁）；execution.py（八步安全边界：available/digest/JSON Schema 2020-12 输入校验失败零远程请求/256KiB 按块截断/outputSchema 校验/isError 脱敏）；tools/protocol 拆 Local/External+元数据扩展；MCPRemoteTool+register_mcp_remote_tools；旧 Adapter DeprecationWarning；单元 41+契约 3；103 passed |
+| MCP-03 | 接入 AgentAction 与 WorkflowRun | 2.5d | MCP-02 | DONE | AI Agent | 2026-09-19：领域 use_external_tool/external_tool/MCPToolCallCommand（迁移 0014 仅扩 intent CHECK）；Planner 有界目录（≤20 按描述匹配）+选择器校验+模板 v1.5.0（目录段经 user_content_vars 边界）；服务端计划构建/确认双重 digest 校验（变化→ACTION_STALE）；workflows/mcp_tool_call 单节点（取消轮询中断在途调用）+dispatcher 分支+lifecycle mcp_tool_result 消息；前端 McpToolActionCard/McpToolResult+类型；工作流 6+API 集成 7+Planner 9+前端 5 |
+| MCP-04 | 安全、可观测与发布验收 | 1.5d | MCP-01..03 | DONE | AI Agent | 2026-09-19：指标 mcp_server_status/discovery_total/call_total/call_duration_seconds（仅 server_id/status 低基数）+Gauge.set；执行日志含 protocol/arg_fields/output_bytes（参数只记字段名）；security 18 例（SSRF/DNS rebinding/跨源重定向/Token 缺失与不出现在日志/256KiB 截断/注入文本仅内容/二进制不进 LLM）；性能 2 例（1000 工具 catalog 与有界目录 p95<300ms）；本地 TCP smoke（scripts/mcp_smoke.py，官方 Server+真实 Streamable HTTP+Bearer，报告 docs/MCP_TEST_REPORT.md）；EXTENSIONS/API_CONTRACT/README/TEST_PLAN/TEST_REPORT 同步 |
 
 ### 13.3 阶段验收记录
 
@@ -3479,6 +3483,24 @@ Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋�
 退出验收（2026-09-18）：后端 ruff/mypy/pytest 全量全绿；前端 lint/tsc/228 组件测试全绿；
 迁移 0013 upgrade/downgrade 验证通过；v1 摘要与旧 Run 兼容读取保持。
 真实模型评测与 Mem0 决策门未触发（见 KNOWN_LIMITATIONS §6）。
+
+### 20.9 MCP 能力建设（Tools-only Host/Client，2026-09-19）
+
+依据：[MCP_DESIGN.md](MCP_DESIGN.md) / [MCP_IMPLEMENTATION_PLAN.md](MCP_IMPLEMENTATION_PLAN.md)（四张任务卡全部 DONE）。
+
+| # | 任务 | 估算 | 状态 |
+|---|---|---:|---|
+| MCP-01 | 官方 SDK 与 ClientManager | 2.5d | ✅ DONE（2026-09-19）：mcp>=2,<3 替换手写 JSON-RPC；多 Server 生命周期、标准发现、degraded 降级、URL/SSRF 安全线 |
+| MCP-02 | Tool catalog 与内部执行契约 | 2d | ✅ DONE（2026-09-19）：definition digest、allowlist 硬白名单、JSON Schema 双向校验、256KiB 截断、MCPRemoteTool 注册 |
+| MCP-03 | 接入 AgentAction 与 WorkflowRun | 2.5d | ✅ DONE（2026-09-19）：use_external_tool 意图全链路（有界目录→确认→mcp_tool_call Run→结果消息），前端计划卡与结果组件 |
+| MCP-04 | 安全、可观测与发布验收 | 1.5d | ✅ DONE（2026-09-19）：4 个低基数指标、审计日志脱敏、18 例安全测试、2 例性能测试（p95<300ms）、本地 TCP smoke 报告 |
+
+退出验收（2026-09-19）：后端 ruff/mypy/pytest 全量全绿（含 MCP_ENABLED=false
+回归一致）；前端 lint/tsc/组件测试全绿；`MCP_ENABLED=false` 时行为与改造前
+一致；自动化测试零真实网络/零真实 LLM/零 Token 输出；本地 smoke 覆盖
+官方 Server 真实 Streamable HTTP + Bearer 互操作（SDK 2.2.0 / 协议
+2026-07-28）。对外能力描述更新为「DramaAgent 支持 MCP Tool」（Tools-only
+Host/Client；不提供 Server 角色）。
 
 ## 21. MVP 后续 Backlog
 

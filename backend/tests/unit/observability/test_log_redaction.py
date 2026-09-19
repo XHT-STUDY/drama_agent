@@ -88,3 +88,18 @@ class TestRedactFilter:
             msg="正常消息", args=(), exc_info=None,
         )
         assert RedactFilter().filter(record) is True
+
+
+class TestMCPLogRedaction:
+    """MCP-04：Token / 完整参数 / 完整返回体不进入日志快照。"""
+
+    def test_bearer_token_in_mcp_error_text_masked(self) -> None:
+        masked = mask_secret("MCP Server research Token 环境变量值 Bearer abc.def.ghi")
+        assert "abc.def.ghi" not in masked  # Token 值必须被掩蔽
+        assert "Bearer ***" in masked
+
+    def test_token_env_name_visible_but_value_masked(self) -> None:
+        text = "bearer_token_env=MCP_TOKEN token=sk-live-secret-123"
+        masked = mask_secret(text)
+        assert "MCP_TOKEN" in masked  # 变量名可见（非敏感）
+        assert "sk-live-secret-123" not in masked

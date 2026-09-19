@@ -90,6 +90,12 @@ class Gauge:
     def dec(self, value: float = 1.0, **labels: Any) -> None:
         self._add(-value, labels)
 
+    def set(self, value: float, **labels: Any) -> None:
+        """直接设置当前值（状态类 gauge，如 mcp_server_status）。"""
+        key = _label_key(self.label_names, labels)
+        with self._lock:
+            self._values[key] = float(value)
+
     def _add(self, value: float, labels: dict[str, Any]) -> None:
         key = _label_key(self.label_names, labels)
         with self._lock:
@@ -276,4 +282,27 @@ sse_connections_active = registry.gauge(
 rag_retrieval_duration_seconds = registry.histogram(
     "rag_retrieval_duration_seconds",
     "知识库检索耗时（秒）",
+)
+# ---- MCP 外部工具（MCP-04）----
+# 标签只用低基数 server_id / status；Tool 名、项目/Action/Run ID 一律
+# 不进标签（外部 Server 可动态增删工具，防高基数）。
+mcp_server_status = registry.gauge(
+    "mcp_server_status",
+    "MCP Server 连接状态（1=available，0=degraded/disabled）",
+    ("server_id",),
+)
+mcp_discovery_total = registry.counter(
+    "mcp_discovery_total",
+    "MCP 工具发现结果（status=ok/failed）",
+    ("server_id", "status"),
+)
+mcp_call_total = registry.counter(
+    "mcp_call_total",
+    "MCP Tool 调用结果（status=ok/error/timeout）",
+    ("server_id", "status"),
+)
+mcp_call_duration_seconds = registry.histogram(
+    "mcp_call_duration_seconds",
+    "MCP Tool 调用耗时（秒）",
+    ("server_id",),
 )

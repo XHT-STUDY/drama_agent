@@ -31,6 +31,12 @@ from app.integrations.mcp.catalog import (
 from app.integrations.mcp.client import HttpClientFactory, MCPServerClient, ServerLike
 from app.integrations.mcp.protocol import MCPServerConfig, MCPServerState
 from app.integrations.mcp.security import assert_resolved_hosts_public, validate_server_url
+from app.observability.metrics import (
+    mcp_call_duration_seconds,
+    mcp_call_total,
+    mcp_discovery_total,
+    mcp_server_status,
+)
 
 logger = get_logger(__name__)
 
@@ -148,17 +154,21 @@ class MCPClientManager:
             if entry.client is not None:
                 try:
                     await entry.client.close()
-                except Exception:  # noqa: BLE001 - 关闭失败只记录，不影响其他 Server
-                    logger.warning("MCP Server 关闭异常: server=%s", entry.config.id)
+                except Exception as exc:  # noqa: BLE001 - 关闭失败只记录，不影响其他 Server
+                    logger.warning(
+                        "MCP Server 关闭异常: server=%s type=%s", entry.config.id, type(exc).__name__
+                    )
                 entry.client = None
             entry.state.status = "disabled"
             self.catalog.remove_server(entry.config.id)
+            mcp_server_status.set(0, server_id=entry.config.id)
 
     async def _connect_and_discover(self, entry: _ServerEntry) -> None:
         """连接单个 Server：安全校验 → 协商 → 发现，失败标记 degraded。"""
         config = entry.config
         if not config.enabled:
             entry.mark(status="disabled")
+            mcp_server_status.set(0, server_id=config.id)
             return
         try:
             validate_server_url(
@@ -189,11 +199,15 @@ class MCPClientManager:
                 error_code=MCPDiscoveryTimeoutError.code,
                 error_detail=f"连接或工具发现超时（>{config.timeout_seconds}s）",
             )
+            mcp_discovery_total.inc(server_id=config.id, status="failed")
+            mcp_server_status.set(0, server_id=config.id)
             logger.warning("MCP Server 发现超时: server=%s", config.id)
         except MCPConfigInvalidError as exc:
             entry.mark(
                 status="degraded", error_code=exc.code, error_detail=exc.detail
             )
+            mcp_discovery_total.inc(server_id=config.id, status="failed")
+            mcp_server_status.set(0, server_id=config.id)
             logger.warning("MCP Server 配置非法: server=%s code=%s", config.id, exc.code)
         except BaseException as exc:  # noqa: BLE001 - 启动期分类记录，不中断
             code = (
@@ -206,12 +220,16 @@ class MCPClientManager:
                 error_code=code,
                 error_detail=f"{type(exc).__name__}: {exc}"[:200],
             )
+            mcp_discovery_total.inc(server_id=config.id, status="failed")
+            mcp_server_status.set(0, server_id=config.id)
             logger.warning(
                 "MCP Server 连接失败: server=%s code=%s", config.id, code
             )
         else:
             entry.client = client
             entry.mark(status="available")
+            mcp_discovery_total.inc(server_id=config.id, status="ok")
+            mcp_server_status.set(1, server_id=config.id)
             # 协商结果写入状态快照（供诊断与后续调用展示）
             entry.state.protocol_version = client.protocol_version
             entry.state.server_name = client.server_name
@@ -280,13 +298,17 @@ class MCPClientManager:
             raise MCPServerUnavailableError(
                 detail=f"MCP Server 不可用: {server_id}（{entry.state.error_code or '未知状态'}）"
             )
+        import time as _time
+
+        started = _time.monotonic()
         async with entry.semaphore:
             try:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     entry.client.call_tool(tool_name, arguments),
                     timeout=entry.config.timeout_seconds,
                 )
             except TimeoutError:
+                mcp_call_total.inc(server_id=server_id, status="timeout")
                 raise MCPToolTimeoutError(
                     detail=f"MCP Tool 调用超时（>{entry.config.timeout_seconds}s）: {tool_name}"
                 ) from None
@@ -295,11 +317,16 @@ class MCPClientManager:
             except MCPConfigInvalidError:
                 raise
             except BaseException as exc:  # noqa: BLE001 - 传输/协议错误统一泛化
+                mcp_call_total.inc(server_id=server_id, status="error")
                 if _is_connect_error(exc):
                     raise MCPProtocolError(
                         detail=f"MCP Tool 传输失败: {tool_name}"
                     ) from None
                 raise MCPProtocolError(detail=f"MCP Tool 协议错误: {tool_name}") from exc
+        elapsed = _time.monotonic() - started
+        mcp_call_total.inc(server_id=server_id, status="ok")
+        mcp_call_duration_seconds.observe(elapsed, server_id=server_id)
+        return result
 
     async def refresh_tools(self, server_id: str) -> list[Any]:
         """重新执行 tools/list 并原子更新 catalog（stale 恢复入口）。

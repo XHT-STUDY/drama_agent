@@ -53,8 +53,18 @@ DramaAgent API 遵循 RESTful 风格，所有端点以 `/api/v1/` 为前缀。
 | 413 | `FILE_TOO_LARGE` | 上传超过 10 MB | 上传 |
 | 415 | `INVALID_FILE_TYPE` | 仅 TXT / DOCX | 上传 |
 | 422 | `FILE_PARSE_FAILED` | 文件解析失败（含宏 / 加密文档） | 上传 |
-| 502 | `EXTERNAL_TOOL_ERROR` | 外部 MCP 工具调用失败（不泄漏内部连接信息） | MCP |
-| 504 | `EXTERNAL_TOOL_TIMEOUT` | 外部 MCP 工具调用超时 | MCP |
+| 502 | `EXTERNAL_TOOL_ERROR` | 外部 MCP 工具调用失败（不泄漏内部连接信息）——弃用路径（I-04 手写 Adapter） | MCP |
+| 504 | `EXTERNAL_TOOL_TIMEOUT` | 外部 MCP 工具调用超时——弃用路径 | MCP |
+| 400 | `MCP_CONFIG_INVALID` | MCP Server 配置非法（JSON 结构/URL/Token 环境变量缺失） | MCP 启动诊断（MCP-01） |
+| 503 | `MCP_SERVER_UNAVAILABLE` | MCP Server 不可达或已降级 | MCP |
+| 502 | `MCP_PROTOCOL_ERROR` | MCP 协议协商 / 传输失败 | MCP |
+| 504 | `MCP_DISCOVERY_TIMEOUT` | MCP 工具发现超时 | MCP 启动诊断 |
+| 504 | `MCP_TOOL_TIMEOUT` | MCP Tool 调用超时（总超时取消在途调用） | `mcp_tool_call` Run（MCP-02/03） |
+| 404 | `MCP_TOOL_NOT_AVAILABLE` | MCP Tool 不存在或不在 allowed_tools 白名单 | MCP 调用前置校验 |
+| 409 | `MCP_TOOL_STALE` | MCP Tool 定义在计划后已变化（digest 不一致） | 计划构建 / 确认 / 执行（MCP-03） |
+| 422 | `MCP_TOOL_ARGUMENT_INVALID` | MCP Tool 输入未通过 JSON Schema 2020-12 校验（不发远程请求） | 计划构建 / 执行 |
+| 502 | `MCP_TOOL_ERROR` | MCP Tool 远程执行返回错误（isError，detail 为脱敏摘要） | `mcp_tool_call` Run |
+| 502 | `MCP_TOOL_RESULT_INVALID` | MCP Tool 结构化输出未通过 outputSchema 校验 | `mcp_tool_call` Run |
 | 500 | `INTERNAL_ERROR` | 未分类错误 | 兜底 |
 
 **Run 失败时的 `error_code`**（落库到 WorkflowRun，`GET /runs/{id}` 返回）：`RUN_BUDGET_EXCEEDED` / `RUN_CANCELLED` / `LLM_TIMEOUT` / `LLM_RATE_LIMITED` / `LLM_PROVIDER_ERROR` / `LLM_INVALID_OUTPUT` / `LLM_OUTPUT_TRUNCATED`（输出超过 max_tokens 上限被截断，调大 `LLM_MAX_TOKENS` 后重跑）/ `LLM_INVALID_REQUEST`（401/403/404/400 等请求侧确定性错误或模型未配置：重试无效，需检查 `LLM_*_MODEL` / `LLM_API_KEY` / `LLM_API_BASE` 后重新发起）/ `EXTERNAL_TOOL_ERROR` 等，见 [backend/app/llm/retry.py](backend/app/llm/retry.py) 与 [backend/app/workflows/checkpoint.py](backend/app/workflows/checkpoint.py)。
@@ -235,7 +245,7 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **响应语义**：响应体为 `AgentTurnResponse`（注意字段名是 `id` 而非 `turn_id`，含 `status` / `turn_type` / `response_message_id` / `action_id` / `error_code`）。终态返回 200：`turn_type=clarification`（`status=needs_input`，无 Action）、`answer`（`status=answered`，只读）、`plan`（`status=action_proposed`，返回 proposed AgentAction）；Planner 失败同样返回 200（`status=failed` + `error_code`，不创建 Action/Run）。重复请求命中有效 lease 下的 planning Turn 返回 202 + 当前快照；命中终态返回与首次完全一致的 200 原响应。同 key 不同载荷返回 409 `IDEMPOTENCY_KEY_REUSED`。
 
-**确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`、`revise_script→revise_script`、`revise_outline→revise_outline`；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）；`continue` 不新建 Run——恢复 `target_run_id` 指向的既有 Run（确认时二次校验仍在确认门且世代快照一致，已离开则 Action→`stale` + 409 `RUN_NOT_RETRYABLE`/`RUN_STAGE_STALE`，并把 Run config 的 `agent_action_id` 改指本 continue Action 以承接终态回写；旧计划缺世代快照时仅当 Run 自计划创建后未再推进才恢复）。Run 幂等键为 `agent-action:{action_id}`；continue 续跑收据键为 `continue:{action_id}`（重复确认重放原收据）。W1-01 起 Run 终态只回写 `config_snapshot.agent_action_id` 指向的当前所有者 Action——被 continue 接管归属后，旧创建 Action 的已存结果冻结不被覆盖；同一 Run 的非 continue Action 至多一个（`agent_actions.run_id` 部分唯一索引），continue 审计 Action 可关联同一 Run。
+**确认（confirm）**：只使用服务端持久化的 Plan，不接受客户端回传内容。重复确认返回原 Run；来源 Artifact 已非快照版本时 Action→`stale` 并返回 409 `ACTION_STALE`；并发确认由单项目单活跃 Run 约束兜底（409 `PROJECT_HAS_ACTIVE_RUN`）。intent→Run action 映射固定：`create_script→create_script`、`evaluate→evaluate`、`revise_script→revise_script`、`revise_outline→revise_outline`、`use_external_tool→mcp_tool_call`（MCP-03，确认前二次校验工具 definition digest，工具已变化/不可用时 Action→`stale` + 409 `ACTION_STALE`；结果以 `action_result` 消息回写，metadata 带 `message_subtype=mcp_tool_result` 与规范化 `mcp_result`，不创建 Artifact）；`explain` 不创建 Run（400 `UNSUPPORTED_AGENT_INTENT`）；`continue` 不新建 Run——恢复 `target_run_id` 指向的既有 Run（确认时二次校验仍在确认门且世代快照一致，已离开则 Action→`stale` + 409 `RUN_NOT_RETRYABLE`/`RUN_STAGE_STALE`，并把 Run config 的 `agent_action_id` 改指本 continue Action 以承接终态回写；旧计划缺世代快照时仅当 Run 自计划创建后未再推进才恢复）。Run 幂等键为 `agent-action:{action_id}`；continue 续跑收据键为 `continue:{action_id}`（重复确认重放原收据）。W1-01 起 Run 终态只回写 `config_snapshot.agent_action_id` 指向的当前所有者 Action——被 continue 接管归属后，旧创建 Action 的已存结果冻结不被覆盖；同一 Run 的非 continue Action 至多一个（`agent_actions.run_id` 部分唯一索引），continue 审计 Action 可关联同一 Run。
 
 **原稿附件导入（W1-06）**：`POST /projects/{id}/uploads` 上传 TXT/DOCX（≤10MB，只解析存档不调模型）→ `POST /projects/{id}/runs` 带 `action=import` + `config.upload_id` 创建导入 Run（**排队前校验**：upload 必须属于当前项目（否则 404 `UPLOAD_NOT_FOUND`）且 `parse_status=parsed`（否则 422 `UPLOAD_NOT_PARSED`）；禁止客户端传服务器 path）。分类经既有导入工作流（模型分类）落 `import_classification` Artifact；`full_script` 转换固定生成**第 1 集**新版本（不可变，不覆盖旧稿），转换失败仅告警不伪造稿件。**`GET /runs/{id}` 新增可选 `route` 字段**（导入完成的确定性路由：create/evaluate/hold/needs_user_input；非导入 Run 为空）与 `result_artifact_ids`（[classification, script?]）。unknown 分类 Run 停在 needs_review，不自动生成任何创作产物。`create_script` 携带 `config.upload_id` 时同样过归属/解析校验（G-06 上传创作路径）。
 
@@ -247,7 +257,9 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **revise_script 计划（J-06）**：目标由服务端解析——目标集的最新 valid 剧本（Planner 不提供 UUID），来源快照含 checksum；目标集无有效剧本时 Turn→`failed`（404 `SCRIPT_NOT_FOUND` 语义，经 Turn `error_code` 返回）。Run options 携带 `source_script_artifact_id` / `episode_number` / `user_constraints` / `user_request`（IR-3 §8.3：用户原始请求=完整授权边界，结构化约束=索引；修订指令由两者组合而成，旧 Run 缺省 null）。**目标一致性（IR-3 §8.2）**：Planner 输出后服务端按 文本明确目标 > 活动上下文 > 模型推断 解析最终目标——集数分歧规范化为文本集数（记录 disagreement），点名大纲/设定却要改剧本时转澄清不生成 Action。
 
-**Wave 2 已知限制**：Planner 白名单开放 `create_script | explain | evaluate | revise_script | revise_outline`（J-06/J-08 起，M3 完成）+ 动态 `continue`（有门上 Run 时）；单集 evaluate 的 `episode_number` 进入计划与来源快照，但当前 Run 仍评估项目全部剧本。
+**外部工具（MCP-03）**：Planner 白名单在 MCP catalog 存在 available 工具时动态追加 `use_external_tool`（最多注入 20 个按描述匹配的候选，工具描述经非可信内容边界注入）；Planner 只输出 `external_tool.qualified_tool_name`（必须逐字来自服务端目录）+ 参数 + 用途，服务端校验 allowlist/Schema/digest 后生成 `AgentAction(proposed, requires_confirmation=true)`；目录外工具名/URL/SQL 一律拒绝（Turn failed，无 Action）。`AgentIntent` 增加 `use_external_tool`；`ActionTarget.target_type` 增加 `external_tool`；`AgentCommand` 增加 `MCPToolCallCommand`（`server_id/tool_name/qualified_tool_name/arguments/tool_definition_digest/purpose`）。
+
+**Wave 2 已知限制**：Planner 白名单开放 `create_script | explain | evaluate | revise_script | revise_outline`（J-06/J-08 起，M3 完成）+ 动态 `continue`（有门上 Run 时）与 `use_external_tool`（MCP-03，有可用外部工具时）；单集 evaluate 的 `episode_number` 进入计划与来源快照，但当前 Run 仍评估项目全部剧本。
 
 ### 修订（F-06）
 

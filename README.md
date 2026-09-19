@@ -123,7 +123,7 @@ Phase A ~ Phase I（MVP，v0.1.0-rc1）与 **Phase J 对话式创作 Agent 全�
 - **稳定与成本保护（I-01）**：LLM 统一重试（429 / timeout / 5xx 退避 + Retry-After）、per-run 调用数 / Token 预算（软 / 硬上限）、协作式取消、失败从 checkpoint 恢复（不重调已完成节点）、所有失败带 `error_code`
 - **可观测（I-02）**：进程内 Prometheus 指标 `GET /metrics`、Run 诊断接口、日志脱敏
 - **安全（I-03）**：Prompt 注入内容边界隔离、上传 / 存储 / 导出路径与归属防护、输出转义、CORS 配置
-- **扩展（I-04）**：Skill 插件契约 + MCP 外部工具适配（默认关闭，主流程零影响），见 [docs/EXTENSIONS.md](docs/EXTENSIONS.md)
+- **扩展（I-04 / MCP）**：Skill 插件契约 + 标准 MCP 外部工具（Tools-only Host/Client，官方 SDK，默认关闭、主流程零影响），见 [docs/EXTENSIONS.md](docs/EXTENSIONS.md) 与 [docs/MCP_DESIGN.md](docs/MCP_DESIGN.md)
 - **前端工作台（H）**：项目列表 → 创作 → SSE 进度 → 工作台 → 修订 → Diff → 导出中心全链路
 
 详见 [docs/DEV_PLAN.md](docs/DEV_PLAN.md) §13 进度总表与 [docs/DEV_LOG.md](docs/DEV_LOG.md) 开发日志。

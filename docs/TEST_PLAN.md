@@ -302,3 +302,18 @@ E2E 场景断言（`tests/integration/api/test_fake_scenario.py`）保证 fixtur
 | strict required / PROTECTED_CONTEXT_TOO_LARGE | `tests/unit/memory/test_context_budget.py::TestStrictRequiredSections` |
 | 状态面板分账展示/恢复入口/作者语言 | `frontend/tests/story-state-panel.test.tsx` |
 
+## MCP 能力测试（MCP-01..04，2026-09-19）
+
+| 层级 | 文件 | 覆盖 | 外部依赖 |
+| --- | --- | --- | --- |
+| 单元 | `tests/unit/integrations/mcp/` | 配置解析/URL 安全/DNS 校验、catalog digest 与原子替换、执行服务校验顺序与结果规范化 | 无 |
+| 契约 | `tests/contract/test_mcp_official_client.py` | 官方 in-process Server：协商/发现/调用/isError/超时/并发/Token 头/跨源重定向；同名工具双 Server 隔离；注册与端到端校验 | 官方 SDK in-process |
+| 契约（弃用路径） | `tests/contract/test_mcp_adapter.py` | 旧 I-04 手写 Adapter 兼容（DeprecationWarning 期间回归） | httpx MockTransport |
+| 集成 | `tests/integration/test_mcp_lifecycle.py` | 真实 FastAPI lifespan：关闭不创建 Manager、ASGI Server 可用→disabled、不可达 degraded 不阻断启动 | PostgreSQL（测试库） |
+| 工作流 | `tests/integration/workflow/test_mcp_tool_call.py` | 成功/stale/超时/工具错误/取消中断/不可用降级 | in-process MCP Server |
+| API 集成 | `tests/integration/api/test_agent_mcp_tools.py` | 提议零远程调用/拒绝/确认一次+结果消息/幂等/未知工具无 Action/定义变化 stale/单活跃 Run | PostgreSQL + FakeLLM + in-process Server |
+| 安全 | `tests/security/test_mcp_security.py` | SSRF（DNS rebinding/回环/link-local）、跨源重定向、Token 缺失与日志脱敏、256KiB 截断、注入文本仅内容、指标低基数 | 无真实网络 |
+| 性能 | `tests/performance/test_mcp_catalog.py`（`-m performance`） | 1000 工具 catalog 解析/过滤/digest 与有界 Planner 目录 p95 < 300ms | 无 |
+| smoke | `backend/scripts/mcp_smoke.py` | 官方 Server 真实 TCP Streamable HTTP + Bearer 互操作（报告 `docs/MCP_TEST_REPORT.md`） | 本地 uvicorn |
+
+所有 MCP 自动化测试断言：零真实互联网请求、零真实 LLM 调用、零 Token 输出。

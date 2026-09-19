@@ -172,15 +172,26 @@ class MCPExecutionService:
                 detail=f"MCP Tool 执行失败: {command.tool_name}"
                 + (f"（{result.error_summary}）" if result.error_summary else "")
             )
+        # 结构化审计日志：只记低敏字段——参数仅字段名，结果仅类型/大小/状态
+        # （MCP-04 §12：Token、完整参数与完整返回体不进日志）
+        output_bytes = sum(_block_size(b) for b in result.content) + (
+            len(json.dumps(result.structured_content, ensure_ascii=False))
+            if result.structured_content is not None
+            else 0
+        )
         logger.info(
-            "MCP Tool 调用完成: server=%s tool=%s duration_ms=%d blocks=%d "
-            "structured=%s truncated=%s request_id=%s",
+            "MCP Tool 调用完成: server=%s tool=%s protocol=%s duration_ms=%d "
+            "arg_fields=%s blocks=%d structured=%s truncated=%s output_bytes=%d "
+            "request_id=%s",
             command.server_id,
             command.tool_name,
+            result.protocol_version,
             duration_ms,
+            ",".join(sorted(command.arguments.keys())) or "-",
             len(result.content),
             result.structured_content is not None,
             result.truncated,
+            output_bytes,
             result.request_id,
         )
         return result
