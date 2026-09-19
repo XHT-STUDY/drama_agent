@@ -103,7 +103,7 @@ class MCPToolResult(BaseModel):
         return joined[:max_chars]
 
 
-def _validate_json_schema(
+def validate_json_schema(
     schema: dict[str, Any] | None, instance: Any, *, error_cls: type[AppError]
 ) -> None:
     """JSON Schema 2020-12 校验（$schema 声明优先）。"""
@@ -149,7 +149,7 @@ class MCPExecutionService:
         """执行一次 MCP Tool 调用（前置校验失败不发远程请求）。"""
         definition = self._require_definition(command)
         self._check_digest(command, definition)
-        _validate_json_schema(
+        validate_json_schema(
             definition.input_schema,
             command.arguments,
             error_cls=MCPToolArgumentInvalidError,
@@ -336,8 +336,8 @@ class MCPExecutionService:
         """structured content 存在且工具声明 outputSchema 时强制校验。"""
         if result.structured_content is None or not definition.output_schema:
             return
-        _validate_json_schema(
-            definition.output_schema,
+        validate_json_schema(
+                       definition.output_schema,
             result.structured_content,
             error_cls=MCPToolResultInvalidError,
         )

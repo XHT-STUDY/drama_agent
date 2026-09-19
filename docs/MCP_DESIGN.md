@@ -375,7 +375,9 @@ Tool 名不进入 Prometheus label，避免外部 Server 动态工具导致高�
 - `AgentCommand` 增加 `MCPToolCallCommand`。
 - `ActionTarget.target_type` 增加 `external_tool`。
 - WorkflowRun action 增加 `mcp_tool_call`。
-- AgentAction 和 WorkflowRun 表不增加字段，不需要 Alembic migration。
+- AgentAction 和 WorkflowRun 表不增加字段。实施勘误（2026-09-19）：
+  `agent_actions.intent` 存在 CHECK 约束（0005/0009），扩展白名单需要
+  迁移 0014 重建该约束（无新列/新表，回滚安全）。
 
 ### 13.3 API 与前端
 

@@ -1533,9 +1533,9 @@ class AgentCommandService:
                     detail=f"外部工具不可用: {selector.qualified_tool_name}"
                 )
             # 计划构建即校验参数（JSON Schema 2020-12），非法参数不产生计划
-            from app.integrations.mcp.execution import _validate_json_schema
+            from app.integrations.mcp.execution import validate_json_schema
 
-            _validate_json_schema(
+            validate_json_schema(
                 definition.input_schema,
                 selector.arguments,
                 error_cls=MCPToolArgumentInvalidError,
@@ -1556,7 +1556,7 @@ class AgentCommandService:
             risk_flags = []
             if definition.annotations is not None:
                 if definition.annotations.destructive_hint:
-                    risk_flags.append("可能具有破坏性")
+                    risk_flags.append("可能有破坏性")
                 if definition.annotations.open_world_hint:
                     risk_flags.append("访问外部世界")
             risk_note = "；".join(risk_flags)

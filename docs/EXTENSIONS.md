@@ -183,9 +183,11 @@ FastAPI lifespan → `MCPClientManager.startup()`：逐 Server 校验 URL 安全
 / `MCP_DISCOVERY_TIMEOUT`），**不阻断应用启动**。
 
 内部工具 ID 固定为 `mcp__{server_id}__{tool_name}`；同名工具在不同 Server 下
-不冲突；`register_mcp_remote_tools(registry, manager)` 把 catalog 中 available
-的工具注册到 `ToolRegistry`（元数据标记 `execution_kind="external"`、
-`requires_confirmation=True`、`network_access=True`）。
+不冲突。对话链路（MCP-03）直接读 catalog 与执行服务；
+`register_mcp_remote_tools(registry, manager)` 把 catalog 中 available 的工具
+注册到 `ToolRegistry`（元数据标记 `execution_kind="external"`、
+`requires_confirmation=True`、`network_access=True`），供程序化场景使用
+（本项目无进程级全局 ToolRegistry，故不在 lifespan 自动注册）。
 
 ### 3.3 调用链路与安全边界
 
@@ -208,7 +210,14 @@ FastAPI lifespan → `MCPClientManager.startup()`：逐 Server 校验 URL 安全
 - 一次 AgentAction 只含一个工具调用；结果不直接写 Artifact；
 - Token 从环境变量读取，不进配置快照/日志/错误响应；
 - 指标只用低基数标签（`server_id`/`status`）：`mcp_server_status`、
-  `mcp_discovery_total`、`mcp_call_total`、`mcp_call_duration_seconds`。
+  `mcp_discovery_total`、`mcp_call_total`、`mcp_call_duration_seconds`；
+- structured content 整体超过 256 KiB 时**整体丢弃**（JSON 无法安全截断，
+  标记 `truncated=true`），文本块按内容块边界截断；
+- catalog 目前在启动时构建；`refresh_tools` 提供 stale 恢复入口，尚未订阅
+  `tools/list_changed` 通知或周期刷新（重启或手动刷新生效；确认/执行时的
+  digest 校验保证正确性不受旧定义影响）；
+- 旧 `MCP_BASE_URL` 兼容映射的 `allowed_tools=[]` 按新语义=全部不可调用——
+  从旧配置迁移必须显式设置白名单。
 
 错误码（MCP-02）：
 
@@ -252,6 +261,6 @@ FastAPI lifespan → `MCPClientManager.startup()`：逐 Server 校验 URL 安全
 ## 4. 扩展边界（不要做什么）
 
 - 内部 File / RAG / Export 仍使用内部实现，**不通过 MCP 调用**；
-- Tool `execute` 必须保持纯确定性，不得调用 LLM / 访问网络；
+- 内部（local）Tool `execute` 保持纯确定性（不调 LLM / 不访问网络）；外部（external）Tool 必须经 AgentAction 确认链路执行，模型不得直接触发；
 - LLM 输出必须过结构化 Pydantic v2 校验后才能写入 Artifact（Artifact 不可变，修订产生新版本）；
 - 测试一律用 FakeLLM，禁止真实 LLM 调用。

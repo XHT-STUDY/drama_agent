@@ -107,12 +107,15 @@ async def _mcp_call_tool_node(state: MCPToolCallState) -> dict[str, Any]:
     result = await _await_with_cancel(run_id, service.execute(command))
 
     logger.info(
-        "MCP 工作流调用完成: run=%s server=%s tool=%s duration_ms=%s truncated=%s",
+        "MCP 工作流调用完成: run=%s action_id=%s server=%s tool=%s "
+        "duration_ms=%s truncated=%s request_id=%s",
         run_id,
+        options.get("agent_action_id"),
         result.server_id,
         result.tool_name,
         result.duration_ms,
         result.truncated,
+        result.request_id,
     )
     return {
         "status": "completed",

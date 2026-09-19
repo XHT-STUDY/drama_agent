@@ -91,9 +91,15 @@ class MCPServerClient:
         if self._http_client_factory is not None:
             http_client = self._http_client_factory(headers)
         else:
-            from mcp.shared._httpx_utils import create_mcp_http_client
+            # 与 SDK 传输默认对齐：30s 连接/写、300s 读（SSE 长流），
+            # 不跟随重定向（跨源边界由 SDK 传输层保证）
+            import httpx2
 
-            http_client = create_mcp_http_client(headers=headers)
+            http_client = httpx2.AsyncClient(
+                headers=headers,
+                timeout=httpx2.Timeout(30.0, read=300.0),
+                follow_redirects=False,
+            )
         transport = streamable_http_client(self.config.url, http_client=http_client)
         return Client(transport)
 

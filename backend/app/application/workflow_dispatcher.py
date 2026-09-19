@@ -677,7 +677,11 @@ async def _execute_workflow(
                     "completed_nodes": [],
                     "prompt_versions": {},
                 }
-                workflow_config["configurable"]["options"] = options
+                workflow_config["configurable"]["options"] = {
+                    **options,
+                    # MCP-04 §12：审计日志可关联 Action 与 Run
+                    "agent_action_id": config_snapshot.get("agent_action_id"),
+                }
             elif action == "revise_script":
                 # action=revise_script → 对话式剧本修订子图（J-06）：
                 # 目标由服务端解析的 source script ID 决定（Action 确认时已做

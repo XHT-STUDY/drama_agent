@@ -361,3 +361,120 @@ async def test_single_active_run_constraint(
 
     # 等第一个 Run 结束，避免污染后续测试
     await _wait_action_terminal(mcp_api, turn1["action_id"])
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_creation_path_survives_all_mcp_servers_degraded(
+    app: Any, db_session: AsyncSession
+) -> None:
+    """MCP-04 验收：全部 MCP Server 故障时核心创作路径照常完成。
+
+    用默认服务依赖（FakeLLM create_script fixture）跑完整创建链路，
+    同时挂一个全部 Server degraded 的 Manager——MCP 是可选依赖，
+    任何故障不得影响核心创作。
+    """
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy import select
+
+    from app.api.dependencies import get_agent_command_service
+    from app.db.models.workflow_run import WorkflowRun
+    from app.integrations.mcp.manager import MCPClientManager
+    from app.integrations.mcp.protocol import MCPServerConfig
+    from app.integrations.mcp.runtime import set_manager
+
+    degraded_manager = MCPClientManager(
+        [
+            MCPServerConfig(
+                id="dead_a",
+                url="http://127.0.0.1:9/mcp",
+                allowed_tools=["x"],
+                allow_private_network=True,
+                timeout_seconds=2,
+            ),
+            MCPServerConfig(
+                id="dead_b",
+                url="http://127.0.0.1:9/mcp",
+                allowed_tools=["y"],
+                allow_private_network=True,
+                timeout_seconds=2,
+            ),
+        ],
+        app_env="test",
+    )
+    await degraded_manager.startup()
+    states = degraded_manager.server_states()
+    assert all(s.status == "degraded" for s in states.values()), states
+
+    app.state.mcp_manager = degraded_manager
+    set_manager(degraded_manager)
+    # 默认服务依赖（FakeLLM create_script fixture，与生产惰性单例同构）
+    from app.agents.base import BaseAgent
+    from app.application.agent_command_service import AgentCommandService
+    from app.core.config import Settings
+    from app.domain.agent_planner import (
+        AgentPlannerOutput,
+        PlannerStep,
+        PlannerTarget,
+    )
+
+    planner_llm = FakeLLM(seed=42)
+    planner_llm.register(
+        "agent_command_planner",
+        AgentPlannerOutput(
+            turn_type="plan",
+            intent="create_script",
+            target=PlannerTarget(target_type="project"),
+            steps=[PlannerStep(title="整理需求", description="确认项目创作范围")],
+            expected_impact=["生成新的创作计划"],
+        ),
+    )
+    service = AgentCommandService(
+        settings=Settings(app_env="test"),
+        planner_agent=BaseAgent(name="planner", llm=planner_llm),
+    )
+    app.dependency_overrides[get_agent_command_service] = lambda: service
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/api/v1/projects", json={"title": "MCP 故障下创作"})
+            project_id = str(resp.json()["id"])
+            turn = await client.post(
+                f"/api/v1/projects/{project_id}/agent/turns",
+                json={
+                    "content": "写一个被青训队抛弃的足球少年逆袭的短剧",
+                    "idempotency_key": "mcp-degraded-creation",
+                    "staged": True,  # SB+大纲确认门即证明核心链路可用
+                    "target_episode_count": 10,
+                },
+            )
+            assert turn.status_code == 200, turn.text
+            confirm = await client.post(
+                f"/api/v1/agent/actions/{turn.json()['action_id']}/confirm"
+            )
+            assert confirm.status_code == 202, confirm.text
+            run_id = confirm.json()["run"]["run_id"]
+
+            for _ in range(600):
+                rows = await db_session.execute(
+                    select(WorkflowRun.status).where(WorkflowRun.id == uuid.UUID(run_id))
+                )
+                status = rows.scalar_one_or_none()
+                await db_session.rollback()
+                if status in ("completed", "needs_review", "failed"):
+                    break
+                await asyncio.sleep(0.2)
+            assert status in ("completed", "needs_review"), f"核心创作被 MCP 故障拖垮: {status}"
+            # 终态事件已发布（SSE 与事件查询的事实源：MCP 关闭/故障不影响事件链路）
+            from app.db.models.workflow_event import WorkflowEvent as RunEvent
+
+            events = await db_session.execute(
+                select(RunEvent.type).where(RunEvent.run_id == uuid.UUID(run_id))
+            )
+            event_types = [e[0] for e in events.all()]
+            assert "run.needs_review" in event_types or "run.completed" in event_types
+    finally:
+        app.dependency_overrides.clear()
+        set_manager(None)
+        app.state.mcp_manager = None
+        await degraded_manager.shutdown()
