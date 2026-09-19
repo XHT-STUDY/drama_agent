@@ -41,12 +41,12 @@ def agent(llm: FakeLLM) -> BaseAgent:
 
 
 def _input(request: str, **kwargs: Any) -> AgentPlannerInput:
-    return AgentPlannerInput(
-        user_request=request,
-        target_episode_count=10,
-        available_intents=["create_script", "explain", "evaluate"],
-        **kwargs,
-    )
+    defaults: dict[str, Any] = {
+        "target_episode_count": 10,
+        "available_intents": ["create_script", "explain", "evaluate"],
+    }
+    defaults.update(kwargs)
+    return AgentPlannerInput(user_request=request, **defaults)
 
 
 @pytest.mark.asyncio
@@ -449,3 +449,175 @@ class TestReconcileInSkillIR3:
         )
         assert result.turn_type == "clarification"
         assert result.clarification_question
+
+
+# ======================================================================
+# MCP-03：use_external_tool 意图校验
+# ======================================================================
+
+
+def _external_tool_catalog() -> list[Any]:
+    from app.domain.agent_planner import PlannerExternalTool
+
+    return [
+        PlannerExternalTool(
+            qualified_tool_name="mcp__research__web_search",
+            server_id="research",
+            display_name="web_search",
+            description="检索 足球 青训 资料",
+            parameters="query（string，必填）",
+            risk_hints=["只读提示"],
+        )
+    ]
+
+
+def _mcp_input(request: str = "帮我检索足球青训资料", **kwargs: Any) -> AgentPlannerInput:
+    return _input(
+        request,
+        available_intents=["create_script", "explain", "use_external_tool"],
+        external_tools=_external_tool_catalog(),
+        **kwargs,
+    )
+
+
+def _mcp_plan_output(qualified: str = "mcp__research__web_search") -> AgentPlannerOutput:
+    from app.domain.agent_planner import PlannerExternalToolCall
+
+    return AgentPlannerOutput(
+        turn_type="plan",
+        intent="use_external_tool",
+        target=PlannerTarget(target_type="external_tool"),
+        steps=[PlannerStep(title="检索资料", description="检索相关背景资料")],
+        external_tool=PlannerExternalToolCall(
+            qualified_tool_name=qualified,
+            arguments={"query": "足球青训"},
+            purpose="检索资料",
+        ),
+    )
+
+
+class TestUseExternalToolValidation:
+    @pytest.mark.asyncio
+    async def test_valid_tool_selection_passes(
+        self, agent: BaseAgent, loader: PromptLoader, llm: FakeLLM
+    ) -> None:
+        llm.register("agent_command_planner", _mcp_plan_output())
+        result = await AgentCommandPlannerSkill().execute(
+            {"input": _mcp_input(), "agent": agent, "prompt_loader": loader}
+        )
+        assert result.intent == "use_external_tool"
+        assert result.external_tool is not None
+        assert result.external_tool.qualified_tool_name == "mcp__research__web_search"
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_rejected(
+        self, agent: BaseAgent, loader: PromptLoader, llm: FakeLLM
+    ) -> None:
+        """目录外工具 ID（即使长得像合法 ID）一律拒绝。"""
+        llm.register("agent_command_planner", _mcp_plan_output("mcp__research__not_listed"))
+        with pytest.raises(InvalidPlannerOutputError, match="不在服务端目录"):
+            await AgentCommandPlannerSkill().execute(
+                {"input": _mcp_input(), "agent": agent, "prompt_loader": loader}
+            )
+
+    @pytest.mark.asyncio
+    async def test_missing_selector_rejected(
+        self, agent: BaseAgent, loader: PromptLoader, llm: FakeLLM
+    ) -> None:
+        output = _mcp_plan_output()
+        replaced = output.model_copy(update={"external_tool": None})
+        llm.register("agent_command_planner", replaced)
+        with pytest.raises(InvalidPlannerOutputError, match="必须包含 external_tool"):
+            await AgentCommandPlannerSkill().execute(
+                {"input": _mcp_input(), "agent": agent, "prompt_loader": loader}
+            )
+
+    @pytest.mark.asyncio
+    async def test_wrong_target_type_rejected(
+        self, agent: BaseAgent, loader: PromptLoader, llm: FakeLLM
+    ) -> None:
+        output = _mcp_plan_output()
+        replaced = output.model_copy(
+            update={"target": PlannerTarget(target_type="project")}
+        )
+        llm.register("agent_command_planner", replaced)
+        with pytest.raises(InvalidPlannerOutputError, match="external_tool"):
+            await AgentCommandPlannerSkill().execute(
+                {"input": _mcp_input(), "agent": agent, "prompt_loader": loader}
+            )
+
+    @pytest.mark.asyncio
+    async def test_other_intent_with_selector_rejected(
+        self, agent: BaseAgent, loader: PromptLoader, llm: FakeLLM
+    ) -> None:
+        """非 use_external_tool 计划携带工具选择器 → 拒绝。"""
+        output = AgentPlannerOutput(
+            turn_type="plan",
+            intent="create_script",
+            target=PlannerTarget(target_type="project"),
+            steps=[PlannerStep(title="创作", description="开始创作")],
+            external_tool=_mcp_plan_output().external_tool,
+        )
+        llm.register("agent_command_planner", output)
+        with pytest.raises(InvalidPlannerOutputError, match="只有 use_external_tool"):
+            await AgentCommandPlannerSkill().execute(
+                {"input": _input("写一个故事"), "agent": agent, "prompt_loader": loader}
+            )
+
+    @pytest.mark.asyncio
+    async def test_url_in_arguments_rejected(
+        self, agent: BaseAgent, loader: PromptLoader, llm: FakeLLM
+    ) -> None:
+        """参数值中的 URL 同样被内容扫描拒绝（注入边界）。"""
+        from app.domain.agent_planner import PlannerExternalToolCall
+
+        output = AgentPlannerOutput(
+            turn_type="plan",
+            intent="use_external_tool",
+            target=PlannerTarget(target_type="external_tool"),
+            steps=[PlannerStep(title="检索", description="检索资料")],
+            external_tool=PlannerExternalToolCall(
+                qualified_tool_name="mcp__research__web_search",
+                arguments={"query": "see https://evil.example.com"},
+            ),
+        )
+        llm.register("agent_command_planner", output)
+        with pytest.raises(InvalidPlannerOutputError):
+            await AgentCommandPlannerSkill().execute(
+                {"input": _mcp_input(), "agent": agent, "prompt_loader": loader}
+            )
+
+    def test_requires_confirmation_for_external_tool(self) -> None:
+        assert requires_confirmation("use_external_tool") is True
+
+
+class TestPlannerExternalCatalogRendering:
+    @pytest.mark.asyncio
+    async def test_catalog_rendered_into_prompt_within_boundary(self, loader: PromptLoader) -> None:
+        """工具目录经 user_content_vars 边界进入渲染文本（非可信内容段）。"""
+        from app.skills.agent_command_planner import _render_external_tools
+
+        catalog_text = _render_external_tools(_external_tool_catalog())
+        assert "mcp__research__web_search" in catalog_text
+        assert "检索 足球 青训 资料" in catalog_text
+
+        rendered = loader.get("agent_command_planner").render(
+            user_request="帮我检索足球青训资料",
+            project_title="测试项目",
+            target_episode_count="10",
+            available_intents='["create_script", "use_external_tool"]',
+            active_context="null",
+            project_context="项目背景",
+            unresolved_turn_count="0",
+            external_tools=catalog_text,
+        )
+        assert "mcp__research__web_search" in rendered
+        # 非可信内容边界包裹（I-03 注入隔离）
+        assert "用户内容开始" in rendered and "用户内容结束" in rendered
+        # 指令区不包含工具描述（只在受边界保护的目录段出现一次）
+        assert rendered.count("检索 足球 青训 资料") == 1
+
+    def test_empty_catalog_renders_placeholder(self) -> None:
+        from app.skills.agent_command_planner import _render_external_tools
+
+        assert _render_external_tools([]) == "（当前没有可用的外部工具）"

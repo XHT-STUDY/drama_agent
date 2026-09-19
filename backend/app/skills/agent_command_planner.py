@@ -32,7 +32,15 @@ from app.skills.protocol import Skill, SkillMetadata
 logger = logging.getLogger(__name__)
 
 KNOWN_AGENT_INTENTS = frozenset(
-    {"create_script", "explain", "revise_outline", "revise_script", "evaluate", "continue"}
+    {
+        "create_script",
+        "explain",
+        "revise_outline",
+        "revise_script",
+        "evaluate",
+        "continue",
+        "use_external_tool",
+    }
 )
 # 基础白名单（动态白名单在此基础上按项目状态追加，见 AgentCommandService._available_intents）
 DEFAULT_AVAILABLE_INTENTS = (
@@ -177,6 +185,25 @@ def _scan_strings(value: Any) -> None:
             _scan_strings(item)
 
 
+def _render_external_tools(tools: list[Any]) -> str:
+    """把有界工具目录渲染为可读文本（空目录 → 明确的无工具提示）。
+
+    描述与参数摘要是外部不可信内容——只经 user_content_vars 边界进入
+    Prompt，服务端后续只接受结构化字段中的合法 qualified_tool_name。
+    """
+    if not tools:
+        return "（当前没有可用的外部工具）"
+    lines = []
+    for tool in tools:
+        hints = f"；风险提示：{'、'.join(tool.risk_hints)}" if tool.risk_hints else ""
+        params = f"；参数：{tool.parameters}" if tool.parameters else ""
+        lines.append(
+            f"- {tool.qualified_tool_name}（来源 {tool.server_id}）："
+            f"{tool.description or tool.display_name}{params}{hints}"
+        )
+    return "\n".join(lines)
+
+
 def _validate_output(
     output: AgentPlannerOutput,
     planner_input: AgentPlannerInput,
@@ -193,6 +220,8 @@ def _validate_output(
             raise InvalidPlannerOutputError("clarification 必须包含一个问题")
         if output.intent or output.target or output.answer:
             raise InvalidPlannerOutputError("clarification 不得同时携带 intent、target 或 answer")
+        if output.external_tool is not None:
+            raise InvalidPlannerOutputError("clarification 不得携带 external_tool")
     elif output.turn_type == "plan":
         if output.intent not in available:
             raise InvalidPlannerOutputError(f"Planner 意图不在服务端白名单中: {output.intent}")
@@ -200,6 +229,21 @@ def _validate_output(
             raise InvalidPlannerOutputError("plan 必须包含目标和可读步骤")
         if output.clarification_question or output.answer:
             raise InvalidPlannerOutputError("plan 不得同时返回澄清问题或 answer")
+        if output.intent == "use_external_tool":
+            # MCP-03：工具选择器必须逐字来自服务端下发的有界目录
+            catalog = {
+                tool.qualified_tool_name for tool in planner_input.external_tools
+            }
+            if output.external_tool is None or not output.external_tool.qualified_tool_name:
+                raise InvalidPlannerOutputError("use_external_tool 计划必须包含 external_tool")
+            if output.external_tool.qualified_tool_name not in catalog:
+                raise InvalidPlannerOutputError(
+                    f"外部工具不在服务端目录中: {output.external_tool.qualified_tool_name}"
+                )
+            if output.target.target_type != "external_tool":
+                raise InvalidPlannerOutputError("use_external_tool 的 target 必须是 external_tool")
+        elif output.external_tool is not None:
+            raise InvalidPlannerOutputError("只有 use_external_tool 计划可以携带 external_tool")
     elif output.turn_type == "answer":
         if not output.answer:
             raise InvalidPlannerOutputError("answer 必须包含可读答复")
@@ -207,6 +251,8 @@ def _validate_output(
             raise InvalidPlannerOutputError(f"answer 意图不在服务端白名单中: {output.intent}")
         if output.clarification_question:
             raise InvalidPlannerOutputError("answer 不得同时返回澄清问题")
+        if output.external_tool is not None:
+            raise InvalidPlannerOutputError("answer 不得携带 external_tool")
     return output
 
 
@@ -284,6 +330,9 @@ class AgentCommandPlannerSkill(Skill):
                 ),
                 project_context=planner_input.project_context,
                 unresolved_turn_count=str(planner_input.unresolved_turn_count),
+                # MCP-03：有界外部工具目录（描述为外部不可信内容，渲染走
+                # user_content_vars 边界，不拼入 system 指令）
+                external_tools=_render_external_tools(planner_input.external_tools),
             )
             result = await agent.generate_structured(
                 AgentPlannerOutput,

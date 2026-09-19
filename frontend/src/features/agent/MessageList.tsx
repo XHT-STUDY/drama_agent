@@ -19,6 +19,7 @@ import type {
   ConstraintCheck,
   ExplanationCitation,
 } from "@/types/api";
+import { McpToolResult } from "./McpToolResult";
 import { OutcomeEvidenceView } from "./OutcomeEvidenceView";
 
 interface Props {
@@ -46,6 +47,8 @@ function ResultMessage({
     constraint_checks?: ConstraintCheck[];
     evidence_refs?: AgentOutcome["evidence_refs"];
     stage_gate?: string;
+    message_subtype?: string;
+    mcp_result?: import("@/types/api").McpToolResult;
   };
   // 确认门是设计内的阶段暂停：只渲染干净的阶段进展文案，不带状态术语
   if (meta.stage_gate) {
@@ -66,6 +69,9 @@ function ResultMessage({
         {/* W1-04：保留完整消息内容——失败指引（重试入口等）在第二行起，
             只渲染首行会把它丢掉 */}
         <p className="message-body whitespace-pre-wrap">{message.content}</p>
+        {meta.message_subtype === "mcp_tool_result" && meta.mcp_result && (
+          <McpToolResult result={meta.mcp_result} />
+        )}
         <OutcomeEvidenceView
           compact
           projectId={projectId}

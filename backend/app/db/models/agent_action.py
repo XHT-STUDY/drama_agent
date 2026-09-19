@@ -51,7 +51,7 @@ class AgentAction(Base, UUIDMixin):
         ),
         CheckConstraint(
             "intent IN ('create_script', 'explain', 'revise_outline', "
-            "'revise_script', 'evaluate', 'continue')",
+            "'revise_script', 'evaluate', 'continue', 'use_external_tool')",
             name="ck_agent_actions_intent",
         ),
         Index("ix_agent_actions_project_status", "project_id", "status"),

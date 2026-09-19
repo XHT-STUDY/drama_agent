@@ -18,6 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { artifactsApi, runsApi } from "@/lib/api-client";
 import { useAgentAction } from "@/hooks/use-agent-action";
+import { McpToolPlanDetails } from "./McpToolActionCard";
 import { OutcomeEvidenceView } from "./OutcomeEvidenceView";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -283,6 +284,10 @@ export function ActionPlanCard({
             .map((s) => `${s.artifact_type} v${s.version}`)
             .join("、")}
         </p>
+      )}
+
+      {plan.command.intent === "use_external_tool" && (
+        <McpToolPlanDetails command={plan.command} />
       )}
 
       {plan.constraints.length > 0 && (

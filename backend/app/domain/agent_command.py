@@ -23,6 +23,7 @@ AgentIntent = Literal[
     "revise_script",
     "evaluate",
     "continue",
+    "use_external_tool",
 ]
 AgentTurnStatus = Literal[
     "received",
@@ -117,6 +118,7 @@ class ActionTarget(BaseModel):
         "outline",
         "script",
         "evaluation",
+        "external_tool",
     ]
     artifact_id: UUID | None = None
     episode_number: int | None = Field(default=None, ge=1)
@@ -239,13 +241,42 @@ class ContinueCommand(BaseModel):
     )
 
 
+class MCPToolCallCommand(BaseModel):
+    """MCP 外部工具调用命令（MCP-03）。
+
+    模型只提供选择器：qualified_tool_name 必须逐字来自服务端下发的有界
+    工具目录；server_id/tool_name/定义 digest 由服务端回填并二次校验。
+    不携带 URL、认证信息、Run ID 或任意执行器名称。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    intent: Literal["use_external_tool"] = "use_external_tool"
+    server_id: str = Field(..., min_length=1, max_length=64)
+    tool_name: str = Field(..., min_length=1, max_length=200)
+    qualified_tool_name: str = Field(..., min_length=1, max_length=300)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    tool_definition_digest: str = Field(
+        ..., min_length=64, max_length=64,
+        description="计划构建时的工具定义 digest；确认与执行时二次校验",
+    )
+    purpose: str = Field(default="", max_length=2000, description="调用目的（审计展示）")
+
+    @model_validator(mode="after")
+    def _qualified_name_consistent(self) -> MCPToolCallCommand:
+        if self.qualified_tool_name != f"mcp__{self.server_id}__{self.tool_name}":
+            raise ValueError("qualified_tool_name 必须与 server_id/tool_name 一致")
+        return self
+
+
 AgentCommand = Annotated[
     CreateScriptCommand
     | ExplainCommand
     | ReviseOutlineCommand
     | ReviseScriptCommand
     | EvaluateCommand
-    | ContinueCommand,
+    | ContinueCommand
+    | MCPToolCallCommand,
     Field(discriminator="intent"),
 ]
 

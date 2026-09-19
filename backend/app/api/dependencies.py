@@ -57,6 +57,15 @@ def get_mcp_manager(request: Request) -> Any:
     return getattr(request.app.state, "mcp_manager", None)
 
 
+def _agent_service_mcp_provider(app: Any) -> Any:
+    """AgentCommandService 的惰性 MCP Manager 读取器（捕获 app 实例）。"""
+
+    def provider() -> Any:
+        return getattr(app.state, "mcp_manager", None)
+
+    return provider
+
+
 # AgentCommandService 进程级单例(J-04);测试通过 dependency_overrides 覆盖。
 _agent_command_service: Any = None
 
@@ -220,5 +229,7 @@ def get_agent_command_service(request: Request) -> Any:
         _agent_command_service = AgentCommandService(
             settings=settings,
             planner_agent=BaseAgent(name="planner", llm=llm),
+            # MCP-03：Planner 白名单与计划校验需要读取 MCP 工具目录
+            mcp_manager_provider=_agent_service_mcp_provider(request.app),
         )
     return _agent_command_service

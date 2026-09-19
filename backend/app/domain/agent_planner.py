@@ -21,6 +21,23 @@ TARGET_STORY_BIBLE_RE = re.compile("|".join(TARGET_KEYWORDS["story_bible"]), re.
 CONTEXT_REFERENCE_RE = re.compile(r"(这里|此处|这个版本|当前稿|当前剧本|上面|这场)")
 
 
+class PlannerExternalTool(BaseModel):
+    """有界工具目录中的单个条目（服务端从 catalog 构建并裁剪）。"""
+
+    model_config = {"extra": "forbid"}
+
+    qualified_tool_name: str = Field(..., min_length=1, max_length=300)
+    server_id: str = Field(..., min_length=1, max_length=64)
+    display_name: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    parameters: str = Field(
+        default="",
+        max_length=2000,
+        description="输入参数的可读摘要（来自 inputSchema，非可信内容）",
+    )
+    risk_hints: list[str] = Field(default_factory=list, max_length=6)
+
+
 class AgentPlannerInput(BaseModel):
     """Planner 的服务端输入；available_intents 由服务端生成。"""
 
@@ -35,6 +52,9 @@ class AgentPlannerInput(BaseModel):
     # 只防异常超大输入，不再是二次裁切
     project_context: str = Field(default="", max_length=60000)
     unresolved_turn_count: int = Field(default=0, ge=0, le=3)
+    # MCP-03：服务端下发的有界外部工具目录（最多 20 个，按描述与请求匹配）。
+    # 描述文本是外部不可信内容，渲染时走 user_content_vars 边界。
+    external_tools: list[PlannerExternalTool] = Field(default_factory=list, max_length=20)
 
 
 class PlannerTarget(BaseModel):
@@ -42,7 +62,9 @@ class PlannerTarget(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    target_type: Literal["project", "story_bible", "outline", "script", "evaluation"]
+    target_type: Literal[
+        "project", "story_bible", "outline", "script", "evaluation", "external_tool"
+    ]
     episode_number: int | None = Field(default=None, ge=1)
 
 
@@ -53,6 +75,20 @@ class PlannerStep(BaseModel):
 
     title: str = Field(..., min_length=1, max_length=120)
     description: str = Field(..., min_length=1, max_length=500)
+
+
+class PlannerExternalToolCall(BaseModel):
+    """Planner 选定的外部工具调用（选择器，非执行句柄）。
+
+    qualified_tool_name 必须逐字来自服务端下发的 external_tools 目录，
+    服务端校验通过后才回填完整 MCPToolCallCommand。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    qualified_tool_name: str = Field(..., min_length=1, max_length=300)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    purpose: str = Field(default="", max_length=2000)
 
 
 class AgentPlannerOutput(BaseModel):
@@ -74,6 +110,8 @@ class AgentPlannerOutput(BaseModel):
         le=50,
         description="仅 intent=continue 时有意义：本批集数，缺省写完全部",
     )
+    # MCP-03：仅 intent=use_external_tool 的 plan 携带（服务端二次校验）
+    external_tool: PlannerExternalToolCall | None = None
 
 
 # ============================================================

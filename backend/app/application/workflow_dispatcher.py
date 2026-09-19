@@ -422,6 +422,7 @@ async def _execute_workflow(
     from app.workflows.creation import build_creation_workflow
     from app.workflows.evaluation import build_evaluation_workflow
     from app.workflows.import_file import build_import_workflow
+    from app.workflows.mcp_tool_call import build_mcp_tool_call_workflow
     from app.workflows.outline_revision import build_outline_revision_workflow
     from app.workflows.revision import build_revision_workflow
 
@@ -534,6 +535,7 @@ async def _execute_workflow(
                 "revise_script",
                 "revise_outline",
                 "import",
+                "mcp_tool_call",
             ):
                 raise AppError(
                     detail=f"不支持的 Workflow action: {action}",
@@ -659,6 +661,23 @@ async def _execute_workflow(
                     "completed_nodes": [],
                     "prompt_versions": {},
                 }
+            elif action == "mcp_tool_call":
+                # action=mcp_tool_call → 单节点外部工具调用（MCP-03）：
+                # 经 MCPExecutionService 调用一个 Tool；digest 二次校验与
+                # 结果规范化在工作流节点内完成；不创建 Artifact。
+                workflow = build_mcp_tool_call_workflow(checkpointer=checkpointer)
+                initial_state = {
+                    "run_id": str(run_id),
+                    "project_id": str(run.project_id),
+                    "action": action,
+                    "mcp_result": None,
+                    "status": "running",
+                    "error_node": None,
+                    "error_detail": None,
+                    "completed_nodes": [],
+                    "prompt_versions": {},
+                }
+                workflow_config["configurable"]["options"] = options
             elif action == "revise_script":
                 # action=revise_script → 对话式剧本修订子图（J-06）：
                 # 目标由服务端解析的 source script ID 决定（Action 确认时已做
@@ -996,6 +1015,30 @@ async def _execute_workflow(
                     payload={
                         "message": "评估完成",
                         "evaluation_count": len(final_state.get("evaluation_artifact_ids", {})),
+                    },
+                    autocommit=True,
+                )
+            elif action == "mcp_tool_call":
+                # 外部工具调用完成：结果快照在 state.mcp_result（受 256 KiB
+                # 上限），事件 payload 只带摘要；不创建 Artifact。
+                mcp_result = final_state.get("mcp_result") or {}
+                text_blocks = [
+                    block.get("text")
+                    for block in mcp_result.get("content", [])
+                    if block.get("kind") == "text" and block.get("text")
+                ]
+                await run_svc.transition_status(db, run_id, "completed", lease_owner=lease_owner)
+                await publisher.publish(
+                    db,
+                    run_id=run_id,
+                    event_type="run.completed",
+                    payload={
+                        "message": "外部工具调用完成",
+                        "server_id": mcp_result.get("server_id"),
+                        "tool_name": mcp_result.get("tool_name"),
+                        "duration_ms": mcp_result.get("duration_ms"),
+                        "truncated": mcp_result.get("truncated", False),
+                        "text_preview": (text_blocks[0] or "")[:200] if text_blocks else None,
                     },
                     autocommit=True,
                 )

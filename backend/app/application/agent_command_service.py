@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
@@ -33,6 +35,8 @@ from app.core.errors import (
     AppError,
     IdempotencyKeyReusedError,
     InvalidActiveContextError,
+    MCPToolArgumentInvalidError,
+    MCPToolNotAvailableError,
     NotFoundError,
     OutlineNotFoundForRevisionError,
     ProjectHasActiveRunError,
@@ -69,11 +73,16 @@ from app.domain.agent_command import (
     ContinueCommand,
     CreateScriptCommand,
     EvaluateCommand,
+    MCPToolCallCommand,
     ReviseOutlineCommand,
     ReviseScriptCommand,
     compute_request_hash,
 )
-from app.domain.agent_planner import AgentPlannerInput, AgentPlannerOutput
+from app.domain.agent_planner import (
+    AgentPlannerInput,
+    AgentPlannerOutput,
+    PlannerExternalTool,
+)
 from app.domain.conversation import ConversationCreate, MessageCreate
 from app.llm.budget import enter_run, exit_run
 from app.memory.wiring import get_message_service
@@ -105,7 +114,14 @@ INTENT_RUN_ACTION: dict[str, str] = {
     "evaluate": "evaluate",
     "revise_script": "revise_script",
     "revise_outline": "revise_outline",
+    # MCP-03：外部工具调用复用确认链路与单活跃 Run 约束
+    "use_external_tool": "mcp_tool_call",
 }
+
+# Planner 有界工具目录上限（MCP-03：按描述匹配后最多提供 20 个）
+MCP_PLANNER_TOOL_LIMIT = 20
+
+_MCP_TOOL_ID_RE = re.compile(r"^mcp__[a-z0-9_]+__[^\s_][^\s]*$")
 
 _TERMINAL_TURN_STATUSES = frozenset({"needs_input", "answered", "action_proposed", "failed"})
 
@@ -278,6 +294,80 @@ def render_plan_message(plan: AgentActionPlan) -> str:
     return "\n".join(lines)
 
 
+# ========================================================================
+# MCP 有界工具目录（MCP-03）——服务端构建、按描述匹配、最多 20 个
+# ========================================================================
+
+
+def _text_tokens(text: str) -> set[str]:
+    """请求/描述的粗粒度 token 集合（拉丁词 + CJK 单字与二元组）。"""
+    tokens: set[str] = set()
+    for word in re.findall(r"[a-zA-Z0-9]+", text.lower()):
+        if len(word) >= 2:
+            tokens.add(word)
+    cjk = re.findall(r"[\u4e00-\u9fff]", text)
+    tokens.update(cjk)
+    tokens.update(a + b for a, b in zip(cjk, cjk[1:], strict=False))
+    return tokens
+
+
+def summarize_input_schema(schema: dict[str, Any]) -> str:
+    """inputSchema → 可读参数摘要（属性名/类型/必填，最多 12 个属性）。"""
+    properties = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+    parts: list[str] = []
+    for name, spec in list(properties.items())[:12]:
+        prop_type = spec.get("type", "any") if isinstance(spec, dict) else "any"
+        flag = "必填" if name in required else "可选"
+        parts.append(f"{name}（{prop_type}，{flag}）")
+    return "；".join(parts)[:2000]
+
+
+def build_planner_external_tools(
+    definitions: list[Any],
+    user_request: str,
+    *,
+    limit: int = MCP_PLANNER_TOOL_LIMIT,
+) -> list[PlannerExternalTool]:
+    """catalog 定义 → 有界 Planner 工具目录。
+
+    按描述与用户请求的 token 重叠排序（防大目录撑爆上下文），最多
+    limit 个；描述与参数摘要均按上限裁剪（外部不可信内容）。
+    """
+    request_tokens = _text_tokens(user_request)
+    scored: list[tuple[int, Any]] = []
+    for definition in definitions:
+        text = f"{definition.description or ''} {definition.title or ''} {definition.tool_name}"
+        score = len(request_tokens & _text_tokens(text))
+        scored.append((score, definition))
+    scored.sort(key=lambda pair: (-pair[0], pair[1].qualified_tool_name))
+
+    tools: list[PlannerExternalTool] = []
+    for _score, definition in scored[:limit]:
+        risk_hints: list[str] = []
+        annotations = definition.annotations
+        if annotations is not None:
+            if annotations.read_only_hint:
+                risk_hints.append("只读提示")
+            if annotations.destructive_hint:
+                risk_hints.append("可能有破坏性")
+            if annotations.idempotent_hint:
+                risk_hints.append("幂等提示")
+            if annotations.open_world_hint:
+                risk_hints.append("访问外部世界")
+        tools.append(
+            PlannerExternalTool(
+                qualified_tool_name=definition.qualified_tool_name,
+                server_id=definition.server_id,
+                display_name=(definition.title or definition.tool_name)[:200],
+                description=(definition.description or "")[:2000],
+                parameters=summarize_input_schema(definition.input_schema or {}),
+                risk_hints=risk_hints[:6],
+            )
+        )
+    return tools
+
+
 async def _latest_assistant_message_confirmable(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
     """会话内最近一条 assistant 消息是否仍是可确认对象（IR-3 §8.6）。
 
@@ -311,6 +401,7 @@ class AgentCommandService:
         run_service: RunService | None = None,
         context_service: AgentContextService | None = None,
         message_service: MessageService | None = None,
+        mcp_manager_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._settings = settings
         self._planner_agent = planner_agent
@@ -321,6 +412,8 @@ class AgentCommandService:
         # M-02:与其他消息入口共享统一记忆挂载工厂(短期记忆+累计摘要)
         self._message_service = message_service or get_message_service()
         self._conversation_service = ConversationService()
+        # MCP-03:惰性读取进程级 MCPClientManager（None = MCP 未启用）
+        self._mcp_manager_provider = mcp_manager_provider
 
     # ========================================================================
     # Turn:三段式执行
@@ -455,6 +548,7 @@ class AgentCommandService:
             logger.exception("Planner 上下文构建失败: turn=%s", turn_id)
             return await self._fail_turn(db, turn_id, conv_id, lease_owner, exc)
 
+        catalog = self._mcp_catalog()
         planner_input = AgentPlannerInput(
             user_request=content,
             project_title=project.title or "",
@@ -465,6 +559,12 @@ class AgentCommandService:
             # 不再做第二次字符截断——那会把受保护目标切掉
             project_context=context_text,
             unresolved_turn_count=unresolved,
+            # MCP-03：有界工具目录（≤20，按描述匹配；空目录时不注入）
+            external_tools=(
+                build_planner_external_tools(catalog.list_available(), content)
+                if catalog is not None
+                else []
+            ),
         )
 
         # ---- Planner + 内容解释（无事务段；共用单 Turn 预算，W1-03） ----
@@ -596,6 +696,31 @@ class AgentCommandService:
                 await action_repo.transition(action_id, "stale", expected_statuses={"proposed"})
                 await db.commit()  # 先持久化 stale 再抛错,保证状态可见
                 raise AgentActionStaleError(detail="计划基于的 Artifact 已更新,请重新发起规划")
+
+        # MCP-03：外部工具计划在确认前重校验工具仍 available 且定义
+        # digest 未变化（计划后工具被移除/改定义 → Action 转 stale）。
+        if action.intent == "use_external_tool":
+            mcp_plan = AgentActionPlan.model_validate(action.plan)
+            mcp_command = mcp_plan.command
+            if not isinstance(mcp_command, MCPToolCallCommand):
+                await db.rollback()
+                raise UnsupportedAgentIntentError(detail="外部工具计划缺少有效的调用命令")
+            catalog = self._mcp_catalog()
+            definition = (
+                catalog.get(mcp_command.qualified_tool_name)
+                if catalog is not None
+                else None
+            )
+            if (
+                definition is None
+                or definition.status != "available"
+                or definition.definition_digest != mcp_command.tool_definition_digest
+            ):
+                await action_repo.transition(action_id, "stale", expected_statuses={"proposed"})
+                await db.commit()
+                raise AgentActionStaleError(
+                    detail="外部工具已变化或不可用,请重新发起规划"
+                )
 
         # continue 意图不创建新 Run，而是恢复停在确认门的既有 Run；
         # 必须在 INTENT_RUN_ACTION 查找之前分流（continue 无对应 run action）。
@@ -774,15 +899,29 @@ class AgentCommandService:
                 break
         return count
 
+    def _mcp_catalog(self) -> Any | None:
+        """当前进程的 MCP 工具目录；MCP 未启用时为 None。"""
+        if self._mcp_manager_provider is None:
+            return None
+        manager = self._mcp_manager_provider()
+        if manager is None:
+            return None
+        return getattr(manager, "catalog", None)
+
     async def _available_intents(self, db: AsyncSession, project: Project) -> list[str]:
-        """动态意图白名单：项目存在停在确认门的 Run 时开放 continue。
+        """动态意图白名单：项目存在停在确认门的 Run 时开放 continue；
+        MCP catalog 存在 available 工具时开放 use_external_tool（MCP-03）。
 
         Planner 白名单校验以本列表为准——没有门上 Run 时"继续"这类请求
-        不会被判为 continue 意图，避免产出永远无法确认的计划。
+        不会被判为 continue 意图；没有可用外部工具时工具类请求也不产生
+        use_external_tool 计划，避免产出永远无法确认的计划。
         """
         intents = list(DEFAULT_AVAILABLE_INTENTS)
         if await find_gated_run(db, project.id) is not None:
             intents.append("continue")
+        catalog = self._mcp_catalog()
+        if catalog is not None and catalog.list_available():
+            intents.append("use_external_tool")
         return intents
 
     @staticmethod
@@ -1378,6 +1517,70 @@ class AgentCommandService:
                 user_request=user_request,
             )
             intent = intent_str  # type: ignore[assignment]
+        elif output.intent == "use_external_tool":
+            # MCP-03：外部工具计划。Planner 只提供选择器（qualified ID +
+            # 参数）；服务端对照 catalog 重新验证工具、allowlist（catalog
+            # 构建时已过滤）、Schema 与 digest，不信任模型的描述。
+            catalog = self._mcp_catalog()
+            if catalog is None:
+                raise MCPToolNotAvailableError(detail="MCP 未启用，无法调用外部工具")
+            selector = output.external_tool
+            if selector is None or not _MCP_TOOL_ID_RE.match(selector.qualified_tool_name):
+                raise UnsupportedAgentIntentError(detail="外部工具请求缺少合法的工具选择器")
+            definition = catalog.get(selector.qualified_tool_name)
+            if definition is None or definition.status != "available":
+                raise MCPToolNotAvailableError(
+                    detail=f"外部工具不可用: {selector.qualified_tool_name}"
+                )
+            # 计划构建即校验参数（JSON Schema 2020-12），非法参数不产生计划
+            from app.integrations.mcp.execution import _validate_json_schema
+
+            _validate_json_schema(
+                definition.input_schema,
+                selector.arguments,
+                error_cls=MCPToolArgumentInvalidError,
+            )
+            display_name = definition.title or definition.tool_name
+            intent = "use_external_tool"
+            command = MCPToolCallCommand(
+                server_id=definition.server_id,
+                tool_name=definition.tool_name,
+                qualified_tool_name=definition.qualified_tool_name,
+                arguments=dict(selector.arguments),
+                tool_definition_digest=definition.definition_digest,
+                purpose=(selector.purpose or user_request)[:2000],
+            )
+            target = ActionTarget(target_type="external_tool")
+            purpose_text = (selector.purpose or user_request)[:200]
+            goal = f"调用外部工具 {display_name}（来源 {definition.server_id}）：{purpose_text}"
+            risk_flags = []
+            if definition.annotations is not None:
+                if definition.annotations.destructive_hint:
+                    risk_flags.append("可能具有破坏性")
+                if definition.annotations.open_world_hint:
+                    risk_flags.append("访问外部世界")
+            risk_note = "；".join(risk_flags)
+            steps = [
+                ActionStep(
+                    step_id="confirm",
+                    title="等待确认",
+                    description="展示工具来源、参数与风险提示，等待你确认执行",
+                ),
+                ActionStep(
+                    step_id="call",
+                    title="调用外部工具",
+                    description="经确认后调用一次外部工具，结果不直接改动任何稿件",
+                ),
+                ActionStep(
+                    step_id="report",
+                    title="回写结果",
+                    description="结果以消息形式返回，供你决定下一步",
+                ),
+            ]
+            expected_impact = ["不创建或修改任何稿件内容；仅返回外部工具结果"]
+            if risk_note:
+                expected_impact.append(f"风险提示：{risk_note}")
+            snapshots = []
         else:
             # Planner 白名单已限定意图;到达这里说明服务端与 Planner 白名单漂移,直接拒绝。
             raise UnsupportedAgentIntentError(detail=f"intent 不支持生成执行计划: {output.intent}")
@@ -1469,6 +1672,17 @@ class AgentCommandService:
                     "source_outline_artifact_id": str(command.source_outline_id),
                     "user_constraints": list(command.constraints),
                     "user_request": command.user_request,
+                }
+            }
+        if isinstance(command, MCPToolCallCommand):
+            # MCP-03：Run config 只携带服务端校验过的调用参数（无 URL/Token）
+            return {
+                "options": {
+                    "server_id": command.server_id,
+                    "tool_name": command.tool_name,
+                    "arguments": dict(command.arguments),
+                    "tool_definition_digest": command.tool_definition_digest,
+                    "purpose": command.purpose,
                 }
             }
         return {"options": command.model_dump(mode="json")}

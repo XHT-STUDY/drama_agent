@@ -86,6 +86,56 @@ def _stored_phase_matches(stored: str, phase: str) -> bool:
     return stored == phase
 
 
+def _render_mcp_result_message(
+    action: AgentAction,
+    run: WorkflowRun,
+    outcome: AgentOutcome,
+    final_state: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """MCP 调用完成的可读结果消息与 metadata（内容为外部不可信文本）。
+
+    文本受 2000 字符上限；metadata 携带完整规范化结果（受 256 KiB 上限）
+    供前端按内容类型渲染；图片/音频/embedded resource 只显示类型，不
+    自动下载。
+    """
+    mcp = final_state.get("mcp_result") or {}
+    text_blocks = [
+        str(block.get("text"))
+        for block in mcp.get("content", [])
+        if block.get("kind") == "text" and block.get("text")
+    ]
+    unsupported = [
+        block for block in mcp.get("content", [])
+        if block.get("kind") in ("image", "audio", "embedded_resource")
+    ]
+    lines = [
+        f"外部工具 {mcp.get('tool_name')}（来源 {mcp.get('server_id')}）"
+        f"调用完成，用时 {mcp.get('duration_ms', 0)} ms。",
+    ]
+    body = "\n".join(text_blocks)[:2000]
+    if body:
+        lines.append(body)
+    if mcp.get("truncated"):
+        lines.append("（结果超出大小上限，已按内容块截断）")
+    if unsupported:
+        kinds = sorted({str(b.get("kind")) for b in unsupported})
+        lines.append(f"（结果包含 {len(unsupported)} 个暂不支持直接展示的内容类型：{'、'.join(kinds)}）")
+    if mcp.get("resource_links"):
+        lines.append(f"资源链接 {len(mcp['resource_links'])} 个（见结果详情）")
+    lines.append("以上内容由外部工具返回，请注意甄别；它不会直接改动任何稿件。")
+    metadata: dict[str, Any] = {
+        "agent_action_id": str(action.id),
+        "run_id": str(run.id),
+        "message_type": "result",
+        "goal_status": outcome.goal_status,
+        "verification_status": outcome.verification_status,
+        "run_status": run.status,
+        "message_subtype": "mcp_tool_result",
+        "mcp_result": mcp,
+    }
+    return "\n".join(lines), metadata
+
+
 class AgentActionLifecycle:
     """Run ↔ Action 状态同步与终态回写。"""
 
@@ -347,7 +397,7 @@ class AgentActionLifecycle:
                 from app.skills.agent_shortcut import describe_run_failure
 
                 if run.error_code == "WORKFLOW_RECOVERY_EXHAUSTED":
-                    # 耗尽Run再「重试」只会立刻再次耗尽：指重新发起而非重试
+                    # 耗尽Run再「重试」只会立刻再耗尽：指重新发起而非重试
                     content = (
                         f"创作任务失败了：{describe_run_failure(run)}。\n"
                         "该任务无法再自动重试；已生成的产物不受影响，"
@@ -359,6 +409,17 @@ class AgentActionLifecycle:
                         "已生成的产物不受影响。输入「重试」可从断点重新执行，"
                         "或直接告诉我你想调整什么。"
                     )
+            elif (final_state or {}).get("mcp_result") is not None:
+                # MCP 外部工具调用完成（MCP-03）：可读摘要 + 受限结果文本；
+                # 结果内容为外部不可信文本，只作内容展示，不改变控制流
+                content, metadata = _render_mcp_result_message(action, run, outcome, final_state or {})
+                return await self._append_message(
+                    db, action.conversation_id,
+                    role="assistant",
+                    content=content,
+                    kind="action_result",
+                    metadata=metadata,
+                )
             else:
                 # 可读自然文案；状态详情由计划卡的 OutcomeView 承载，避免重复。
                 # W1-04：未完成（已知失败）与待判断（缺核验证据）分开陈述，

@@ -669,7 +669,8 @@ export type AgentIntent =
   | "revise_outline"
   | "revise_script"
   | "evaluate"
-  | "continue";
+  | "continue"
+  | "use_external_tool";
 
 export type AgentGoalStatus = "achieved" | "partially_achieved" | "blocked";
 
@@ -715,7 +716,13 @@ export interface ArtifactSnapshot {
 
 /** 服务端解析后的受限动作目标 */
 export interface ActionTarget {
-  target_type: "project" | "story_bible" | "outline" | "script" | "evaluation";
+  target_type:
+    | "project"
+    | "story_bible"
+    | "outline"
+    | "script"
+    | "evaluation"
+    | "external_tool";
   episode_number?: number | null;
 }
 
@@ -752,7 +759,17 @@ export type AgentCommand =
       user_request?: string | null;
     }
   | { intent: "evaluate"; scope: "project" | "episode"; episode_number?: number | null }
-  | { intent: "continue"; target_run_id: string; batch_size?: number | null };
+  | { intent: "continue"; target_run_id: string; batch_size?: number | null }
+  | {
+      /** MCP-03：外部工具调用（选择器 + 服务端回填的 digest） */
+      intent: "use_external_tool";
+      server_id: string;
+      tool_name: string;
+      qualified_tool_name: string;
+      arguments: Record<string, unknown>;
+      tool_definition_digest: string;
+      purpose: string;
+    };
 
 /** 服务端持久化的结构化计划 */
 export interface AgentActionPlan {
@@ -765,6 +782,30 @@ export interface AgentActionPlan {
   expected_impact: string[];
   /** IR-3 §8.3：触发计划的用户原始请求，旧计划（legacy）缺省 null */
   user_request?: string | null;
+}
+
+/** MCP 规范化结果内容块（MCP-03；二进制只带类型/大小，不带本体） */
+export interface McpContentBlock {
+  kind: "text" | "image" | "audio" | "resource_link" | "embedded_resource";
+  text?: string | null;
+  mime_type?: string | null;
+  resource_uri?: string | null;
+  size_bytes?: number | null;
+}
+
+/** MCP Tool 调用结果快照（action_result 消息 metadata.mcp_result） */
+export interface McpToolResult {
+  server_id: string;
+  tool_name: string;
+  content: McpContentBlock[];
+  structured_content?: Record<string, unknown> | null;
+  resource_links: string[];
+  is_error: boolean;
+  error_summary?: string | null;
+  duration_ms: number;
+  protocol_version?: string | null;
+  request_id: string;
+  truncated: boolean;
 }
 
 /** Outcome 可选的一次后续动作建议 */

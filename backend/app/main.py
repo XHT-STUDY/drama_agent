@@ -112,6 +112,10 @@ async def lifespan(app: FastAPI) -> Any:
         logger.exception("MCP ClientManager 启动失败，MCP 功能不可用")
         mcp_manager = None
     app.state.mcp_manager = mcp_manager
+    # 后台 Worker（Dispatcher）经 runtime holder 读取 Manager（MCP-03）
+    from app.integrations.mcp.runtime import set_manager as set_mcp_runtime_manager
+
+    set_mcp_runtime_manager(mcp_manager)
 
     logger.info(
         "应用启动: env=%s host=%s port=%s log=%s/%s mcp=%s",
@@ -127,6 +131,7 @@ async def lifespan(app: FastAPI) -> Any:
     if mcp_manager is not None:
         await mcp_manager.shutdown()
     app.state.mcp_manager = None
+    set_mcp_runtime_manager(None)
     await shutdown_dispatcher()
 
     # 关闭数据库连接池
