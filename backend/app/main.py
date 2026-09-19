@@ -100,16 +100,33 @@ async def lifespan(app: FastAPI) -> Any:
         )
     await startup_dispatcher()
 
+    # MCP 可选依赖（MCP-01）：Manager 创建失败或 Server degraded 都不阻断启动
+    mcp_manager: Any = None
+    try:
+        from app.integrations.mcp.manager import build_mcp_manager
+
+        mcp_manager = build_mcp_manager(settings)
+        if mcp_manager is not None:
+            await mcp_manager.startup()
+    except Exception:
+        logger.exception("MCP ClientManager 启动失败，MCP 功能不可用")
+        mcp_manager = None
+    app.state.mcp_manager = mcp_manager
+
     logger.info(
-        "应用启动: env=%s host=%s port=%s log=%s/%s",
+        "应用启动: env=%s host=%s port=%s log=%s/%s mcp=%s",
         settings.app_env,
         settings.app_host,
         settings.app_port,
         settings.log_level,
         log_fmt,
+        "on" if mcp_manager is not None else "off",
     )
     yield
 
+    if mcp_manager is not None:
+        await mcp_manager.shutdown()
+    app.state.mcp_manager = None
     await shutdown_dispatcher()
 
     # 关闭数据库连接池

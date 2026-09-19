@@ -16,7 +16,13 @@ from fastapi import Request
 from app.core.config import Settings
 from app.db.session import get_db as get_db
 
-__all__ = ["get_settings", "get_request_id", "get_db", "get_agent_command_service"]
+__all__ = [
+    "get_settings",
+    "get_request_id",
+    "get_db",
+    "get_agent_command_service",
+    "get_mcp_manager",
+]
 
 
 def get_settings(request: Request) -> Settings:
@@ -40,6 +46,15 @@ def get_request_id(request: Request) -> str:
 
     rid = _request_id_ctx.get()
     return rid if rid else "unknown"
+
+
+def get_mcp_manager(request: Request) -> Any:
+    """获取进程级 MCPClientManager（MCP-01）。
+
+    MCP_ENABLED=false 或无 Server 配置时为 None——调用方必须容忍
+    MCP 不可用（可选依赖，任何 MCP 故障不得影响核心创作链路）。
+    """
+    return getattr(request.app.state, "mcp_manager", None)
 
 
 # AgentCommandService 进程级单例(J-04);测试通过 dependency_overrides 覆盖。

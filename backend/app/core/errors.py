@@ -307,6 +307,48 @@ class ExternalToolError(AppError):
     code = "EXTERNAL_TOOL_ERROR"
 
 
+# ---- MCP 标准 Client（MCP-01+）----
+# 这些错误码用于诊断、状态标记和后续调用，应用启动不因可选 Server 失败而失败。
+
+
+class MCPConfigInvalidError(AppError):
+    """MCP Server 配置非法（400 MCP_CONFIG_INVALID）。
+
+    MCP_SERVERS_JSON 结构错误、URL scheme/host 非法、Token 环境变量缺失等。
+    """
+
+    status_code = 400
+    code = "MCP_CONFIG_INVALID"
+
+
+class MCPServerUnavailableError(AppError):
+    """MCP Server 不可达或已降级（503 MCP_SERVER_UNAVAILABLE）。"""
+
+    status_code = 503
+    code = "MCP_SERVER_UNAVAILABLE"
+
+
+class MCPProtocolError(AppError):
+    """MCP 协议协商或传输失败（502 MCP_PROTOCOL_ERROR）。"""
+
+    status_code = 502
+    code = "MCP_PROTOCOL_ERROR"
+
+
+class MCPDiscoveryTimeoutError(AppError):
+    """MCP 工具发现超时（504 MCP_DISCOVERY_TIMEOUT）。"""
+
+    status_code = 504
+    code = "MCP_DISCOVERY_TIMEOUT"
+
+
+class MCPToolTimeoutError(AppError):
+    """MCP Tool 调用超时（504 MCP_TOOL_TIMEOUT）。"""
+
+    status_code = 504
+    code = "MCP_TOOL_TIMEOUT"
+
+
 # ---- 辅助函数 ----
 
 

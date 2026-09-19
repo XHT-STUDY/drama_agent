@@ -128,10 +128,13 @@ class Settings(BaseSettings):
     # GET /metrics 开关：false 时返回 404（埋点仍累积，不影响运行）
     metrics_enabled: bool = True
 
-    # ---- MCP 外部工具（I-04） ----
-    # 默认关：主流程完全不受影响。启用时把外部 JSON-RPC 工具注册到 ToolRegistry
-    # （见 integrations/mcp/adapter.py::register_mcp_tools）。
+    # ---- MCP 外部工具（I-04 / MCP-01） ----
+    # 默认关：主流程完全不受影响。MCP_SERVERS_JSON 是多 Server 标准配置
+    # （JSON 数组，见 app/integrations/mcp/protocol.py::MCPServerConfig）；
+    # 缺失时旧 MCP_BASE_URL/MCP_TIMEOUT_SECONDS 映射为 id=default 的单
+    # Server（弃用，保留一个发布周期）。
     mcp_enabled: bool = False
+    mcp_servers_json: str = ""
     mcp_base_url: str = ""
     mcp_timeout_seconds: float = 10.0
 
