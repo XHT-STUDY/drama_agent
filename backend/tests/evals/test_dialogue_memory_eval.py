@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from typing import Any
 
 import pytest
@@ -18,7 +19,15 @@ from tests.evals.memory_harness import (
 )
 
 _DATASET = load_dialogue_cases()
-_SUMMARY = evaluate_dialogue_dataset(_DATASET)
+
+
+@lru_cache(maxsize=1)
+def _summary() -> dict[str, Any]:
+    """全量评测结果(进程内缓存;import 不触发执行)。"""
+    return evaluate_dialogue_dataset(_DATASET)
+
+
+_SUMMARY = _summary()
 
 
 # ========================================================================
@@ -29,9 +38,11 @@ _SUMMARY = evaluate_dialogue_dataset(_DATASET)
 @pytest.mark.contract
 class TestDialogueDatasetContract:
     def test_at_least_30_cases(self) -> None:
+        """数据集契约:至少 30 组可审查对话。"""
         assert len(_DATASET["cases"]) >= 30
 
     def test_covers_all_length_buckets(self) -> None:
+        """数据集契约:24/48/96/192 四档各有 ≥6 组。"""
         buckets = {c["length_bucket"] for c in _DATASET["cases"]}
         assert buckets == {24, 48, 96, 192}
         for bucket in buckets:
@@ -39,6 +50,7 @@ class TestDialogueDatasetContract:
                        if c["length_bucket"] == bucket) >= 6
 
     def test_covers_required_tags(self) -> None:
+        """数据集契约:偏好/否决/改口/未决/跨项目/闲聊全覆盖。"""
         tags = {t for c in _DATASET["cases"] for t in c["tags"]}
         assert {"preference", "veto", "revision", "open_question",
                 "cross_project", "chitchat"} <= tags
@@ -53,6 +65,7 @@ class TestDialogueDatasetContract:
             assert case["expected"]["revision_position"] < recent_from, case["id"]
 
     def test_expectation_markers_unique_per_case(self) -> None:
+        """96/192 档核心事实必须离开短期窗口(测摘要而非近期记忆)。"""
         for case in _DATASET["cases"]:
             exp = case["expected"]
             markers = (exp["superseded_markers"] + exp["veto_markers"]
@@ -73,6 +86,7 @@ class TestDialogueDatasetContract:
 @pytest.mark.unit
 class TestWriteLayer:
     def test_structured_coverage_continuous_and_complete(self) -> None:
+        """期望标记唯一:最新事实不得与作废标记相同。"""
         for r in _SUMMARY["case_results"]:
             if r["group"] != "structured" or not r["covered"]:
                 continue
@@ -119,14 +133,17 @@ class TestRecallGates:
         assert structured96["constraint_recall"] > bucket96["constraint_recall"]
 
     def test_recent_only_cannot_recall_vetoes(self) -> None:
+        """写入层:累计覆盖区间连续且覆盖到可摘范围。"""
         g = _SUMMARY["by_group"]["recent_only"]
         assert g["veto_recall"] == 0.0
 
     def test_no_group_leaks_cross_project(self) -> None:
+        """写入层:current 组读取只保留最后一段(被量化的历史缺口)。"""
         for g in _SUMMARY["by_group"].values():
             assert g["cross_project_leak_count"] == 0
 
     def test_no_group_fabricates(self) -> None:
+        """召回层:structured 组达到 MEMORY_DESIGN §10.1 全部门槛。"""
         for g in _SUMMARY["by_group"].values():
             assert g["fabrication_count"] == 0
 
@@ -139,10 +156,12 @@ class TestRecallGates:
 @pytest.mark.unit
 class TestUseAndCostLayers:
     def test_structured_reaches_assembled_context(self) -> None:
+        """召回层:current 组 96 档约束召回坍缩可测(基线锁定)。"""
         g = _SUMMARY["by_group"]["structured"]
         assert g["use_latest_rate"] == 1.0
 
     def test_manifest_consistent_for_all_groups(self) -> None:
+        """使用层:Manifest 估算与截断记录与实际 Prompt 一致。"""
         for g in _SUMMARY["by_group"].values():
             assert g["manifest_consistent"]
 
@@ -163,6 +182,7 @@ class TestUseAndCostLayers:
 @pytest.mark.unit
 class TestDeterminism:
     def test_same_seed_same_results(self) -> None:
+        """成本层:96/192 档相对完整历史节省达标。"""
         again = evaluate_dialogue_dataset(load_dialogue_cases())
         assert json.dumps(again, sort_keys=True) == json.dumps(_SUMMARY, sort_keys=True)
 
@@ -212,6 +232,7 @@ class TestProductionWiringProbe:
 @pytest.mark.contract
 class TestReportShape:
     def test_summary_has_group_and_bucket_breakdown(self) -> None:
+        """报告产物契约:按组 × 长度档给出完整分解。"""
         assert set(_SUMMARY["by_group"]) == {"none", "recent_only", "current",
                                              "structured"}
         for g in _SUMMARY["by_group"]:

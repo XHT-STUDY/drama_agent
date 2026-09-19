@@ -33,6 +33,10 @@ from app.memory.continuity import ContinuityManager
 _GOLDEN = Path(__file__).resolve().parents[2] / "golden" / "memory"
 GROUPS = ("none", "recent_only", "current", "structured")
 
+# 注意:下方 apply_delta 是 M-01 的参考规格(先于 M-03 生产实现);
+# 与生产 ContinuityManager.apply_episode_delta 的语义一致性由
+# tests/contract/test_story_state_v2.py 的数据集消费测试钉住。
+
 
 def load_story_cases() -> dict[str, Any]:
     return cast("dict[str, Any]",

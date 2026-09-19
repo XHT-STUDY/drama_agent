@@ -78,7 +78,7 @@ def build_summary_manager() -> Any:
     )
 
 
-def get_message_service() -> Any:
+def get_message_service() -> Any:  # 返回 MessageService(避免循环导入不注具体型)
     """带记忆挂载的 MessageService(进程级单例)。
 
     普通消息 API、Agent Turn 与 Action 生命周期共用此构造——

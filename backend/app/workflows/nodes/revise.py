@@ -130,7 +130,55 @@ async def revise_node(state: CreationState) -> dict[str, Any]:
         if episode_outline is None:
             raise ValueError(f"大纲中未找到第 {plan.episode_number} 集")
 
-        continuity_state = state.get("continuity_state_text", "")
+        # M-04:Reviser 前态与 continuity_check 同源——经 StoryStateService
+        # 加载 through=N-1 的确切前态(修订 Run 的 state 不再携带
+        # continuity_state_text,旧值恒为空)。
+        from app.application.story_state_service import (
+            StoryStateService,
+            StoryWorkset,
+        )
+        from app.db.repositories.artifacts import ArtifactRepository
+        from app.memory.continuity import ContinuityManager
+
+        repo = ArtifactRepository(db)
+        pre_scripts: dict[str, str] = {}
+        for ep in range(1, plan.episode_number):
+            latest = await repo.get_latest_valid(
+                project_id, "script_draft", ep
+            )
+            if latest is not None:
+                pre_scripts[str(ep)] = str(latest.id)
+        pre_workset = StoryWorkset.from_script_ids(
+            project_id=project_id,
+            story_bible_artifact_id=uuid.UUID(state["story_bible_artifact_id"]),
+            outline_artifact_id=uuid.UUID(state["outline_set_artifact_id"]),
+            script_artifact_ids=pre_scripts,
+        )
+        # 前态加载尽力而为:失败回落为空上下文并告警——真正的 fail-closed
+        # 门在 continuity_check(同一服务);Reviser 不因证据链缺口而中断。
+        try:
+            pre_state = await StoryStateService(agent).ensure_state_through(
+                db, pre_workset, plan.episode_number - 1
+            )
+            character_names = {
+                ch["character_id"]: ch["name"]
+                for ch in [
+                    story_bible.protagonist.model_dump(),
+                    story_bible.antagonist.model_dump(),
+                    *(c.model_dump() for c in story_bible.supporting_characters),
+                ]
+            }
+            continuity_state = ContinuityManager.get_context_for_episode_v2(
+                pre_state.state, plan.episode_number,
+                character_names=character_names,
+            )
+        except Exception:  # noqa: BLE001 — 尽力而为,不阻断修订
+            logger.warning(
+                "第 %d 集修订前态加载失败,回落为空连续性上下文",
+                plan.episode_number,
+                exc_info=True,
+            )
+            continuity_state = ""
 
         # 3. 调用 Reviser 生成完整新稿
         revision_agent = _build_revision_agent(agent)

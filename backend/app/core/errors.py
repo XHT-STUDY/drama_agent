@@ -121,13 +121,6 @@ class RequiredContextMissingError(AppError):
     code = "REQUIRED_CONTEXT_MISSING"
 
 
-class ProtectedContextTooLargeError(AppError):
-    """受保护内容超出上下文预算(413)。"""
-
-    status_code = 413
-    code = "PROTECTED_CONTEXT_TOO_LARGE"
-
-
 class AgentStateTransitionError(AppError):
     """AgentTurn 或 AgentAction 状态迁移不合法（409）。"""
 

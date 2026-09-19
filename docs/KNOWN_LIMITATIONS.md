@@ -74,4 +74,15 @@
 4. **旧项目惰性派生**：v1 项目（只有标题摘要回放）首次进入 v2 写作路径时
    按当前工作集重新派生全链；旧 `continuity_state_text` 语义不再用于恢复。
 5. **累计摘要后台任务为进程内 best effort**：无外部队列；进程重启丢失的
-   摘要缺口由下一次阈值触发或创作 Run 按 `covered_to_sequence` 补齐。
+   摘要缺口由下一次阈值触发或创作 Run 进入时补齐
+   （`catch_up_project_summaries`，`enforce_threshold=False`）。
+6. **「模型推断」分账未上面板**：StoryStatePanel 区分作者事实/角色已知/
+   作者计划，但评估与语义检查等模型推断尚无独立分区（需消费
+   evaluation_report/continuity_check Artifact，随采用事务一并落地）。
+7. **Run 不携带 conversation_id**：创作 Run 的会话记忆合并暂无"当前会话
+   优先"锚点（`merged_project_summaries(current_conversation_id=None)`），
+   待 Run 创建链路透传会话后接线。
+8. **评测 harness 与生产 reducer 双实现**：M-01 的 structured 组是先于
+   M-03 的可执行规格；两者由契约测试
+   `test_story_state_v2.py::TestGoldenStoryCasesThroughProductionReducer`
+   （数据集真值喂生产 reducer）钉住不静默分叉。

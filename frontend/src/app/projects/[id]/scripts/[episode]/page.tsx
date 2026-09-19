@@ -16,7 +16,9 @@ export default function ScriptRedirectPage() {
   const latest = useQuery({
     queryKey: ["script-latest", projectId, episode],
     queryFn: () => artifactsApi.getLatest(projectId, "script_draft", episode),
-    retry: false,
+    // 单次瞬时失败会让页面落到项目首页(选错稿)——允许一次重试
+    retry: 1,
+    retryDelay: 300,
     enabled: Number.isInteger(episode) && episode >= 1,
   });
 

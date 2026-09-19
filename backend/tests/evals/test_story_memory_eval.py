@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
+from typing import Any
 
 import pytest
 
@@ -16,7 +18,15 @@ from tests.evals.memory_harness import (
 )
 
 _DATASET = load_story_cases()
-_SUMMARY = evaluate_story_dataset(_DATASET)
+
+
+@lru_cache(maxsize=1)
+def _summary() -> dict[str, Any]:
+    """全量评测结果(进程内缓存;import 不触发执行)。"""
+    return evaluate_story_dataset(_DATASET)
+
+
+_SUMMARY = _summary()
 
 
 # ========================================================================

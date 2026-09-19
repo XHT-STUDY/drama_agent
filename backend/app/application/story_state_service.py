@@ -50,6 +50,36 @@ class StoryWorkset:
     outline_artifact_id: uuid.UUID
     scripts: dict[int, uuid.UUID] = field(default_factory=dict)
 
+    @classmethod
+    def from_script_ids(
+        cls,
+        *,
+        project_id: uuid.UUID,
+        story_bible_artifact_id: uuid.UUID,
+        outline_artifact_id: uuid.UUID,
+        script_artifact_ids: dict[str, str],
+        max_episode: int | None = None,
+    ) -> StoryWorkset:
+        """从 Run state 的 str 集号映射构建(workset 组装的唯一入口)。
+
+        max_episode 限定纳入的集数上限(如修订前态只取 < N);
+        非数字键跳过。
+        """
+        scripts: dict[int, uuid.UUID] = {}
+        for key, artifact_id in script_artifact_ids.items():
+            if not key.isdigit():
+                continue
+            episode = int(key)
+            if max_episode is not None and episode > max_episode:
+                continue
+            scripts[episode] = uuid.UUID(artifact_id)
+        return cls(
+            project_id=project_id,
+            story_bible_artifact_id=story_bible_artifact_id,
+            outline_artifact_id=outline_artifact_id,
+            scripts=scripts,
+        )
+
     def source_refs(self) -> list[dict[str, str]]:
         """StoryBible/大纲引用(幂等输入的一部分)。"""
         return [
@@ -82,15 +112,22 @@ class StoryStateService:
 
     def __init__(
         self,
-        agent: BaseAgent,
+        agent: BaseAgent | None = None,
         prompt_loader: PromptLoader | None = None,
         artifact_service: ArtifactService | None = None,
     ) -> None:
+        # agent 仅派生路径需要;resolve_status 等只读路径可不传
+        # (GET story-state 零模型调用的构造前提)。
         self._agent = agent
         self._prompt_loader = prompt_loader or PromptLoader()
         self._artifact_service = artifact_service or ArtifactService()
         self._skill = SummarizerSkill()
         self._prompt_version = self._prompt_loader.get(_PROMPT_NAME).version
+
+    def _require_agent(self) -> BaseAgent:
+        if self._agent is None:
+            raise RuntimeError("StoryStateService 派生路径需要 agent(只读路径不应到达)") 
+        return self._agent
 
     # ---- 读取 ----
 
@@ -220,24 +257,18 @@ class StoryStateService:
     def _closest_prefix_mismatch(
         states: list[Artifact], workset: StoryWorkset, through: int
     ) -> int:
-        """找出与工作集最早不一致的集数(保守:最早变化集)。"""
-        best = through
-        best_score = -1
+        """跨全部状态链取最早的来源不一致集数(保守:最早变化集)。"""
+        earliest = through
         for artifact in states:
             basis = (artifact.content or {}).get("basis") or {}
             refs = basis.get("script_artifact_ids") or {}
-            first_mismatch = None
             for ep in range(1, min(through, artifact.episode_number) + 1):
                 if refs.get(str(ep)) != str(workset.scripts.get(ep)):
-                    first_mismatch = ep
+                    earliest = min(earliest, ep)
                     break
-            if first_mismatch is None:
-                first_mismatch = artifact.episode_number + 1
-            score = artifact.episode_number
-            if score > best_score:
-                best_score = score
-                best = first_mismatch
-        return max(1, min(best, through))
+            else:
+                earliest = min(earliest, artifact.episode_number + 1)
+        return max(1, min(earliest, through))
 
     # ---- 派生 ----
 
@@ -313,7 +344,7 @@ class StoryStateService:
                 outcome.reused_episodes.append(episode)
             else:
                 raw_delta = await self._skill.execute_delta(
-                    self._agent,
+                    self._require_agent(),
                     self._prompt_loader,
                     episode_number=episode,
                     script_content=dict(script_artifact.content or {}),

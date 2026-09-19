@@ -21,17 +21,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.base import BaseAgent
 from app.api.dependencies import get_db
 from app.application.story_state_service import StoryStateService, StoryWorkset
-from app.core.config import load_settings
 from app.core.errors import NotFoundError
 from app.db.models.project import Project
 from app.db.models.workflow_run import WorkflowRun
 from app.db.repositories.artifacts import ArtifactRepository
 from app.domain.enums import ArtifactType
-from app.llm.fake import FakeLLM
-from app.llm.openai_compatible import OpenAICompatibleLLM
 
 logger = logging.getLogger(__name__)
 
@@ -56,20 +52,17 @@ async def _resolve_workset(
                 detail=f"Run 不存在或不属于项目: {run_id}", code="RUN_NOT_FOUND"
             )
         summary = run.state_summary or {}
-        scripts = {
-            int(ep): uuid.UUID(aid)
-            for ep, aid in (summary.get("script_artifact_ids") or {}).items()
-            if ep.isdigit()
-        }
-        through = through_episode or max(scripts, default=0)
-        return StoryWorkset(
+        workset = StoryWorkset.from_script_ids(
             project_id=project_id,
             story_bible_artifact_id=uuid.UUID(summary["story_bible_artifact_id"]),
             outline_artifact_id=uuid.UUID(summary["outline_set_artifact_id"]),
-            scripts=scripts,
-        ), through
+            script_artifact_ids=dict(summary.get("script_artifact_ids") or {}),
+        )
+        through = through_episode or max(workset.scripts, default=0)
+        return workset, through
 
-    # 默认:当前采用集合 = 各集最新 valid 剧本
+    # 默认:当前采用集合 = 各集最新 valid 剧本(扫到项目最大剧本集数,
+    # 否则中途换稿检测不到 stale)
     story_bible = await repo.get_latest_valid(
         project_id, ArtifactType.STORY_BIBLE.value, 1
     )
@@ -81,8 +74,21 @@ async def _resolve_workset(
             detail="项目尚无 StoryBible 或大纲,无法解析剧情状态",
             code="ARTIFACT_NOT_FOUND",
         )
+    from sqlalchemy import func
+    from sqlalchemy import select as _select
+
+    from app.db.models.artifact import Artifact as _Artifact
+
+    max_episode_row = (await db.execute(
+        _select(func.max(_Artifact.episode_number)).where(
+            _Artifact.project_id == project_id,
+            _Artifact.type == ArtifactType.SCRIPT_DRAFT.value,
+            _Artifact.status == "valid",
+        )
+    )).scalar_one_or_none()
+    scan_to = through_episode or int(max_episode_row or 0)
     adopted: dict[int, uuid.UUID] = {}
-    for episode in range(1, (through_episode or 1) + 1):
+    for episode in range(1, scan_to + 1):
         script = await repo.get_latest_valid(
             project_id, ArtifactType.SCRIPT_DRAFT.value, episode
         )
@@ -129,14 +135,9 @@ async def get_story_state(
             "warnings": ["项目尚无剧本,无剧情状态"],
         }
 
-    # resolve_status 不触发模型;agent 仅作服务构造参数(测试用
-    # FakeLLM 调用计数断言 GET 零模型调用)。
-    settings = load_settings()
-    llm: Any = (
-        FakeLLM(seed=0) if settings.app_env == "test"
-        else OpenAICompatibleLLM(settings)
-    )
-    service = StoryStateService(BaseAgent(name="summarizer", llm=llm))
+    # resolve_status 纯查询零模型调用(测试以 monkeypatch 模型调用
+    # 即失败断言);服务不注入 agent。
+    service = StoryStateService()
     status = await service.resolve_status(db, workset, through)
     projection = await _state_projection(db, status.get("state_artifact_id"))
     return {

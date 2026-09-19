@@ -4898,3 +4898,49 @@ Phase L（分阶段创作与集数自由）全部完成。用户完整旅程：�
    数据库兜底,不是第一道防线。
 4. **"只读"要用测试钉死**:GET story-state 的零模型调用不是靠注释保证,
    而是 monkeypatch 模型调用即断言失败——契约要变成可执行断言。
+
+
+## 2026-09-19 Phase M 双轴评审修复轮
+
+### 做了什么
+
+code-review(Standards + Spec 双轴)后发现并修复:
+
+1. **真实缺陷**:GET /story-state 默认工作集只扫第 1 集——中途换稿
+   检测不到 stale;`_closest_prefix_mismatch` 取的是"最长链的失配集"
+   而非全局最早失配集。两者均修正(默认扫到项目最大剧本集数)。
+2. **规格缺口**:Reviser 未接 StoryStateService(修订 Run 的
+   continuity_state_text 恒为空)——revise 节点改为与 continuity_check
+   同源加载 through=N-1 前态;加载失败回落空上下文并告警(fail-closed
+   门仍在 continuity_check,Reviser 不因证据链缺口中断)。创作 Run
+   进入时补齐累计摘要缺口(catch_up_project_summaries)。
+3. **收敛**:StoryWorkset.from_script_ids 工厂(三处重复组装合一);
+   GET story-state 不再为只读路径构造 LLM(StoryStateService agent
+   可选);删除与 ContextTooLargeError 一码两类的
+   ProtectedContextTooLargeError;episode_delta_factory 解析失败大声
+   失败;continuity_state_text 回归轻量摘要(checkpoint 膨胀)。
+4. **预算契约**:软上限 34/硬 40(10 集全流程≈33 次调用),DEV_PLAN
+   §2.3 同步。
+5. **测试债**:全部 29 个 mypy 测试错误清零(含 8 处存量);缺失中文
+   docstring 与裸 pytest.raises 补齐;评测模块级执行改 lru_cache。
+6. **e2e 稳定性**:/scripts/[episode] 重定向单次瞬时失败会落到项目
+   首页选错稿——允许一次重试。
+
+### 验证
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest(后端全量) | 全绿 |
+| ruff / mypy(app+tests) | 通过(0 错误) |
+| pnpm lint / tsc / vitest | 通过(228 例) |
+| scripts/e2e.sh REPEAT=5 | 65/65 通过 |
+
+### 学到了什么
+
+1. **同码不同果就是竞态的证据**:一次 stash 前后的 e2e 结果相反,
+   而后端进程根本没重载——先确认"运行的到底是哪份代码"再归因。
+2. **pkill 的模式会匹配自己的命令行**:`pkill -f "next dev"` 杀掉了
+   包含该字面量的宿主 shell,表现为命令无声失败;进程清理要用
+   不自匹配的模式或交给编排脚本。
+3. **二分要连进程一起分**:代码 checkout 而进程未重启的"二分"全部
+   无效;e2e.sh 这类自管生命周期的脚本才是可靠的实验载体。

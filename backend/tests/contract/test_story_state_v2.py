@@ -64,7 +64,7 @@ def _delta(episode: int = 1, **kw: Any) -> EpisodeDelta:
 class TestEpisodeDeltaContract:
     def test_rejects_unknown_fields(self) -> None:
         """Schema extra=forbid:伪造 user_confirmed 等字段直接失败。"""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match="user_confirmed"):
             EpisodeDelta(
                 episode_number=1,
                 summary="s",

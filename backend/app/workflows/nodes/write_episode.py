@@ -30,13 +30,14 @@ from app.application.story_state_service import (
 )
 from app.core.config import load_settings
 from app.domain.context import TaskKind
+from app.domain.continuity import ContinuityState
 from app.domain.outline import EpisodeOutlineSet
 from app.domain.script import EpisodeWriterInput
 from app.domain.story_bible import StoryBible
 from app.events.publisher import EventPublisher
 from app.memory.context_builder import ContextBuilder
 from app.memory.continuity import ContinuityManager
-from app.memory.summary import latest_project_summary_text
+from app.memory.summary import catch_up_project_summaries, latest_project_summary_text
 from app.prompts.loader import PromptLoader
 from app.skills.episode_writer import EpisodeWriterSkill
 from app.workflows.checkpoint import node_failure, raise_if_cancelled
@@ -99,14 +100,16 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
 
     # M-04:冻结本次 Run 的作品工作集(既有各集剧本 → 确切前态链)
     state_service = StoryStateService(agent)
-    workset = StoryWorkset(
+    workset = StoryWorkset.from_script_ids(
         project_id=project_id,
         story_bible_artifact_id=sb_artifact.id,
         outline_artifact_id=outline_artifact.id,
-        scripts={
-            int(n): uuid.UUID(aid) for n, aid in existing_scripts.items()
-        },
+        script_artifact_ids=dict(existing_scripts),
     )
+
+    # M-02:创作 Run 进入时补齐累计摘要缺口(后台 best-effort 失败的
+    # 掩护;属于后台创作过程,允许等待,不占消息提交延迟)
+    await catch_up_project_summaries(db, project_id, agent=agent)
 
     logger.info(
         "开始撰写剧本: 从第 %d 集到第 %d 集 (共 %d 集)",
@@ -145,7 +148,7 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             for n in sorted(workset.scripts):
                 completed_scripts[str(n)] = existing_scripts[str(n)]
 
-        current_state: Any = None
+        current_state: ContinuityState | None = None
         if pre_outcome is not None:
             current_state = pre_outcome.state
             state_artifact_id = pre_outcome.state_artifact_id
@@ -283,8 +286,13 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             )
             progress("write_episodes", f"ep_{ep_num}_done", ep_progress)
 
-        continuity_text = ContinuityManager.get_context_for_episode_v2(
-            current_state, script_count + 1, character_names=character_names
+        # 旧字段仅旧执行语义兼容;v2 读取走 continuity_state_artifact_id,
+        # 此处存轻量摘要避免 checkpoint 膨胀(DEV_PLAN §2.2)
+        continuity_text = (
+            f"剧情状态:截至第 {current_state.through_episode} 集,"
+            f"事实 {len(current_state.facts)} 条,"
+            f"未闭合伏笔 {len(current_state.open_loops)} 条,"
+            f"道具 {len(current_state.props)} 件"
         )
 
         await publisher.publish(

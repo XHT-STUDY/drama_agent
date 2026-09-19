@@ -74,9 +74,9 @@ class Settings(BaseSettings):
     # per-run 软上限：超过发 run.warning（不阻断）。
     # M-03 起 write_episodes 每集额外 1 次派生(episode_summary_v2)调用,
     # 10 集全流程 = 前置 3 + 写作 10 + 派生 10 + 评估 10 ≈ 33 次 → 扩容。
-    run_max_llm_calls: int = 28
+    run_max_llm_calls: int = 34
     # per-run 硬上限：超过抛 RUN_BUDGET_EXCEEDED，Run 失败。
-    run_max_llm_calls_hard: int = 36
+    run_max_llm_calls_hard: int = 40
     run_max_llm_tokens_hard: int = 260_000
 
     # ---- 各角色模型名 ----

@@ -435,7 +435,7 @@ class TestStoryStateServiceDerivation:
             outline_artifact_id=outline.id,
             scripts={1: uuid.uuid4()},  # 不存在
         )
-        with pytest.raises(StoryStateGapError):
+        with pytest.raises(StoryStateGapError, match="Artifact 不存在"):
             await service.ensure_state_through(db_session, workset, 1)
         assert llm.delta_calls == 0
 

@@ -64,15 +64,12 @@ async def _load_pre_state(
     if not story_bible_artifact_id or not outline_artifact_id:
         raise ValueError("缺少 StoryBible/大纲 Artifact,无法加载修订前态")
     state_service = StoryStateService(agent)
-    workset = StoryWorkset(
+    workset = StoryWorkset.from_script_ids(
         project_id=project_id,
         story_bible_artifact_id=uuid.UUID(story_bible_artifact_id),
         outline_artifact_id=uuid.UUID(outline_artifact_id),
-        scripts={
-            int(ep): uuid.UUID(aid)
-            for ep, aid in script_artifact_ids.items()
-            if ep.isdigit() and int(ep) < candidate_episode
-        },
+        script_artifact_ids=script_artifact_ids,
+        max_episode=candidate_episode - 1,
     )
     outcome = await state_service.ensure_state_through(
         db, workset, candidate_episode - 1

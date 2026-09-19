@@ -230,7 +230,7 @@ Idea / Outline / TXT / DOCX
 - 第一次失败使用原 Prompt 重试，第二次失败附加精简的 Schema 错误；
 - 仍失败则节点失败，不写入正式 Artifact；
 - 单节点默认超时 180 秒；
-- MVP 单次完整 Demo 的模型调用软上限为 18 次；
+- MVP 单次完整 Demo 的模型调用软上限为 34 次(M-03 起每集增加 1 次剧情派生调用,10 集全流程≈33 次;硬上限 40,见 config run_max_llm_*)
 - 任何重试都写入 llm_call_attempt 追踪信息。
 
 ---

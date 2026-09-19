@@ -256,7 +256,12 @@ def episode_delta_factory(messages: list[dict[str, str]]) -> BaseModel:
     from app.domain.summary import EpisodeDelta
 
     match = re.search(r"第 (\d+) 集剧本", messages[-1]["content"])
-    episode = int(match.group(1)) if match else 1
+    if match is None:
+        raise ValueError(
+            "episode_delta_factory 无法从 Prompt 提取集号——"
+            "episode_summary_v2 模板标题格式已变化,请同步工厂"
+        )
+    episode = int(match.group(1))
     return EpisodeDelta(
         episode_number=episode,
         summary=f"第{episode}集完成",

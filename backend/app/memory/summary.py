@@ -380,6 +380,43 @@ async def merged_project_summaries(
     return "\n".join(parts)
 
 
+async def catch_up_project_summaries(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    agent: Any,
+    max_conversations: int = 20,
+) -> int:
+    """创作 Run 进入时补齐项目的累计摘要缺口(M-02 §8.1)。
+
+    后台 best-effort 调度可能留缺口(进程重启/失败/跳过阈值整数倍);
+    本入口对项目内会话逐个 catch_up(enforce_threshold=False——
+    属于后台创作过程,允许等待)。返回补做的摘要数。
+    """
+    from sqlalchemy import select as _select
+
+    from app.application.artifact_service import ArtifactService
+    from app.prompts.loader import PromptLoader
+
+    conv_ids = (await db.execute(
+        _select(Conversation.id)
+        .where(Conversation.project_id == project_id)
+        .order_by(Conversation.updated_at.desc())
+        .limit(max_conversations)
+    )).scalars().all()
+    if not conv_ids:
+        return 0
+    manager = ConversationSummaryManager(agent, PromptLoader(), ArtifactService())
+    made = 0
+    for conv_id in conv_ids:
+        artifact = await manager.catch_up(
+            db, conv_id, enforce_threshold=False
+        )
+        if artifact is not None:
+            made += 1
+    return made
+
+
 async def latest_project_summary_text(
     db: AsyncSession,
     artifact_service: Any,
