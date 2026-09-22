@@ -18,6 +18,7 @@ import logging
 
 from pydantic import BaseModel, Field
 
+from app.core.errors import RequiredContextMissingError
 from app.domain.context import (
     CharacterRatioEstimator,
     ContextTooLargeError,
@@ -203,6 +204,15 @@ class ContextBuilder:
 
         for section in policy.required_sections:
             if not sections.get(section.value, ""):
+                if policy.strict_required:
+                    # M-04/W3-06:创作系任务必需来源缺失 fail closed,
+                    # 不得只记 warning 继续生成
+                    raise RequiredContextMissingError(
+                        detail=(
+                            f"任务 {policy.task.value} 缺少必需段落 "
+                            f"{section.value}——停止组装;请补齐来源或缩小范围"
+                        ),
+                    )
                 logger.warning(
                     "任务 %s 缺少必需段落 %s（继续组装，结果可能不完整）",
                     policy.task.value, section.value,

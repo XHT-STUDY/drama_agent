@@ -129,7 +129,7 @@ async def _post_turn(
         f"/api/v1/projects/{project_id}/agent/turns", json=payload
     )
     assert resp.status_code == 200
-    return resp.json()
+    return dict(resp.json())
 
 
 def _create_script_plan() -> AgentActionPlan:
@@ -202,17 +202,48 @@ async def _seed_proposed_action(
         source_artifact_ids=[],
     )
     db_session.add(action)
+    # IR-3 §8.6：生产中 proposed Action 必伴随 action_plan 消息（确认短路
+    # 要求最近 assistant 消息仍是可确认对象），种子按真实语义补齐
+    plan_message = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content="计划:创建剧本",
+        kind="action_plan",
+        message_metadata={},
+        sequence=2,
+    )
+    db_session.add(plan_message)
     await db_session.commit()
     return action
 
 
 async def _seed_scripts_gate_run(
-    db_session: AsyncSession, *, written: int = 3, target: int = 10
+    db_session: AsyncSession, *, written: int = 3, target: int = 10,
+    with_gate_message: bool = True,
 ) -> WorkflowRun:
-    """播种停在 stage_gate=scripts 的 needs_review Run。"""
+    """播种停在 stage_gate=scripts 的 needs_review Run。
+
+    with_gate_message：按生产语义在关联会话写入门通知（action_result）
+    消息——IR-3 §8.6 确认短路要求最近 assistant 消息仍是可确认对象。
+    """
     project = Project(title="批门项目", target_episode_count=target)
     db_session.add(project)
     await db_session.flush()
+    conversation = Conversation(project_id=project.id, title="批门会话")
+    db_session.add(conversation)
+    await db_session.flush()
+    if with_gate_message:
+        db_session.add_all([
+            Message(
+                conversation_id=conversation.id, role="user",
+                content="写一个短剧", kind="text", message_metadata={}, sequence=1,
+            ),
+            Message(
+                conversation_id=conversation.id, role="assistant",
+                content=f"本批已完成 {written}/{target} 集，等待确认后继续创作。",
+                kind="action_result", message_metadata={}, sequence=2,
+            ),
+        ])
     run = WorkflowRun(
         project_id=project.id,
         action="create_script",
@@ -230,6 +261,12 @@ async def _seed_scripts_gate_run(
         },
     )
     db_session.add(run)
+    await db_session.flush()
+    # WorkflowRun 无会话列；门通知会话通过实例属性透传给测试
+    object.__setattr__(
+        run, "gate_conversation_id",
+        conversation.id if with_gate_message else None,
+    )
     await db_session.commit()
     return run
 
@@ -291,14 +328,51 @@ async def test_confirm_phrase_on_gated_run_continues(
     """无 proposed Action 但有门上 Run 时，"确认"即续跑（对齐按钮语义）。"""
     run = await _seed_scripts_gate_run(db_session)
     project_id = str(run.project_id)
+    gate_conversation_id = getattr(run, "gate_conversation_id", None)
+    assert gate_conversation_id is not None
 
-    body = await _post_turn(agent_api, project_id, "确认")
+    body = await _post_turn(
+        agent_api, project_id, "确认", conversation_id=str(gate_conversation_id)
+    )
 
     assert body["status"] == "answered"
     assert stub_skill.calls == 0
     refreshed = await _get_run(db_session, run.id)
     assert refreshed.status == "queued"
     assert "stage_gate" not in (refreshed.state_summary or {})
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_confirm_falls_back_when_latest_message_is_clarification(
+    agent_api: AsyncClient,
+    db_session: AsyncSession,
+    stub_skill: _StubPlannerSkill,
+    no_worker: None,
+) -> None:
+    """IR-3 §8.6：最近 assistant 消息是澄清时，"好的"不得确认旧计划。"""
+    action = await _seed_proposed_action(db_session, str(await _create_project(agent_api)))
+    project_id = str(action.project_id)
+    # 计划消息之后又出现一轮澄清（对话已离开计划语境）
+    clarification_message = Message(
+        conversation_id=action.conversation_id,
+        role="assistant",
+        content="你希望修改哪一个目标：大纲、剧本，还是指定集数？",
+        kind="clarification",
+        message_metadata={},
+        sequence=3,
+    )
+    db_session.add(clarification_message)
+    await db_session.commit()
+    stub_skill.output = _clarification_output()
+
+    await _post_turn(
+        agent_api, project_id, "好的", conversation_id=str(action.conversation_id)
+    )
+
+    assert stub_skill.calls == 1  # 回落 Planner，不短路确认旧计划
+    refreshed = await _get_action(db_session, action.id)
+    assert refreshed.status == "proposed"
 
 
 @pytest.mark.integration

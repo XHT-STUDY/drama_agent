@@ -242,8 +242,8 @@ def test_real_llm_story_bible() -> None: ...
 
 | 层 | 运行方式 | 内容 |
 |---|---|---|
-| CI 契约评测 | `make test`（默认） | `tests/evals/`：数据集契约（commands ≥50 / outcomes ≥30、五类 intent / 三种 goal_status 全覆盖）、preflight 澄清召回 100%（12 条确定性歧义/越界/冲突用例，零模型调用）、Outcome 确定性规则一致率 100%（26 条） |
-| 真实模型评测 | `pytest -m eval_real`（需 `EVAL_LLM_ENABLED=1` + 真实 Key，默认被 addopts 排除） | commands 全量 P/R/F1 + 澄清召回；outcomes 语义约束 goal_status 一致率；结果落盘 `tests/evals/results/`，报告见 `docs/AGENT_EVAL_REPORT.md`（不得写模拟数字） |
+| CI 契约评测 | `make test`（默认） | `tests/evals/`：数据集契约（commands 240 + holdout 120 = 360 且合并分布恰为 §7.2 配额、交叉覆盖下限、ID 全局唯一、盲测原文不进 Prompt 模板、preflight 标注与真实行为一致；v1.4 期望语义——explain 属 answer 分支、plan 不得带 explain）、preflight 澄清召回 100%（14 条确定性歧义/越界/冲突用例，零模型调用）、评分器单测（伪造结果验证 target/batch 指标、失败分类与门槛判定）、Outcome 确定性规则一致率 100%（26 条） |
+| 真实模型评测 | `pytest -m eval_real`（需 `EVAL_LLM_ENABLED=1` + 真实 Key，默认被 addopts 排除） | commands 联合指标（turn_type → intent → target → batch，micro/macro、混淆矩阵、失败分类）+ §3.3 发版门槛判定（EVAL_SPLIT=dev/holdout/all × EVAL_REPEATS，门槛按最差一次判定；任一不达标即非零退出；`EVAL_REPORT_ONLY=1` 只产报告）；outcomes 语义约束 goal_status 一致率；结果落盘 `tests/evals/results/`（写入 dataset 版本、git commit、Prompt 版本、模型、运行时间），报告见 `docs/AGENT_EVAL_REPORT.md`（不得写模拟数字；旧结果自动归档 `results/archive/`，新鲜度由契约测试守护） |
 | E2E | `make e2e REPEAT=5` | `e2e/agent-workspace.spec.ts`（FAKE_LLM_SCENARIO=agent_e2e） |
 
 ### 11.2 CI 恢复/并发契约与用例映射
@@ -265,3 +265,40 @@ def test_real_llm_story_bible() -> None: ...
 | `agent_e2e` | 低分 | **内容感知桩**（修改+集数→revise_script；大纲→revise_outline；评估→evaluate；解释→explain；其余→create_script），另注册 outline_reviser | J-12 Agent E2E（单后端服务全部意图） |
 
 E2E 场景断言（`tests/integration/api/test_fake_scenario.py`）保证 fixtures 与桩行为不被无意识改动。
+
+## 12. Memory 评测专项说明（M-01）
+
+### 12.1 数据集与指标
+
+- **对话集**：`backend/tests/golden/memory/dialogue_cases.json`——8 题材 × 4 长度档（24/48/96/192）= 32 组，覆盖偏好、否决、改口、未决问题、跨项目近似设定与无关闲聊；关键事实以【设定】【改口】【否决】【要求】【问题】标签嵌入可审查消息。
+- **剧情集**：`backend/tests/golden/memory/story_cases.json`——10 组 × 10 集，每组含 typed delta 真值（作者事实/角色知识/伏笔/道具/关系/时间线/作者未来计划）与确定性探针。
+- **四消融组**：`none` / `recent_only` / `current`（复刻生产分段摘要 + 标题摘要路径）/ `structured`（累计摘要 + typed delta 规格，即 M-02/M-03 目标）。
+- **评分四层**：写入（覆盖区间连续完整）、召回（最新事实胜率、否决/约束召回、虚构、跨项目泄漏）、使用（经 `ContextBuilder` 组装后的到达率与 Manifest 一致性）、成本（相对完整历史的 token 节省）。全部确定性代码评分，不使用 LLM Judge 总分。
+
+### 12.2 运行方式
+
+| 层 | 命令 | 内容 |
+|---|---|---|
+| CI（默认） | `uv run pytest tests/evals/test_dialogue_memory_eval.py tests/evals/test_story_memory_eval.py` | 数据集契约、structured 组设计门槛（MEMORY_DESIGN §10.1/§10.2）、current 基线缺口锁定、同 seed 重跑一致、`/agent/turns` 摘要挂载探针 |
+| 脚本 | `uv run python scripts/evaluate_memory.py --provider fake` | 全量跑四组，产出 `tests/evals/results/memory_eval_results.json` 与 `docs/MEMORY_EVAL_REPORT.md` |
+| 真实模型 | `EVAL_LLM_ENABLED=1 uv run python scripts/evaluate_memory.py --provider real` | 对话摘要由真实 LLM 生成（生产 conversation_summary Prompt），固定子集（每长度档 2 例），记录模型/Prompt 版本/样本/调用数/token/耗时；评分仍为确定性标记匹配 |
+
+### 12.3 结果与门槛
+
+- 报告：`docs/MEMORY_EVAL_REPORT.md`（含 `/agent/turns` 是否实际触发摘要的生产探针结论）。
+- 门槛断言（CI）：structured 组跨项目泄漏 0、最新事实 ≥95%、否决召回 ≥95%、96 条后约束召回 ≥90%、虚构 ≤1%；剧情知识越界 0、伏笔 F1 ≥90%、相对 none 违规下降 ≥50%、来源正确率 100%、重放一致。
+- 基线锁定断言（CI）：current 组 96 档约束召回 <50%（分段摘要只读最新一段的缺口）——该组描述的是**历史语义**，M-02 后生产已实现累计摘要，断言保留作为消融对照。
+
+### 12.4 M-03/M-04/M-05 用例映射（2026-09-18 更新）
+
+| 契约 | 用例 |
+|---|---|
+| 累计摘要 v2（链/幂等/迁移/失败不阻断/合并/响应不等待 LLM） | `tests/integration/memory/test_summary.py` |
+| 主入口阈值触发累计摘要 | `tests/integration/api/test_agent_turns.py::test_turns_trigger_cumulative_summary_at_threshold` |
+| typed delta 校验与 reducer（M-01 数据集消费） | `tests/contract/test_story_state_v2.py` |
+| 派生幂等/分账/跨项目/唯一索引 | `tests/integration/memory/test_story_state_service.py`、`tests/integration/db/test_migration.py::TestAlembicMigration0013` |
+| 一次 5 集 vs 1+1+3 同前态；重启续写；失败保留正文；fail closed；RAG 可选 | `tests/integration/workflow/test_story_state_recovery.py` |
+| 采用变化后缀 stale/前缀复用；GET 零模型调用 | `tests/integration/artifacts/test_story_state_invalidation.py` |
+| strict required / PROTECTED_CONTEXT_TOO_LARGE | `tests/unit/memory/test_context_budget.py::TestStrictRequiredSections` |
+| 状态面板分账展示/恢复入口/作者语言 | `frontend/tests/story-state-panel.test.tsx` |
+

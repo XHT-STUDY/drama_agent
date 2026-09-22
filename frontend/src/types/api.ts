@@ -736,8 +736,21 @@ export type AgentCommand =
       stop_after?: "outline" | null;
     }
   | { intent: "explain"; target: ActionTarget }
-  | { intent: "revise_outline"; source_outline_id: string; constraints: string[] }
-  | { intent: "revise_script"; source_script_id: string; episode_number: number; constraints: string[] }
+  | {
+      intent: "revise_outline";
+      source_outline_id: string;
+      constraints: string[];
+      /** IR-3 §8.3：用户原始请求（完整授权边界），旧计划缺省 null */
+      user_request?: string | null;
+    }
+  | {
+      intent: "revise_script";
+      source_script_id: string;
+      episode_number: number;
+      constraints: string[];
+      /** IR-3 §8.3：用户原始请求（完整授权边界），旧计划缺省 null */
+      user_request?: string | null;
+    }
   | { intent: "evaluate"; scope: "project" | "episode"; episode_number?: number | null }
   | { intent: "continue"; target_run_id: string; batch_size?: number | null };
 
@@ -750,6 +763,8 @@ export interface AgentActionPlan {
   constraints: string[];
   steps: ActionStep[];
   expected_impact: string[];
+  /** IR-3 §8.3：触发计划的用户原始请求，旧计划（legacy）缺省 null */
+  user_request?: string | null;
 }
 
 /** Outcome 可选的一次后续动作建议 */
@@ -906,4 +921,66 @@ export interface KnowledgeSearchResponse {
   filters: Record<string, unknown>;
   elapsed_ms: number;
   hits: KnowledgeSearchHit[];
+}
+
+// ============================================================
+// 剧情状态（M-05，GET /projects/{id}/story-state）
+// ============================================================
+
+/** 剧情状态相对请求工作集的就绪度 */
+export type StoryStateStatus = "ready" | "pending" | "stale" | "gap" | "missing";
+
+/** 作者事实（已在正文发生，带来源引用） */
+export interface StoryStateFact {
+  fact_id: string;
+  text: string;
+  source_episode: number;
+  source_scene: number;
+  source_artifact_id: string;
+}
+
+/** 角色已知信息（与作者事实分账：作者知道 ≠ 角色知道） */
+export interface StoryStateCharacterKnowledge {
+  character_id: string;
+  facts: { fact_id: string; learned_episode: number; source_scene: number }[];
+}
+
+/** 作者未来计划（未发生，不得写成已发生事实） */
+export interface StoryStateFuturePlan {
+  text: string;
+  reveal_episode: number;
+  revealed: boolean;
+}
+
+/** 链头状态的面板投影（分账视图） */
+export interface StoryStateProjection {
+  through_episode: number;
+  author_facts: StoryStateFact[];
+  character_known_facts: StoryStateCharacterKnowledge[];
+  open_loops: { loop_id: string; description: string }[];
+  resolved_loops: { loop_id: string; description: string }[];
+  props: { prop_id: string; holder_character_id: string }[];
+  future_plans: StoryStateFuturePlan[];
+  locked_facts: string[];
+}
+
+/** 剧情状态只读响应 */
+export interface StoryStateResponse {
+  project_id: string;
+  run_id: string | null;
+  status: StoryStateStatus;
+  requested_through: number;
+  through_episode?: number;
+  missing_episodes: number[];
+  stale_from_episode: number | null;
+  state_artifact_id: string | null;
+  basis?: {
+    story_bible_artifact_id: string;
+    outline_artifact_id: string;
+    script_artifact_ids: Record<string, string>;
+    episode_summary_artifact_ids: Record<string, string>;
+  } | null;
+  episode_summary_artifact_ids?: Record<string, string>;
+  warnings: string[];
+  projection: StoryStateProjection | null;
 }

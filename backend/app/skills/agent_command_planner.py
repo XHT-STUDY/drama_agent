@@ -8,91 +8,49 @@ Planner 只把自然语言请求归一化为可审计的意图、目标和约束
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, cast
 
 from app.agents.base import BaseAgent
 from app.core.errors import AppError
 from app.domain.agent_planner import (
-    TARGET_KEYWORDS,
+    CONTEXT_REFERENCE_RE as _CONTEXT_REFERENCE_RE,
+)
+from app.domain.agent_planner import (
     AgentPlannerInput,
     AgentPlannerOutput,
+    extract_episode_numbers,  # noqa: F401 - 历史测试从本模块导入
+    resolve_plan_target,
 )
 from app.domain.agent_planner import (
-    TARGET_OUTLINE_RE as _TARGET_OUTLINE_RE,
-)
-from app.domain.agent_planner import (
-    TARGET_STORY_BIBLE_RE as _TARGET_STORY_BIBLE_RE,
+    explicit_objects as _explicit_objects_fn,
 )
 from app.prompts.loader import PromptLoader
 from app.skills.protocol import Skill, SkillMetadata
+
+logger = logging.getLogger(__name__)
 
 KNOWN_AGENT_INTENTS = frozenset(
     {"create_script", "explain", "revise_outline", "revise_script", "evaluate", "continue"}
 )
 # 基础白名单（动态白名单在此基础上按项目状态追加，见 AgentCommandService._available_intents）
 DEFAULT_AVAILABLE_INTENTS = (
-    "create_script", "explain", "evaluate", "revise_script", "revise_outline",
+    "create_script",
+    "explain",
+    "evaluate",
+    "revise_script",
+    "revise_outline",
 )
 
 _REVISION_RE = re.compile(r"(修改|修订|改写|重写|调整|润色|删掉|增加|替换)")
-_CONTEXT_REFERENCE_RE = re.compile(r"(这里|此处|这个版本|当前稿|当前剧本|上面)")
-# 集数解析（W1-03）：阿拉伯数字与常见中文数字（一~九十九），如"第3集/第3集剧本/第三集/EP3"
-_EPISODE_RE = re.compile(
-    r"(?:第\s*|ep(?:isode)?[\s_-]*)(\d+|[一二两三四五六七八九十]+)\s*(?:[集话回期])?",
-    re.IGNORECASE,
-)
-# 明确写出的业务对象（有明确目标时不因缺少活动上下文而澄清，W1-03）。
-# 关键词表与 AgentContextService 的目标解析共用（domain/agent_planner.py）
-_EXPLICIT_OBJECT_RE = re.compile(
-    r"(" + "|".join(TARGET_KEYWORDS["outline"] + TARGET_KEYWORDS["story_bible"] + ["剧本"]) + r")",
-    re.IGNORECASE,
-)
 
 
 def _explicit_objects(request: str) -> set[str]:
-    """请求中明确点名的目标对象类别（outline / story_bible / script）。"""
-    objects: set[str] = set()
-    if _TARGET_OUTLINE_RE.search(request):
-        objects.add("outline")
-    if _TARGET_STORY_BIBLE_RE.search(request):
-        objects.add("story_bible")
-    if re.search(r"剧本", request):
-        objects.add("script")
-    return objects
-
-_CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    """请求中明确点名的目标对象类别（词表与优先级解析共用 domain 实现）。"""
+    return _explicit_objects_fn(request)
 
 
-def _parse_cn_int(raw: str) -> int | None:
-    """中文数字（一~九十九）→ 整数；非法返回 None。"""
-    if raw.isdigit():
-        return int(raw)
-    if not raw:
-        return None
-    if raw == "十":
-        return 10
-    if "十" in raw:
-        high, _, low = raw.partition("十")
-        tens = _CN_DIGITS.get(high, 1) if high else 1
-        ones = _CN_DIGITS.get(low, 0) if low else 0
-        if (high and high not in _CN_DIGITS) or (low and low not in _CN_DIGITS):
-            return None
-        return tens * 10 + ones
-    if raw in _CN_DIGITS:
-        return _CN_DIGITS[raw]
-    return None
-
-
-def extract_episode_numbers(request: str) -> list[int]:
-    """提取请求中的全部集数（阿拉伯/中文），按出现顺序去重。"""
-    episodes: list[int] = []
-    for match in _EPISODE_RE.finditer(request):
-        value = _parse_cn_int(match.group(1))
-        if value is not None and value >= 1 and value not in episodes:
-            episodes.append(value)
-    return episodes
 _CONFLICT_RE = re.compile(
     r"(?:既[^。！？!?]{0,80}又|同时[^。！？!?]{0,80}(?:保留|删除|改为)|"
     r"(?:保留|删除)[^。！？!?]{0,50}(?:又|同时))"
@@ -125,8 +83,7 @@ def requires_confirmation(intent: str) -> bool:
 def _clarification(question: str, unresolved_turn_count: int) -> AgentPlannerOutput:
     if unresolved_turn_count >= 3:
         question = (
-            f"{question.rstrip('？?')}。请直接选择一个合法命令："
-            "创建剧本；解释项目大纲；评估项目；评估第1集。"
+            f"{question.rstrip('？?')}。请直接选择一个合法命令：创建剧本；解释项目大纲；评估项目；评估第1集。"
         )
     return AgentPlannerOutput(
         turn_type="clarification",
@@ -165,9 +122,14 @@ def _preflight_clarification(
     revision_requested = _REVISION_RE.search(request) is not None
     if revision_requested:
         # 一次只改一个目标（W1-03）：多集并改、或同时点名大纲与剧本等
-        # 两类对象，都不偷偷选第一个
+        # 两类对象，都不偷偷选第一个。
+        # IR-3 §8.5 正则收敛：文本明确指向单一大纲/设定对象时，出现的
+        # 多个集数是大纲条目引用（"第2集和第3集合并"），不是多目标——
+        # 只有对象不唯一可判定（只有集数/点名剧本）才确定性澄清
         objects = _explicit_objects(request)
-        if len(episodes) > 1 or len(objects) > 1:
+        single_outline_like = bool(objects) and objects <= {"outline", "story_bible"}
+        multi_target = len(objects) > 1 or (len(episodes) > 1 and not single_outline_like)
+        if multi_target:
             return _clarification(
                 "本阶段一次修改一个目标；请先告诉我这次要改哪一个"
                 "（你提到了多个目标），其他目标可以之后再改。",
@@ -206,9 +168,7 @@ def _preflight_clarification(
 def _scan_strings(value: Any) -> None:
     if isinstance(value, str):
         if _FORBIDDEN_OUTPUT_RE.search(value) or _UUID_RE.search(value):
-            raise InvalidPlannerOutputError(
-                "Planner 输出包含工具、API、SQL 或 Artifact 标识，已拒绝"
-            )
+            raise InvalidPlannerOutputError("Planner 输出包含工具、API、SQL 或 Artifact 标识，已拒绝")
     elif isinstance(value, dict):
         for item in value.values():
             _scan_strings(item)
@@ -232,14 +192,10 @@ def _validate_output(
         if not output.clarification_question:
             raise InvalidPlannerOutputError("clarification 必须包含一个问题")
         if output.intent or output.target or output.answer:
-            raise InvalidPlannerOutputError(
-                "clarification 不得同时携带 intent、target 或 answer"
-            )
+            raise InvalidPlannerOutputError("clarification 不得同时携带 intent、target 或 answer")
     elif output.turn_type == "plan":
         if output.intent not in available:
-            raise InvalidPlannerOutputError(
-                f"Planner 意图不在服务端白名单中: {output.intent}"
-            )
+            raise InvalidPlannerOutputError(f"Planner 意图不在服务端白名单中: {output.intent}")
         if output.target is None or not output.steps:
             raise InvalidPlannerOutputError("plan 必须包含目标和可读步骤")
         if output.clarification_question or output.answer:
@@ -248,11 +204,42 @@ def _validate_output(
         if not output.answer:
             raise InvalidPlannerOutputError("answer 必须包含可读答复")
         if output.intent is not None and output.intent not in available:
-            raise InvalidPlannerOutputError(
-                f"answer 意图不在服务端白名单中: {output.intent}"
-            )
+            raise InvalidPlannerOutputError(f"answer 意图不在服务端白名单中: {output.intent}")
         if output.clarification_question:
             raise InvalidPlannerOutputError("answer 不得同时返回澄清问题")
+    return output
+
+
+def _reconcile_target(
+    output: AgentPlannerOutput,
+    planner_input: AgentPlannerInput,
+) -> AgentPlannerOutput:
+    """模型输出后的目标一致性校验（IR-3 §8.2）。
+
+    确定性优先：文本明确目标/集数与模型分歧时规范化为确定性结果并记录
+    disagreement（低基数 kind，供日志与 IR-4 指标）；文本明确对象与模型
+    意图方向相反（点名大纲/设定却要改剧本）时转为澄清，不生成 Action。
+    """
+    targetable = output.turn_type == "plan" or (output.turn_type == "answer" and output.intent == "explain")
+    if not targetable:
+        return output
+
+    resolved, disagreement = resolve_plan_target(
+        user_request=planner_input.user_request,
+        active_context=planner_input.active_context,
+        intent=output.intent or "",
+        model_target=output.target,
+        target_episode_count=planner_input.target_episode_count,
+    )
+    if disagreement == "object_mismatch":
+        logger.info("agent_target_disagreement kind=object_mismatch")
+        return _clarification(
+            "你提到的是大纲/设定，但准备执行的是剧本修改；请确认这次要修改哪一个？",
+            planner_input.unresolved_turn_count,
+        )
+    if disagreement is not None:
+        logger.info("agent_target_disagreement kind=%s", disagreement)
+        return output.model_copy(update={"target": resolved}, deep=True)
     return output
 
 
@@ -261,7 +248,7 @@ class AgentCommandPlannerSkill(Skill):
 
     metadata = SkillMetadata(
         name="agent_command_planner",
-        version="1.0",
+        version="1.1",
         description="把对话请求规划为白名单意图、目标、约束和可读步骤",
     )
 
@@ -288,9 +275,7 @@ class AgentCommandPlannerSkill(Skill):
                 user_request=planner_input.user_request,
                 project_title=planner_input.project_title,
                 target_episode_count=str(planner_input.target_episode_count),
-                available_intents=json.dumps(
-                    planner_input.available_intents, ensure_ascii=False
-                ),
+                available_intents=json.dumps(planner_input.available_intents, ensure_ascii=False),
                 active_context=json.dumps(
                     planner_input.active_context.model_dump(mode="json")
                     if planner_input.active_context
@@ -315,11 +300,10 @@ class AgentCommandPlannerSkill(Skill):
             raise InvalidPlannerOutputError(f"Planner 调用失败: {exc}") from exc
 
         if result.error_code or result.parsed is None:
-            raise InvalidPlannerOutputError(
-                f"Planner 输出无效: {result.error_code or 'INVALID_OUTPUT'}"
-            )
+            raise InvalidPlannerOutputError(f"Planner 输出无效: {result.error_code or 'INVALID_OUTPUT'}")
         output = cast(AgentPlannerOutput, result.parsed)
-        return _validate_output(output, planner_input)
+        validated = _validate_output(output, planner_input)
+        return _reconcile_target(validated, planner_input)
 
 
 AgentCommandPlanner = AgentCommandPlannerSkill

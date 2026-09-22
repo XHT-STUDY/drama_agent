@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents.base import BaseAgent
+from app.domain.agent_command import ActiveArtifactContext
 from app.domain.agent_planner import (
     AgentPlannerInput,
     AgentPlannerOutput,
@@ -199,7 +200,7 @@ class TestExplicitTargetDirectW103:
         )
 
     def test_extract_episode_numbers_arabic_and_chinese(self) -> None:
-        from app.skills.agent_command_planner import extract_episode_numbers
+        from app.domain.agent_planner import extract_episode_numbers
 
         assert extract_episode_numbers("修改第3集剧本") == [3]
         assert extract_episode_numbers("改第三集") == [3]
@@ -248,3 +249,203 @@ class TestExplicitTargetDirectW103:
         output = _preflight_clarification(self._input("帮我改一下这里"))
         assert output is not None
         assert output.turn_type == "clarification"
+
+
+# ========================================================================
+# IR-3：正则收敛 + 目标一致性校验（§8.2 / §8.5）
+# ========================================================================
+
+
+class TestPreflightRegexScopeIR3:
+    """多集数不再一律判多目标：大纲内条目引用是单对象编辑。"""
+
+    @staticmethod
+    def _input(request: str) -> AgentPlannerInput:
+        return AgentPlannerInput(
+            user_request=request,
+            project_title="测试",
+            target_episode_count=10,
+            available_intents=[
+                "create_script", "explain", "evaluate", "revise_script", "revise_outline",
+            ],
+        )
+
+    def test_outline_merge_with_two_episodes_is_single_target(self) -> None:
+        from app.skills.agent_command_planner import _preflight_clarification
+
+        assert _preflight_clarification(self._input("修改大纲，第2集和第3集合并冲突线")) is None
+        assert _preflight_clarification(self._input("调整大纲，第 2 集和第 3 集合并冲突线")) is None
+
+    def test_bare_multi_episode_revision_still_clarifies(self) -> None:
+        from app.skills.agent_command_planner import _preflight_clarification
+
+        output = _preflight_clarification(self._input("修改第2集和第5集"))
+        assert output is not None and output.turn_type == "clarification"
+
+    def test_two_outline_like_objects_still_clarify(self) -> None:
+        from app.skills.agent_command_planner import _preflight_clarification
+
+        # 裸"改"不命中修订词表（归模型），用命中词表的复合对象表达
+        output = _preflight_clarification(self._input("修改大纲同时修改设定"))
+        assert output is not None and output.turn_type == "clarification"
+
+    def test_reasonable_pacing_change_is_not_conflict(self) -> None:
+        """§8.8 验收："前慢后快"不被确定性正则误判为冲突。"""
+        from app.skills.agent_command_planner import _preflight_clarification
+
+        assert _preflight_clarification(self._input("第2集前半段慢点铺，后半段冲突加快")) is None
+        assert _preflight_clarification(self._input("前5集铺垫节奏放慢，后5集加速收线")) is None
+        # 真互斥仍然拦截
+        output = _preflight_clarification(self._input("既要快节奏又要慢节奏"))
+        assert output is not None and output.turn_type == "clarification"
+
+
+class TestTargetResolutionIR3:
+    """resolve_plan_target：文本明确 > 活动上下文 > 模型推断。"""
+
+    @staticmethod
+    def _active(ep: int = 2, artifact_type: str = "script_draft") -> ActiveArtifactContext:
+        return ActiveArtifactContext(
+            artifact_id=uuid4(), artifact_type=artifact_type, episode_number=ep
+        )
+
+    def test_explicit_episode_beats_model_and_context(self) -> None:
+        from app.domain.agent_planner import resolve_plan_target
+
+        target, kind = resolve_plan_target(
+            user_request="修改第3集，反派动机改清楚",
+            active_context=self._active(ep=2),
+            intent="revise_script",
+            model_target=PlannerTarget(target_type="script", episode_number=2),
+            target_episode_count=10,
+        )
+        assert kind == "episode_normalized"
+        assert target is not None and target.episode_number == 3
+
+    def test_context_reference_normalizes_to_active_context(self) -> None:
+        from app.domain.agent_planner import resolve_plan_target
+
+        target, kind = resolve_plan_target(
+            user_request="这里对白太生硬，润色一下",
+            active_context=self._active(ep=5),
+            intent="revise_script",
+            model_target=PlannerTarget(target_type="script", episode_number=9),
+            target_episode_count=10,
+        )
+        assert kind == "context_normalized"
+        assert target is not None and target.episode_number == 5
+
+    def test_outline_text_with_revise_script_intent_is_mismatch(self) -> None:
+        from app.domain.agent_planner import resolve_plan_target
+
+        target, kind = resolve_plan_target(
+            user_request="修改大纲，结尾改团圆",
+            active_context=None,
+            intent="revise_script",
+            model_target=PlannerTarget(target_type="script", episode_number=1),
+            target_episode_count=10,
+        )
+        assert (target, kind) == (None, "object_mismatch")
+
+    def test_outline_episode_references_are_not_target_episodes(self) -> None:
+        """revise_outline 文本集数是大纲条目引用，不做集数规范化。"""
+        from app.domain.agent_planner import resolve_plan_target
+
+        target, kind = resolve_plan_target(
+            user_request="大纲第9集的reveal提前到第7集",
+            active_context=None,
+            intent="revise_outline",
+            model_target=PlannerTarget(target_type="outline"),
+            target_episode_count=10,
+        )
+        assert kind is None
+        assert target is not None and target.episode_number is None
+
+    def test_no_conflict_returns_model_target(self) -> None:
+        from app.domain.agent_planner import resolve_plan_target
+
+        model_target = PlannerTarget(target_type="script", episode_number=3)
+        target, kind = resolve_plan_target(
+            user_request="修改第3集剧本",
+            active_context=None,
+            intent="revise_script",
+            model_target=model_target,
+            target_episode_count=10,
+        )
+        assert kind is None and target is model_target
+
+    def test_out_of_range_explicit_episode_not_normalized(self) -> None:
+        """越界集数不规范化（preflight 已在模型前拦截，这里防御性跳过）。"""
+        from app.domain.agent_planner import resolve_plan_target
+
+        target, kind = resolve_plan_target(
+            user_request="修改第15集",
+            active_context=None,
+            intent="revise_script",
+            model_target=PlannerTarget(target_type="script", episode_number=2),
+            target_episode_count=10,
+        )
+        assert kind is None  # 越界交由 preflight/上游处理，不在此扩大执行范围
+
+
+@pytest.mark.asyncio
+class TestReconcileInSkillIR3:
+    """Skill 集成：模型输出被服务端规范化或拒绝。"""
+
+    @staticmethod
+    def _full_input(request: str) -> AgentPlannerInput:
+        return AgentPlannerInput(
+            user_request=request,
+            target_episode_count=10,
+            available_intents=[
+                "create_script", "explain", "evaluate", "revise_script", "revise_outline",
+            ],
+        )
+
+    @staticmethod
+    def _register_model(llm: FakeLLM, output: AgentPlannerOutput) -> None:
+        llm.register("agent_command_planner", output)
+
+    async def test_model_wrong_episode_normalized_to_text(
+        self, agent: BaseAgent, loader: PromptLoader, llm: FakeLLM
+    ) -> None:
+        self._register_model(
+            llm,
+            AgentPlannerOutput(
+                turn_type="plan",
+                intent="revise_script",
+                target=PlannerTarget(target_type="script", episode_number=2),
+                steps=[PlannerStep(title="修订", description="按约束修订第2集")],
+            ),
+        )
+        result = await AgentCommandPlannerSkill().execute(
+            {
+                "input": self._full_input("修改第3集剧本"),
+                "agent": agent,
+                "prompt_loader": loader,
+            }
+        )
+        assert result.turn_type == "plan"
+        assert result.target is not None and result.target.episode_number == 3
+
+    async def test_outline_text_with_script_plan_becomes_clarification(
+        self, agent: BaseAgent, loader: PromptLoader, llm: FakeLLM
+    ) -> None:
+        self._register_model(
+            llm,
+            AgentPlannerOutput(
+                turn_type="plan",
+                intent="revise_script",
+                target=PlannerTarget(target_type="script", episode_number=1),
+                steps=[PlannerStep(title="修订", description="改第1集")],
+            ),
+        )
+        result = await AgentCommandPlannerSkill().execute(
+            {
+                "input": self._full_input("修改大纲，结尾改成悲剧"),
+                "agent": agent,
+                "prompt_loader": loader,
+            }
+        )
+        assert result.turn_type == "clarification"
+        assert result.clarification_question

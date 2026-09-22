@@ -38,6 +38,62 @@ logger = logging.getLogger(__name__)
 WorkflowExecutor = Callable[[uuid.UUID, str, dict[str, Any], str], Awaitable[None]]
 
 
+async def collect_evaluation_scripts(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    options: dict[str, Any],
+) -> dict[int, str]:
+    """按评估执行范围契约收集受评估剧本（IR-4 §9.2）。
+
+    scope=episode：只取指定集最新 valid 剧本；缺失即抛错——绝不退化
+    为全项目评估。scope=project：每集最新 valid 剧本。返回 集号→ID。
+    """
+    from app.artifacts.store import ArtifactStore
+    from app.db.repositories.artifacts import ArtifactRepository
+
+    scope = options.get("scope", "project")
+    latest_per_episode: dict[int, str] = {}
+    if scope == "episode":
+        episode_number = options.get("episode_number")
+        if episode_number is None:
+            raise AppError(
+                detail="单集评估缺少集数（episode scope requires episode_number）",
+                status_code=400,
+                code="INVALID_EVALUATION_SCOPE",
+            )
+        target = await ArtifactRepository(db).get_latest_valid(
+            project_id, "script_draft", int(episode_number)
+        )
+        if target is None:
+            raise AppError(
+                detail=f"第 {episode_number} 集没有可评估的有效剧本",
+                status_code=404,
+                code="SCRIPT_NOT_FOUND",
+            )
+        latest_per_episode[int(episode_number)] = str(target.id)
+        return latest_per_episode
+    scripts = await ArtifactStore().list_by_project(db, project_id, "script_draft", offset=0, limit=1000)
+    for artifact in scripts:
+        if artifact.status == "valid" and artifact.episode_number not in latest_per_episode:
+            latest_per_episode[artifact.episode_number] = str(artifact.id)
+    return latest_per_episode
+
+
+def compose_user_instruction(user_request: Any, constraints: list[str]) -> str | None:
+    """把原始请求与结构化约束组合为修订指令（IR-3 §8.3）。
+
+    原文是完整授权边界，结构化约束是索引——两者都进入下游输入，
+    模型遗漏提取的约束可从原文恢复。旧计划无原文时沿用旧拼接。
+    """
+    parts: list[str] = []
+    if isinstance(user_request, str) and user_request.strip():
+        parts.append(f"用户原始要求（完整授权边界）：{user_request.strip()}")
+    joined = "；".join(c for c in constraints if c)
+    if joined:
+        parts.append(f"结构化约束：{joined}")
+    return "\n".join(parts) or None
+
+
 class WorkflowDispatcher:
     """用数据库租约领取、续租并执行 WorkflowRun。"""
 
@@ -406,9 +462,7 @@ async def _execute_workflow(
             if agent_action_id_cfg:
                 from app.application.agent_action_lifecycle import AgentActionLifecycle
 
-                await AgentActionLifecycle().mark_running(
-                    db, uuid.UUID(str(agent_action_id_cfg))
-                )
+                await AgentActionLifecycle().mark_running(db, uuid.UUID(str(agent_action_id_cfg)))
 
             # I-01：登记 per-run LLM 预算（软/硬上限来自 Settings）；并读取
             # 上一轮 state_summary 作为 retry 恢复的基底（全新 run 为 None）。
@@ -474,8 +528,12 @@ async def _execute_workflow(
                 )
                 return
             if action not in (
-                "create_script", "evaluate", "revise", "revise_script",
-                "revise_outline", "import",
+                "create_script",
+                "evaluate",
+                "revise",
+                "revise_script",
+                "revise_outline",
+                "import",
             ):
                 raise AppError(
                     detail=f"不支持的 Workflow action: {action}",
@@ -546,9 +604,7 @@ async def _execute_workflow(
                     "stop_after": options.get("stop_after") or "",
                     "stage_gate": "",
                     "stage_generation": run.stage_generation,
-                    "target_episode_count": int(
-                        options.get("outline_count", options.get("script_count", 3))
-                    ),
+                    "target_episode_count": int(options.get("outline_count", options.get("script_count", 3))),
                     "current_episode": 1,
                     "status": "running",
                     "needs_user_input": False,
@@ -560,15 +616,15 @@ async def _execute_workflow(
                 }
                 workflow = build_creation_workflow(checkpointer=checkpointer)
             elif action == "evaluate":
-                # action=evaluate → 收集项目已有剧本（每集最新 valid），走独立评估工作流
-                store = ArtifactStore()
-                scripts = await store.list_by_project(
-                    db, run.project_id, "script_draft", offset=0, limit=1000
+                # action=evaluate → 独立评估工作流。
+                # IR-4 §9.2 执行范围契约：scope=episode 只评估指定集最新
+                # valid 剧本；指定集缺失时明确失败——绝不退化为全项目评估；
+                # 只有 scope=project 才收集全部每集最新 valid 剧本
+                latest_per_episode = await collect_evaluation_scripts(
+                    db,
+                    run.project_id,
+                    (run.config_snapshot or {}).get("options", {}),
                 )
-                latest_per_episode: dict[int, str] = {}
-                for a in scripts:
-                    if a.status == "valid" and a.episode_number not in latest_per_episode:
-                        latest_per_episode[a.episode_number] = str(a.id)
                 initial_state = {
                     "run_id": str(run_id),
                     "project_id": str(run.project_id),
@@ -621,8 +677,10 @@ async def _execute_workflow(
                     "action": action,
                     "source_script_artifact_id": str(source_script_id),
                     "user_constraints": constraints,
-                    # 用户约束拼接后作为 user_instruction 写入 RevisionPlan
-                    "user_instruction": "；".join(c for c in constraints if c) or None,
+                    # IR-3 §8.3：原文是完整授权边界，结构化约束是索引；
+                    # 两者冲突时修订侧应停止并暴露，不自行扩权
+                    "user_request": options.get("user_request"),
+                    "user_instruction": compose_user_instruction(options.get("user_request"), constraints),
                     "script_artifact_ids": {},
                     "evaluation_artifact_ids": {},
                     "needs_revision_decision": False,
@@ -642,9 +700,7 @@ async def _execute_workflow(
                     "input_hashes": {},
                     "prompt_versions": {},
                 }
-                workflow = build_conversational_revision_workflow(
-                    checkpointer=checkpointer
-                )
+                workflow = build_conversational_revision_workflow(checkpointer=checkpointer)
             elif action == "revise_outline":
                 # action=revise_outline → 对话式大纲修订（J-08）：单节点工作流，
                 # 目标由服务端解析的 source outline ID 决定；合法输出落库为
@@ -663,7 +719,8 @@ async def _execute_workflow(
                     "action": action,
                     "source_outline_artifact_id": str(source_outline_id),
                     "user_constraints": constraints,
-                    "user_instruction": "；".join(c for c in constraints if c) or None,
+                    "user_request": options.get("user_request"),
+                    "user_instruction": compose_user_instruction(options.get("user_request"), constraints),
                     "outline_set_artifact_id": None,
                     "outline_impact": {},
                     "script_artifact_ids": {},
@@ -953,12 +1010,8 @@ async def _execute_workflow(
                     event_type="run.completed",
                     payload={
                         "message": "大纲修订完成",
-                        "old_outline_artifact_id": final_state.get(
-                            "source_outline_artifact_id"
-                        ),
-                        "new_outline_artifact_id": final_state.get(
-                            "outline_set_artifact_id"
-                        ),
+                        "old_outline_artifact_id": final_state.get("source_outline_artifact_id"),
+                        "new_outline_artifact_id": final_state.get("outline_set_artifact_id"),
                         "changed_episodes": impact.get("changed_episodes", []),
                         "dependent_script_ids": impact.get("dependent_script_ids", []),
                         "follow_ups": impact.get("follow_ups", []),
@@ -977,23 +1030,15 @@ async def _execute_workflow(
                     payload={
                         "message": "对话式剧本修订完成",
                         "episode": episode,
-                        "source_script_artifact_id": final_state.get(
-                            "source_script_artifact_id"
-                        ),
+                        "source_script_artifact_id": final_state.get("source_script_artifact_id"),
                         "new_script_artifact_id": (
                             final_state.get("script_artifact_ids", {}).get(str(episode))
                             if episode is not None
                             else None
                         ),
-                        "revision_plan_artifact_id": final_state.get(
-                            "revision_plan_artifact_id"
-                        ),
-                        "continuity_check_artifact_id": final_state.get(
-                            "continuity_check_artifact_id"
-                        ),
-                        "evaluation_artifact_ids": final_state.get(
-                            "evaluation_artifact_ids", {}
-                        ),
+                        "revision_plan_artifact_id": final_state.get("revision_plan_artifact_id"),
+                        "continuity_check_artifact_id": final_state.get("continuity_check_artifact_id"),
+                        "evaluation_artifact_ids": final_state.get("evaluation_artifact_ids", {}),
                     },
                     autocommit=True,
                 )
@@ -1027,9 +1072,7 @@ async def _execute_workflow(
                         final_state=final_state,
                     )
                 except Exception:
-                    logger.exception(
-                        "AgentAction 终态回写失败（可由 reconciliation 补写）: run=%s", run_id
-                    )
+                    logger.exception("AgentAction 终态回写失败（可由 reconciliation 补写）: run=%s", run_id)
                     await db.rollback()
 
             # 兜底提交：确保所有变更已持久化
@@ -1195,6 +1238,10 @@ def _register_fake_fixtures(llm: Any) -> None:
     )
     llm.register("outline", EpisodeOutlineSet.model_validate(_load("outline_set_valid")))
     llm.register("write_episode", ScriptDraft.model_validate(_load("script_draft_valid")))
+    # M-03/M-04:单集 typed delta 派生用内容感知桩(集数随集变化)
+    from app.llm.fake import episode_delta_factory
+
+    llm.register_factory("episode_summary_v2", episode_delta_factory)
     # 评估 fixture：默认 golden 高分报告（服务端回填 need_revision=False → 走 finalize/completed）。
     # E2E 场景开关 FAKE_LLM_SCENARIO=revision：注册低分报告 → 全部集 need_revision=True →
     # F-05 确定性选最低分集（平局取最小集号）恰好只修 1 集。默认行为不变。

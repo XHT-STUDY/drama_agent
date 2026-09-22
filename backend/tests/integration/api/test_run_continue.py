@@ -426,7 +426,7 @@ async def test_batch_continue_caps_at_target(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_no_batch_restores_target_script_count(
-    client: AsyncSession, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """缺省 batch：写剩余全部——script_count 必须恢复项目目标 10。
 

@@ -76,6 +76,7 @@ from app.domain.agent_command import (
 from app.domain.agent_planner import AgentPlannerInput, AgentPlannerOutput
 from app.domain.conversation import ConversationCreate, MessageCreate
 from app.llm.budget import enter_run, exit_run
+from app.memory.wiring import get_message_service
 from app.prompts.loader import PromptLoader
 from app.skills.agent_command_planner import (
     DEFAULT_AVAILABLE_INTENTS,
@@ -119,7 +120,7 @@ MessageKind = Literal["text", "clarification", "action_plan", "action_result", "
 
 
 def build_revise_script_plan(
-    *, source: Artifact, constraints: list[str]
+    *, source: Artifact, constraints: list[str], user_request: str | None = None
 ) -> tuple[str, ReviseScriptCommand, ActionTarget, str, list[ActionStep], list[ArtifactSnapshot]]:
     """revise_script 计划模板：source 为服务端解析的目标集最新 valid 剧本。"""
     episode = source.episode_number
@@ -150,21 +151,26 @@ def build_revise_script_plan(
             description="对修订后的剧本重新评估，产出对比报告",
         ),
     ]
-    snapshots = [
-        ArtifactSnapshot(
-            artifact_id=source.id,
-            artifact_type=source.type,
-            episode_number=source.episode_number,
-            version=source.version,
-            checksum=source.checksum,
-        )
-    ] if source.checksum is not None else []
+    snapshots = (
+        [
+            ArtifactSnapshot(
+                artifact_id=source.id,
+                artifact_type=source.type,
+                episode_number=source.episode_number,
+                version=source.version,
+                checksum=source.checksum,
+            )
+        ]
+        if source.checksum is not None
+        else []
+    )
     return (
         "revise_script",
         ReviseScriptCommand(
             source_script_id=source.id,
             episode_number=episode,
             constraints=constraints,
+            user_request=user_request,
         ),
         ActionTarget(target_type="script", episode_number=episode),
         f"按用户要求修订第 {episode} 集剧本并重评"[:2000],
@@ -174,7 +180,7 @@ def build_revise_script_plan(
 
 
 def build_revise_outline_plan(
-    *, source_outline: Artifact, constraints: list[str]
+    *, source_outline: Artifact, constraints: list[str], user_request: str | None = None
 ) -> tuple[str, ReviseOutlineCommand, ActionTarget, str, list[ActionStep], list[ArtifactSnapshot]]:
     """revise_outline 计划模板：source_outline 为项目最新 valid 大纲。"""
     episode_count = len(source_outline.content.get("episodes", []))
@@ -200,18 +206,26 @@ def build_revise_outline_plan(
             description="新大纲成为最新有效版本，旧版本不可变",
         ),
     ]
-    snapshots = [
-        ArtifactSnapshot(
-            artifact_id=source_outline.id,
-            artifact_type=source_outline.type,
-            episode_number=source_outline.episode_number,
-            version=source_outline.version,
-            checksum=source_outline.checksum,
-        )
-    ] if source_outline.checksum is not None else []
+    snapshots = (
+        [
+            ArtifactSnapshot(
+                artifact_id=source_outline.id,
+                artifact_type=source_outline.type,
+                episode_number=source_outline.episode_number,
+                version=source_outline.version,
+                checksum=source_outline.checksum,
+            )
+        ]
+        if source_outline.checksum is not None
+        else []
+    )
     return (
         "revise_outline",
-        ReviseOutlineCommand(source_outline_id=source_outline.id, constraints=constraints),
+        ReviseOutlineCommand(
+            source_outline_id=source_outline.id,
+            constraints=constraints,
+            user_request=user_request,
+        ),
         ActionTarget(target_type="outline"),
         f"按用户要求修订分集大纲（{episode_count} 集）并分析影响"[:2000],
         steps,
@@ -264,6 +278,26 @@ def render_plan_message(plan: AgentActionPlan) -> str:
     return "\n".join(lines)
 
 
+async def _latest_assistant_message_confirmable(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    """会话内最近一条 assistant 消息是否仍是可确认对象（IR-3 §8.6）。
+
+    action_plan = 待确认计划；action_result 覆盖确认门/执行结果通知。
+    最近一条是澄清或普通答复时，"好的"不能再确认更早的计划——回落
+    Planner 处理。会话无 assistant 消息同样视为不可确认。
+    """
+    result = await db.execute(
+        select(Message.kind)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.role == "assistant",
+        )
+        .order_by(Message.sequence.desc())
+        .limit(1)
+    )
+    kind = result.scalar_one_or_none()
+    return kind in {"action_plan", "action_result"}
+
+
 class AgentCommandService:
     """对话命令的编排服务:Turn 收据、Planner 调度与 Action 确认。"""
 
@@ -284,7 +318,8 @@ class AgentCommandService:
         self._planner_skill = planner_skill or AgentCommandPlannerSkill()
         self._run_service = run_service or RunService()
         self._context_service = context_service or AgentContextService(settings=settings)
-        self._message_service = message_service or MessageService()
+        # M-02:与其他消息入口共享统一记忆挂载工厂(短期记忆+累计摘要)
+        self._message_service = message_service or get_message_service()
         self._conversation_service = ConversationService()
 
     # ========================================================================
@@ -312,9 +347,7 @@ class AgentCommandService:
             {
                 "content": content,
                 "conversation_id": str(conversation_id) if conversation_id else None,
-                "active_context": (
-                    active_context.model_dump(mode="json") if active_context else None
-                ),
+                "active_context": (active_context.model_dump(mode="json") if active_context else None),
                 "target_episode_count": target_episode_count,
                 "staged": staged,
             }
@@ -333,9 +366,7 @@ class AgentCommandService:
             await db.rollback()
             return await self._duplicate_outcome(db, existing_id)
 
-        conversation = await self._resolve_conversation(
-            db, project, conversation_id, fallback_title=content
-        )
+        conversation = await self._resolve_conversation(db, project, conversation_id, fallback_title=content)
         if active_context is not None:
             # 在持久化任何数据前拒绝非法活动上下文,避免留下无法完成的 Turn。
             await self._context_service.validate_active_context(db, project, active_context)
@@ -379,9 +410,7 @@ class AgentCommandService:
 
         # ---- 事务外:原子领取 planning lease(独立短事务) ----
         lease_owner = f"agent-turn:{uuid.uuid4().hex[:16]}"
-        lease_expires_at = datetime.now(UTC) + timedelta(
-            seconds=self._settings.agent_turn_lease_seconds
-        )
+        lease_expires_at = datetime.now(UTC) + timedelta(seconds=self._settings.agent_turn_lease_seconds)
         claimed = await turn_repo.claim_planning_lease(
             turn_id, lease_owner=lease_owner, lease_expires_at=lease_expires_at
         )
@@ -398,7 +427,13 @@ class AgentCommandService:
             if handled is not None:
                 try:
                     final_turn = await self._finalize_turn(
-                        db, turn_id, conv_id, lease_owner, handled, project, content,
+                        db,
+                        turn_id,
+                        conv_id,
+                        lease_owner,
+                        handled,
+                        project,
+                        content,
                     )
                 except AgentStateTransitionError:
                     await db.rollback()
@@ -414,9 +449,7 @@ class AgentCommandService:
             context_text, _manifest = await self._context_service.build(
                 db, project, conversation, active_context, content
             )
-            unresolved = await self._count_unresolved_turns(
-                db, conv_id, exclude_turn_id=turn_id
-            )
+            unresolved = await self._count_unresolved_turns(db, conv_id, exclude_turn_id=turn_id)
             await db.commit()  # 关闭只读事务 → Planner 调用期间零事务
         except Exception as exc:
             logger.exception("Planner 上下文构建失败: turn=%s", turn_id)
@@ -461,16 +494,20 @@ class AgentCommandService:
             # 无解释目标（None）时保留 Planner 答复（项目级状态类问题）
             explanation_citations: list[dict[str, Any]] | None = None
             if output.turn_type == "answer" and output.intent == "explain":
-                composed = await self._explain_content(
-                    db, project, content, active_context
-                )
+                composed = await self._explain_content(db, project, content, active_context)
                 if composed is not None:
                     output, explanation_citations = composed
 
             # ---- 事务 B:写入终态并终结 Turn ----
             try:
                 final_turn = await self._finalize_turn(
-                    db, turn_id, conv_id, lease_owner, output, project, content,
+                    db,
+                    turn_id,
+                    conv_id,
+                    lease_owner,
+                    output,
+                    project,
+                    content,
                     target_episode_count=target_episode_count,
                     staged=staged,
                     explanation_citations=explanation_citations,
@@ -508,9 +545,7 @@ class AgentCommandService:
         """
         action = await AgentActionRepository(db).get(action_id)
         if action is None:
-            raise NotFoundError(
-                detail=f"AgentAction 不存在: {action_id}", code="AGENT_ACTION_NOT_FOUND"
-            )
+            raise NotFoundError(detail=f"AgentAction 不存在: {action_id}", code="AGENT_ACTION_NOT_FOUND")
         if action.run_id is not None and action.status in ("queued", "running"):
             run = await self._run_service.get_run(db, action.run_id)
             if run.status in ("completed", "failed", "needs_review", "cancelled"):
@@ -531,9 +566,7 @@ class AgentCommandService:
 
         action = await action_repo.get_for_update(action_id)
         if action is None:
-            raise NotFoundError(
-                detail=f"AgentAction 不存在: {action_id}", code="AGENT_ACTION_NOT_FOUND"
-            )
+            raise NotFoundError(detail=f"AgentAction 不存在: {action_id}", code="AGENT_ACTION_NOT_FOUND")
 
         # 重复确认:直接返回原 Run,不再创建。
         if action.run_id is not None:
@@ -560,9 +593,7 @@ class AgentCommandService:
                 or current.version != snapshot.version
                 or current.checksum != snapshot.checksum
             ):
-                await action_repo.transition(
-                    action_id, "stale", expected_statuses={"proposed"}
-                )
+                await action_repo.transition(action_id, "stale", expected_statuses={"proposed"})
                 await db.commit()  # 先持久化 stale 再抛错,保证状态可见
                 raise AgentActionStaleError(detail="计划基于的 Artifact 已更新,请重新发起规划")
 
@@ -582,9 +613,7 @@ class AgentCommandService:
                 or summary.get("stage_gate") not in ("outline", "scripts")
             ):
                 # 规划后 Run 状态已变化（已续跑/已取消/门已清）→ 计划作废
-                await action_repo.transition(
-                    action_id, "stale", expected_statuses={"proposed"}
-                )
+                await action_repo.transition(action_id, "stale", expected_statuses={"proposed"})
                 await db.commit()
                 raise RunNotRetryableError(detail="计划对应的任务已不在确认门上，请重新发起")
 
@@ -599,14 +628,11 @@ class AgentCommandService:
                     and run.updated_at <= action.created_at
                 )
                 if not run_untouched_since_plan:
-                    await action_repo.transition(
-                        action_id, "stale", expected_statuses={"proposed"}
-                    )
+                    await action_repo.transition(action_id, "stale", expected_statuses={"proposed"})
                     await db.commit()
                     raise RunStageStaleError(
                         detail=(
-                            "旧续跑计划创建后任务已被推进，无法确认世代，"
-                            "计划已作废；请基于当前进度重新发起"
+                            "旧续跑计划创建后任务已被推进，无法确认世代，计划已作废；请基于当前进度重新发起"
                         ),
                         current_stage_generation=run.stage_generation,
                     )
@@ -622,9 +648,7 @@ class AgentCommandService:
                 )
             except RunStageStaleError:
                 # 并发确认（按钮/聊天/重复计划）只有一个胜者：本计划作废
-                await action_repo.transition(
-                    action_id, "stale", expected_statuses={"proposed"}
-                )
+                await action_repo.transition(action_id, "stale", expected_statuses={"proposed"})
                 await db.commit()
                 raise
             if resumed_result.replayed:
@@ -633,9 +657,7 @@ class AgentCommandService:
                     replay_run = await self._run_service.get_run(db, action.run_id)
                     return self._action_response(action), replay_run
                 await db.commit()
-                raise RunNotRetryableError(
-                    detail="续跑收据重放时缺少关联 Run，请基于当前进度重新发起"
-                )
+                raise RunNotRetryableError(detail="续跑收据重放时缺少关联 Run，请基于当前进度重新发起")
             resumed = resumed_result.run
             assert resumed is not None
             # Run 终态回写（J-09 lifecycle）指向本 continue Action：
@@ -684,19 +706,13 @@ class AgentCommandService:
         schedule_worker(run.id, run.action, run.config_snapshot or {})
         return self._action_response(action), run
 
-    async def reject_action(
-        self, db: AsyncSession, action_id: uuid.UUID
-    ) -> AgentActionResponse:
+    async def reject_action(self, db: AsyncSession, action_id: uuid.UUID) -> AgentActionResponse:
         """拒绝 proposed Action(仅 proposed→rejected)。"""
         action_repo = AgentActionRepository(db)
         action = await action_repo.get_for_update(action_id)
         if action is None:
-            raise NotFoundError(
-                detail=f"AgentAction 不存在: {action_id}", code="AGENT_ACTION_NOT_FOUND"
-            )
-        action = await action_repo.transition(
-            action_id, "rejected", expected_statuses={"proposed"}
-        )
+            raise NotFoundError(detail=f"AgentAction 不存在: {action_id}", code="AGENT_ACTION_NOT_FOUND")
+        action = await action_repo.transition(action_id, "rejected", expected_statuses={"proposed"})
         await db.commit()
         return self._action_response(action)
 
@@ -724,18 +740,12 @@ class AgentCommandService:
             created = await self._conversation_service.create(
                 db, project.id, ConversationCreate(title=fallback_title.strip()[:30])
             )
-            result = await db.execute(
-                select(Conversation).where(Conversation.id == created.id)
-            )
+            result = await db.execute(select(Conversation).where(Conversation.id == created.id))
             return result.scalar_one()
-        result = await db.execute(
-            select(Conversation).where(Conversation.id == conversation_id)
-        )
+        result = await db.execute(select(Conversation).where(Conversation.id == conversation_id))
         conversation = result.scalar_one_or_none()
         if conversation is None or conversation.deleted_at is not None:
-            raise NotFoundError(
-                detail=f"会话不存在: {conversation_id}", code="CONVERSATION_NOT_FOUND"
-            )
+            raise NotFoundError(detail=f"会话不存在: {conversation_id}", code="CONVERSATION_NOT_FOUND")
         if conversation.project_id != project.id:
             # 跨项目会话视作活动上下文非法,在追加消息前拒绝。
             raise InvalidActiveContextError(detail="会话不属于当前项目")
@@ -752,9 +762,7 @@ class AgentCommandService:
 
         排除当前正在执行的 Turn(它总是最新的 planning 行)。
         """
-        stmt = select(AgentTurn.status).where(
-            AgentTurn.conversation_id == conversation_id
-        )
+        stmt = select(AgentTurn.status).where(AgentTurn.conversation_id == conversation_id)
         if exclude_turn_id is not None:
             stmt = stmt.where(AgentTurn.id != exclude_turn_id)
         result = await db.execute(stmt.order_by(AgentTurn.created_at.desc()).limit(10))
@@ -829,9 +837,7 @@ class AgentCommandService:
                 "我不会在没读完正文的情况下猜测剧情。"
             )
         if ctx.status == "no_text":
-            return self._limited_answer(
-                "这份稿件还没有可阅读的正文（可能只有标题），暂时无法回答剧情问题。"
-            )
+            return self._limited_answer("这份稿件还没有可阅读的正文（可能只有标题），暂时无法回答剧情问题。")
 
         exp_input = ArtifactExplanationInput(
             question=ctx.question[:4000],
@@ -863,9 +869,7 @@ class AgentCommandService:
             # 解释是辅助能力（最多一次生成、无自定义重试）：任何失败
             # 都不炸 Turn，降级为"暂不可用"的有限答复
             logger.warning("解释模型调用失败，降级为有限答复: %s", exc)
-            return self._limited_answer(
-                "原文解释暂时不可用；你可以先看稿件原文，或稍后再问一次。"
-            )
+            return self._limited_answer("原文解释暂时不可用；你可以先看稿件原文，或稍后再问一次。")
 
         if not result.citations:
             # 诚实性：没有可验证引文 = 原文不足以确认——不附带未核实的解释
@@ -915,12 +919,19 @@ class AgentCommandService:
 
         最新 pending 优先：proposed Action 与门上 Run 同时存在时按
         updated_at 取新者，避免把过期计划确认成第二个并行 Run。
+        IR-3 §8.6 上下文保护：确认类短语只有在会话内最近的 assistant
+        消息仍是可确认对象（action_plan / action_result，后者覆盖确认门
+        通知）时才直接执行——中间出现过澄清或新答复时回落 Planner，
+        不把"好的"错认成对旧计划的确认。
         执行失败的 AppError 转为可读答复而非静默回落——用户已明确
         表达了意图，回落 Planner 只会得到一次无效澄清。
         """
         kind, batch = shortcut
         try:
             if kind == "confirm":
+                if not await _latest_assistant_message_confirmable(db, conversation_id):
+                    logger.info("agent_shortcut kind=confirm outcome=fallback_stale_context")
+                    return None
                 action = await find_latest_proposed_action(db, conversation_id)
                 gated = await find_gated_run(db, project.id)
                 if action is not None and (
@@ -929,19 +940,17 @@ class AgentCommandService:
                     or (action.updated_at or action.created_at) >= gated.updated_at
                 ):
                     await self.confirm_action(db, action.id)
-                    return AgentPlannerOutput(
-                        turn_type="answer", answer="已确认，计划开始执行。"
-                    )
+                    logger.info("agent_shortcut kind=confirm outcome=executed_plan")
+                    return AgentPlannerOutput(turn_type="answer", answer="已确认，计划开始执行。")
                 if gated is not None:
                     # 确认门上的"确认"即续跑（门消息承诺"等待确认后继续创作"）
+                    logger.info("agent_shortcut kind=confirm outcome=executed_gate")
                     return await self._continue_gated(db, gated.id, batch=None, turn_id=turn_id)
                 return await self._no_target_answer(db, project.id)
             if kind == "retry":
                 failed = await find_latest_failed_run(db, project.id)
                 if failed is None:
-                    return AgentPlannerOutput(
-                        turn_type="answer", answer="当前没有失败的任务可重试。"
-                    )
+                    return AgentPlannerOutput(turn_type="answer", answer="当前没有失败的任务可重试。")
                 return await self._retry_failed(db, failed.id)
             gated = await find_gated_run(db, project.id)
             if gated is None:
@@ -949,13 +958,9 @@ class AgentCommandService:
             return await self._continue_gated(db, gated.id, batch=batch, turn_id=turn_id)
         except AppError as exc:
             logger.info("短路执行失败，转为可读答复: kind=%s error=%s", kind, exc)
-            return AgentPlannerOutput(
-                turn_type="answer", answer=f"未能执行：{exc.detail}"
-            )
+            return AgentPlannerOutput(turn_type="answer", answer=f"未能执行：{exc.detail}")
 
-    async def _no_target_answer(
-        self, db: AsyncSession, project_id: uuid.UUID
-    ) -> AgentPlannerOutput | None:
+    async def _no_target_answer(self, db: AsyncSession, project_id: uuid.UUID) -> AgentPlannerOutput | None:
         """确认/续跑未命中任何目标时的确定性答复。
 
         最新动态是失败 → 如实告知原因并给出重试入口，绝不回落 Planner
@@ -967,10 +972,7 @@ class AgentCommandService:
         latest = await find_latest_run(db, project_id)
         if latest is not None and latest.status == "failed":
             if latest.error_code == "WORKFLOW_RECOVERY_EXHAUSTED":
-                tail = (
-                    "该任务的自动重试次数已用完，建议重新发起创作，"
-                    "或直接告诉我你想调整什么。"
-                )
+                tail = "该任务的自动重试次数已用完，建议重新发起创作，或直接告诉我你想调整什么。"
             else:
                 tail = "输入「重试」可从断点重新执行，或直接告诉我你想调整什么。"
             return AgentPlannerOutput(
@@ -979,15 +981,11 @@ class AgentCommandService:
             )
         return None
 
-    async def _retry_failed(
-        self, db: AsyncSession, run_id: uuid.UUID
-    ) -> AgentPlannerOutput:
+    async def _retry_failed(self, db: AsyncSession, run_id: uuid.UUID) -> AgentPlannerOutput:
         """从断点重试失败的 Run（I-01 retry：不重调已完成节点）。"""
         run = await self._run_service.get_run(db, run_id)
         if run.status != "failed":
-            return AgentPlannerOutput(
-                turn_type="answer", answer="当前没有失败的任务可重试。"
-            )
+            return AgentPlannerOutput(turn_type="answer", answer="当前没有失败的任务可重试。")
         if run.error_code == "WORKFLOW_RECOVERY_EXHAUSTED":
             # 恢复预算已耗尽的 Run 再排队会立刻再次耗尽——诚实拒绝，
             # 指向重新发起而非让用户陷入"重试→秒败"死循环
@@ -1037,9 +1035,7 @@ class AgentCommandService:
         gate = summary.get("stage_gate")
         written = len(summary.get("script_artifact_ids") or {})
         options = (run.config_snapshot or {}).get("options", {})
-        target_count = int(
-            options.get("outline_count") or options.get("script_count") or 0
-        )
+        target_count = int(options.get("outline_count") or options.get("script_count") or 0)
         result = await self._run_service.continue_gated_run(
             db,
             run_id,
@@ -1054,13 +1050,14 @@ class AgentCommandService:
             schedule_worker(run_id, result.run.action, result.run.config_snapshot or {})
         logger.info(
             "对话短路续跑 Run: run=%s gate=%s batch=%s replayed=%s conversation 级确认",
-            run_id, gate, batch, result.replayed,
+            run_id,
+            gate,
+            batch,
+            result.replayed,
         )
         return AgentPlannerOutput(
             turn_type="answer",
-            answer=render_continue_answer(
-                gate=gate, written=written, target=target_count, batch=batch
-            ),
+            answer=render_continue_answer(gate=gate, written=written, target=target_count, batch=batch),
         )
 
     async def _append_message(
@@ -1076,15 +1073,11 @@ class AgentCommandService:
         data = MessageCreate(role=role, content=content, kind=kind, metadata=metadata)
         return await self._message_service.append(db, conversation_id, data)
 
-    async def _duplicate_outcome(
-        self, db: AsyncSession, turn_id: uuid.UUID
-    ) -> tuple[AgentTurnResponse, int]:
+    async def _duplicate_outcome(self, db: AsyncSession, turn_id: uuid.UUID) -> tuple[AgentTurnResponse, int]:
         """重复请求的统一出口:终态返回 200,仍规划中返回 202。"""
         turn = await AgentTurnRepository(db).get(turn_id)
         if turn is None:
-            raise NotFoundError(
-                detail=f"AgentTurn 不存在: {turn_id}", code="AGENT_TURN_NOT_FOUND"
-            )
+            raise NotFoundError(detail=f"AgentTurn 不存在: {turn_id}", code="AGENT_TURN_NOT_FOUND")
         status_code = 200 if turn.status in _TERMINAL_TURN_STATUSES else 202
         return await self._turn_response(db, turn), status_code
 
@@ -1148,7 +1141,10 @@ class AgentCommandService:
             )
         else:
             plan, snapshots = await self._build_action_plan(
-                db, project, output, user_request,
+                db,
+                project,
+                output,
+                user_request,
                 target_episode_count=target_episode_count,
                 staged=staged,
             )
@@ -1243,9 +1239,7 @@ class AgentCommandService:
             # 此前漏了项目层：用户建项目填 2 集、没动 Composer 设置时
             # 直接掉到系统默认 10（用户实测 outline 仍 10 集的根因之二）。
             effective_count = (
-                target_episode_count
-                or project.target_episode_count
-                or self._settings.mvp_outline_count
+                target_episode_count or project.target_episode_count or self._settings.mvp_outline_count
             )
             outline_count = effective_count
             script_count = effective_count
@@ -1313,11 +1307,7 @@ class AgentCommandService:
             gate = summary.get("stage_gate")
             written = len(summary.get("script_artifact_ids") or {})
             gated_options = (gated.config_snapshot or {}).get("options", {})
-            target_count = int(
-                gated_options.get("outline_count")
-                or gated_options.get("script_count")
-                or 0
-            )
+            target_count = int(gated_options.get("outline_count") or gated_options.get("script_count") or 0)
             command = ContinueCommand(
                 target_run_id=gated.id,
                 expected_stage_generation=gated.stage_generation,
@@ -1357,40 +1347,40 @@ class AgentCommandService:
             # 目标由服务端解析：目标集的最新 valid 剧本，Planner 不提供 UUID。
             episode = output.target.episode_number if output.target else None
             if episode is None:
-                raise ScriptNotFoundForRevisionError(
-                    detail="未能确定修订目标集数，请指定集数或先选择剧本"
-                )
-            source = await ArtifactRepository(db).get_latest_valid(
-                project.id, "script_draft", episode
-            )
+                raise ScriptNotFoundForRevisionError(detail="未能确定修订目标集数，请指定集数或先选择剧本")
+            source = await ArtifactRepository(db).get_latest_valid(project.id, "script_draft", episode)
             if source is None:
-                raise ScriptNotFoundForRevisionError(
-                    detail=f"第 {episode} 集没有可修订的有效剧本"
-                )
+                raise ScriptNotFoundForRevisionError(detail=f"第 {episode} 集没有可修订的有效剧本")
             (
-                intent_str, command, target, goal, steps, snapshots,
-            ) = build_revise_script_plan(source=source, constraints=constraints)
+                intent_str,
+                command,
+                target,
+                goal,
+                steps,
+                snapshots,
+            ) = build_revise_script_plan(source=source, constraints=constraints, user_request=user_request)
             intent = intent_str  # type: ignore[assignment]
         elif output.intent == "revise_outline":
             # 目标由服务端解析：项目最新 valid 大纲，Planner 不提供 UUID。
-            source_outline = await ArtifactStore().get_latest(
-                db, project.id, "episode_outline_set", 1
-            )
+            source_outline = await ArtifactStore().get_latest(db, project.id, "episode_outline_set", 1)
             if source_outline is None:
-                raise OutlineNotFoundForRevisionError(
-                    detail="项目没有可修订的有效分集大纲"
-                )
+                raise OutlineNotFoundForRevisionError(detail="项目没有可修订的有效分集大纲")
             (
-                intent_str, command, target, goal, steps, snapshots,
+                intent_str,
+                command,
+                target,
+                goal,
+                steps,
+                snapshots,
             ) = build_revise_outline_plan(
-                source_outline=source_outline, constraints=constraints
+                source_outline=source_outline,
+                constraints=constraints,
+                user_request=user_request,
             )
             intent = intent_str  # type: ignore[assignment]
         else:
             # Planner 白名单已限定意图;到达这里说明服务端与 Planner 白名单漂移,直接拒绝。
-            raise UnsupportedAgentIntentError(
-                detail=f"intent 不支持生成执行计划: {output.intent}"
-            )
+            raise UnsupportedAgentIntentError(detail=f"intent 不支持生成执行计划: {output.intent}")
 
         plan = AgentActionPlan(
             goal=goal,
@@ -1400,6 +1390,7 @@ class AgentCommandService:
             constraints=constraints,
             steps=steps,
             expected_impact=expected_impact,
+            user_request=user_request,
         )
         return plan, snapshots
 
@@ -1412,12 +1403,15 @@ class AgentCommandService:
         artifacts: list[Artifact] = []
         if episode is not None:
             latest = await artifact_repo.get_latest_valid(project_id, "script_draft", episode)
-            if latest is not None:
-                artifacts = [latest]
+            if latest is None:
+                # IR-4 §9.2：单集评估目标不存在时在计划阶段明确失败，
+                # 不产出空快照计划、更不能静默退化为全项目评估
+                raise ScriptNotFoundForRevisionError(
+                    detail=f"第 {episode} 集没有可评估的有效剧本"
+                )
+            artifacts = [latest]
         else:
-            artifacts = await artifact_repo.list_by_project(
-                project_id, "script_draft", offset=0, limit=1000
-            )
+            artifacts = await artifact_repo.list_by_project(project_id, "script_draft", offset=0, limit=1000)
             # 每集只保留版本号最高的 valid 版本。
             per_episode: dict[int, Artifact] = {}
             for artifact in artifacts:
@@ -1466,6 +1460,7 @@ class AgentCommandService:
                     "source_script_artifact_id": str(command.source_script_id),
                     "episode_number": command.episode_number,
                     "user_constraints": list(command.constraints),
+                    "user_request": command.user_request,
                 }
             }
         if isinstance(command, ReviseOutlineCommand):
@@ -1473,6 +1468,7 @@ class AgentCommandService:
                 "options": {
                     "source_outline_artifact_id": str(command.source_outline_id),
                     "user_constraints": list(command.constraints),
+                    "user_request": command.user_request,
                 }
             }
         return {"options": command.model_dump(mode="json")}
@@ -1524,8 +1520,7 @@ class AgentCommandService:
             requires_confirmation=action.requires_confirmation,
             plan=AgentActionPlan.model_validate(action.plan),
             source_artifact_ids=[
-                ArtifactSnapshot.model_validate(raw)
-                for raw in (action.source_artifact_ids or [])
+                ArtifactSnapshot.model_validate(raw) for raw in (action.source_artifact_ids or [])
             ],
             result=AgentOutcome.model_validate(action.result) if action.result else None,
             run_id=action.run_id,

@@ -4,6 +4,171 @@
 
 ---
 
+## IR-4 意图识别优化：单集评估执行范围契约（2026-09-18）
+
+**任务 ID：** IR-4（部分，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §9）
+**状态：** DONE（§9.2 范围修复；指标/端到端矩阵/回灌待后续）
+**日期：** 2026-09-18
+
+### 做了什么
+
+1. Dispatcher 新增 `collect_evaluation_scripts`：`scope=episode` 只取指定集最新 valid 剧本，指定集缺失或未带集数 → 明确 AppError（SCRIPT_NOT_FOUND / INVALID_EVALUATION_SCOPE），**绝不退化为全项目评估**；`scope=project` 才收集每集最新 valid。修复 P0-6（单集请求被静默扩大为全项目评估）。
+2. 计划层 `_script_snapshots` 对"指定集无有效剧本"从静默空快照改为明确失败（Turn failed + 可读错误）——空快照计划确认后正是触发 Dispatcher 全量收集的入口。
+3. 4 条范围契约测试（单集只含该集 / 缺集失败不退化 / 缺集数失败 / 项目范围全收集）。
+
+### 为什么这么做
+
+- 修复必须在 Dispatcher（执行边界）而不只在计划层：确认后的 Run 可能因暂停期间剧本变化而与计划快照不一致，执行边界是最后一道闸。
+- "错误的单集请求静默扩大为全项目执行"属于 §12.3 列出的不可回滚恢复的不诚实行为，优先级高于指标建设。
+
+### 验证结果
+
+`python -m pytest`（后端全量）通过；`mypy app/` 通过；范围契约 4 条新增测试通过。
+
+---
+
+## IR-3 意图识别优化：强化生产路由（2026-09-18）
+
+**任务 ID：** IR-3（Phase IR，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §8）
+**状态：** DONE
+**日期：** 2026-09-18
+
+### 做了什么
+
+1. **目标一致性校验（§8.2）**：`domain/agent_planner.py` 新增纯函数 `resolve_plan_target`（文本明确对象/集数 > 合法活动上下文 > 模型推断）；Skill 在模型输出后执行校验——集数分歧规范化为文本集数并记录低基数 disagreement（episode_normalized/context_normalized）；点名大纲/设定却要改剧本（object_mismatch）转澄清不生成 Action。revise_outline 文本中的集数识别为大纲条目引用，不做规范化。
+2. **正则收敛（§8.5）**：多目标确定性澄清只在对象不可判定时触发——文本指向单一大纲/设定对象时，多个集数是条目引用（"修改大纲，第2集和第3集合并"现在正确放行）；"前慢后快"类合理节奏表达本就不命中冲突正则，补单测固化。集数/对象/指代词表从 skill 上移 domain（`extract_episode_numbers`/`explicit_objects`/`CONTEXT_REFERENCE_RE`），skill 保留 re-export。
+3. **约束保真（§8.3）**：`AgentActionPlan`、`ReviseScriptCommand`、`ReviseOutlineCommand` 新增可选 `user_request`（旧 JSON 加载为 None=legacy）；原文贯穿 Plan → Run options → Dispatcher（`compose_user_instruction`：原文=完整授权边界 + 结构化约束=索引）→ 工作流状态 `user_request` → 修订指令；前端 `api.ts` 类型同步，ActionPlanCard 显示约束与原始请求（确认前可发现遗漏）。
+4. **explain 分流（§8.4）**：`build_explanation_context` 新增"查看已有评估"路由（`_EVALUATION_VIEW_RE`）——读 evaluation Artifact（按集或项目最新），不再误读剧本正文；`ExplanationSourceText.kind` 增加 `evaluation`。
+5. **短路保护（§8.6）**：确认类短语只有在会话内最近 assistant 消息仍是 `action_plan`/`action_result`（覆盖确认门通知）时才直接执行，否则回落 Planner——"澄清之后的好的"不再误确认旧计划；新增 fallback_stale_context/executed_plan/executed_gate 低基数遥测日志；复合长表达本就不命中整句短路正则（IR-2 数据集覆盖）。
+6. 数据集 v5：cmd-036/175 恢复多集数大纲表达作为正则修复的回归样本；Schema 向后兼容契约测试（legacy 计划加载、user_request roundtrip）；API_CONTRACT、DEV_PLAN §20.7 同步。
+
+### 为什么这么做
+
+- 目标一致性放在 Skill 层（模型输出后、服务端建计划前）：Planner 输出经过 `_validate_output` 白名单校验后立即规范化，`_build_action_plan` 拿到的 target 已是确定性结果，不需要改六个 intent 分支。
+- object_mismatch 只拒绝"文本明确大纲/设定 → 改剧本"这一个方向：反向（文本只有集数 → 改大纲）可能由活动上下文或对话历史合法给出，误拒会伤害多轮大纲修订；此风险由确认卡片（用户可见"修订大纲"计划）兜底。
+- 原文保真走数据而非 Prompt：组合指令把"完整授权边界"作为数据标签随 user_instruction 流入既有修订模板，避免又改一轮 Prompt 与 golden fixture；Prompt 未变（v1.4），Skill metadata 升 1.1。
+- 短路保护用消息 kind 判定而非时间戳：时间戳无法区分"计划后跟了新一轮澄清"，而 kind 是会话语义的事实。
+
+### 修改文件
+
+- `backend/app/domain/agent_planner.py`、`app/domain/agent_command.py`
+- `backend/app/skills/agent_command_planner.py`
+- `backend/app/application/agent_context_service.py`、`agent_command_service.py`、`workflow_dispatcher.py`
+- `backend/app/workflows/state.py`
+- `backend/tests/unit/skills/test_agent_command_planner.py`、`tests/contract/test_agent_command_schemas.py`、`tests/integration/api/test_agent_shortcut.py`
+- `backend/tests/evals/agent_commands{,_holdout}.json`（v5）
+- `frontend/src/types/api.ts`、`frontend/src/features/agent/ActionPlanCard.tsx`
+- `docs/API_CONTRACT.md`、`docs/DEV_PLAN.md`、`docs/DEV_LOG.md`
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python -m pytest`（后端全量） | 通过 |
+| `pnpm typecheck` / `pnpm test`（前端 219 测试） | 通过 |
+| `ruff check app/ tests/` + `mypy app/` | 通过（188 文件） |
+| preflight 一致性契约（360 条，含恢复的多集数样本） | 通过 |
+
+### 学到了什么
+
+确定性保护的关键是"方向性"：只拒绝有文本证据的方向冲突（点名大纲→改剧本），不要反向臆断（无大纲字样→可能是上下文给的）。每加一条确定性规则都要问：多轮对话里有没有合法路径会触发它？评测数据集（IR-2 的 recent_dialog 用例）正是在这里发挥了作用——没有这些样本，反向规则会静默伤害多轮修订。
+
+---
+
+## IR-2 意图识别优化：扩充代表性评测数据（2026-09-18）
+
+**任务 ID：** IR-2（Phase IR，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §7）
+**状态：** DONE
+**日期：** 2026-09-18
+
+### 做了什么
+
+1. `agent_commands.json` 65→240 条（dataset v4）：新增 152 条——题材多样性创作请求（25 类题材）、查看已有评估 vs 重跑评估、合理节奏变化 vs 真互斥约束、单集多约束 plan、口语/错别字（"剧木/大刚"）/中英混合、多轮澄清回答与约束补充（recent_dialog 注入上一轮，与生产 project_context 最近消息路径一致）、范围外产品请求/攻击指令/闲聊。
+2. 新增 `agent_commands_holdout.json` 盲测集 120 条（hold-001~120，独立 ID 命名空间）：不进 Prompt 示例（契约做逐字归一化比对）、不按单条失败调词。
+3. 合并分布恰为 §7.2 配额（create 45 / explain 50 / evaluate 45 / revise_script 55 / revise_outline 45 / continue 40 / clarification+范围外 80 = 360）；交叉覆盖下限全部达标：active context 62/60、目标×上下文冲突 32/30、多轮 60/60、口语 50/50、复合请求 40/40、白名单漂移 45/40、明确集数 100/80、范围外 40/40。
+4. harness 升级：双文件契约（分布精确匹配、交叉覆盖下限、ID 全局唯一、盲测不进 Prompt、**preflight 一致性**——期望 plan/answer 的用例不得被确定性 preflight 拦截、pf=1 用例必须被拦截）；真实评测支持 `EVAL_SPLIT`（dev/holdout/all，默认 all）× `EVAL_REPEATS`（发版 3 次），报告含每次失败明细与逐门槛均值/最差值，**门槛按最差一次判定**。
+5. `tests/evals/README.md`：字段合同、v1.4 期望语义要点、split 纪律、5 条已知边界（preflight 多集数正则过度触发等）、changelog；AGENT_EVAL_REPORT/METHOD、TEST_PLAN、DEV_PLAN §20.7 同步。
+
+### 为什么这么做
+
+- preflight 一致性契约是本轮最有价值的发现工具：它扫出 3 条"标注为 plan 但会被确定性正则拦截"的潜伏错误（cmd-036/175 的双集数+修订动词、cmd-192 的 pf 误标）——这类错误在只跑 pf=1 用例的旧 harness 里永远不可见，真实评测时才会爆。
+- 多轮覆盖不造新机制：生产里对话历史已经通过 project_context 的"最近消息"进入 Planner，评测只需按同一格式注入，避免评测路径与生产路径分叉。
+- 合并分布用精确相等而非下限断言：§7.2 的表格是构成合同，"接近即可"会让后续增删用例时静默漂移；交叉覆盖才用下限（允许同 case 计入多维）。
+- 盲测集与 Prompt 的逐字比对只做确定性部分（去空白归一化子串）；"近似重复"留给人工复核纪律——机器检查假装能测语义近似反而是假安全。
+
+### 修改文件
+
+- `backend/tests/evals/agent_commands.json`（240 条，v4）
+- `backend/tests/evals/agent_commands_holdout.json`（新增，120 条）
+- `backend/tests/evals/test_agent_command_eval.py`（契约 + 真实评测升级）
+- `backend/tests/evals/README.md`（新增）
+- `docs/AGENT_EVAL_REPORT.md`、`docs/AGENT_EVAL_METHOD.md`、`docs/TEST_PLAN.md`、`docs/DEV_PLAN.md`、`docs/DEV_LOG.md`
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python -m pytest tests/evals/test_agent_command_eval.py -q` | 通过（契约 12 + preflight + 评分器 14；1 skipped=结果新鲜度） |
+| `python -m pytest`（全量后端） | 通过 |
+| `ruff check` / `ruff format` / `mypy`（evals） | 通过 |
+| 合并分布 / 交叉覆盖 / ID 唯一 | 360 条精确匹配 §7.2；全部下限达标；ID 全局唯一 |
+
+### 学到了什么
+
+数据集的"尺子"和模型一样会撒谎：65→360 的扩充过程中，最大的工作量不是写句子，而是让每条标注与确定性 preflight 的真实行为一致——标注者以为的语义边界和正则实际匹配的边界是两回事（"改大纲同时改第3集剧本"里的裸"改"不命中修订词表）。给标注加机器一致性检查（preflight_consistency）比加更多标注规范文档有效。
+
+---
+
+## IR-1 意图识别优化：修正评测尺子（2026-09-18）
+
+**任务 ID：** IR-1（Phase IR，见 `docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md` §6）
+**状态：** DONE
+**日期：** 2026-09-18
+
+### 做了什么
+
+1. `backend/tests/evals/agent_commands.json` 升级 dataset v3（65 → 88 条）：
+   - 6 条旧 `plan/explain`（cmd-011~016）按 Prompt v1.4 重标——正文/设定/大纲解释 → `answer + intent=explain + target`，项目状态问题（cmd-013/015）→ `answer` 不带 intent；
+   - 新增 21 条 continue 基础集（14 条 plan：写 1/2/3/5/10 集、下一集/下一批/全部剩余、大纲门确认后开写；5 条白名单无 continue 必须澄清；2 条复合表达澄清），与短路层 `下一批→batch 1` 等生产语义对齐；
+   - 新增 2 条"文本明确第 3 集 vs 页面在第 2 集"冲突用例（明确目标优先）；
+   - 每条新增 `split`/`target_type`/`batch_size`/`risk`/`coverage` 标注（§4.1 合同）。
+2. 新增纯函数评分器 `backend/tests/evals/command_scorer.py`：先 turn_type 再 intent 再 target 再 batch 分层评分；intent micro/macro P/R/F1；澄清 precision/recall；target_type/明确集数/上下文集数/batch 分列准确率；§4.3 互斥失败主类（provider/truncated/invalid/turn/intent/target_type/episode/batch/应澄清却执行[仅限预测为可执行 plan，answer 归 turn_type 错误]/过度澄清）；§3.3 发版门槛表（12 项；发版判定中 fail 与 no_data 均阻断——门槛是发布合同，"没测到"≠"达标"）。
+3. 重写 harness `test_agent_command_eval.py`：数据集契约改为 v1.4 语义校验（plan 禁带 explain、answer intent ∈ {None, explain}、字段依赖合法性、continue ≥20、结果文件新鲜度）；评分器单测以伪造输出验证"intent 对但集数错 → episode 门槛失败""continue 对但 batch 错 → batch 门槛失败""answer/explain 记 TP"等验收点；真实评测默认发版模式（任一门槛 fail 即断言失败），`EVAL_REPORT_ONLY=1` 只产报告；报告写入 dataset 版本/git commit/Prompt 版本/模型/provider/起止时间/重复次数。
+4. v1.3 旧真实评测结果（60 条、Prompt v1.3）归档至 `tests/evals/results/archive/`，消除"报告 60 条 vs 数据 65 条 vs Prompt v1.4"三方漂移（P0-5）。
+5. 文档同步：`AGENT_EVAL_REPORT.md`（资产表、CI 结果、v1.4 真实评测标注未执行+原因、历史结果降级为归档参考）、`AGENT_EVAL_METHOD.md`（60→88 条、六意图联合契约）、`TEST_PLAN.md` §11.1、`DEV_PLAN.md` §20.7 Phase IR 登记。
+
+### 为什么这么做
+
+- 旧 harness 把 `answer/explain` 判失败、不比较集数与批次，等于用 v1.3 的尺子量 v1.4 的契约——先修尺子再谈数据与路由（IR-2/IR-3 都依赖本阶段指标口径）。
+- 评分逻辑抽成纯函数模块而非散在 pytest 里：单测可用伪造输出精确验证每个指标与门槛行为（不依赖模型），真实 harness 只做编排，两层同一口径。
+- 项目状态类 answer 若带 `intent=explain` 会触发服务端读原文路径，属于语义分支错误而非风格差异，因此评分器对"期望无 intent"的 case 也严格比较 intent。
+- 旧结果归档而非删除：保留 v1.3 基线供趋势对比，同时用新鲜度契约保证它不可能冒充当前 Prompt 的结果。
+
+### 修改文件
+
+- `backend/tests/evals/agent_commands.json`（重写，dataset v3）
+- `backend/tests/evals/command_scorer.py`（新增）
+- `backend/tests/evals/test_agent_command_eval.py`（重写）
+- `backend/tests/evals/results/agent_commands_results.json` → `results/archive/agent_commands_results_prompt-v1.3_2026-09-07.json`（归档）
+- `docs/AGENT_EVAL_REPORT.md`、`docs/AGENT_EVAL_METHOD.md`、`docs/TEST_PLAN.md`、`docs/DEV_PLAN.md`、`docs/DEV_LOG.md`
+
+### 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python -m pytest tests/evals/test_agent_command_eval.py tests/unit/skills/test_agent_command_planner.py tests/contract/test_agent_command_schemas.py -q` | 通过（42 passed，1 skipped=结果文件新鲜度[无真实结果文件时正确跳过]） |
+| `ruff check` + `ruff format --check`（evals 两文件） | 通过 |
+| `mypy tests/evals/command_scorer.py` | 通过 |
+| 默认 CI 零真实模型调用 | ✅（eval_real 默认被 addopts 排除；preflight 用 explode 桩证明） |
+
+### 学到了什么
+
+评测尺子本身也需要契约测试：数据集语义、结果文件与 Prompt 版本三者的一致性若没有机器守护，会在下一次 Prompt 升级时再次静默漂移。"评分器必须先用伪造结果证明自己会失败"——如果一个指标在任何输入下都不会变红，它就没有监控行为。
+
+Code review 抓到两个真实缺陷：(1) 首次提交只包含了显式 `git add` 的文件，`git mv` 预暂存的归档外其余改动全部遗留在工作区——提交前必须核对 `git show --stat` 与提交信息一致；(2) 发版门槛对缺数据类别放行（no_data 不阻断）看似宽容实为漏洞：continue precision 是 §3.3 发布合同，数据集缺该类样本时应该阻断而不是默认通过。
+
+---
+
 ## Memory 系统设计与实施计划（2026-09-18）
 
 ### 做了什么
@@ -4680,3 +4845,102 @@ Phase L（分阶段创作与集数自由）全部完成。用户完整旅程：�
 1. **调一个资源参数前先算另一道的账**：tokens ÷ 实测生成速度 = 最小耗时，超过 timeout 就是结构性失败；两道闸门的约束要一起解，否则修复只是把失败换了一种形态。
 2. **静默的 except 是对话系统的谎言温床**：连续两轮事故（吞终态/吞回写）都栽在"失败路径上的失败无人知晓"；失败路径上的每个动作要么成功、要么大声失败，没有第三种选择。
 3. **存量数据自愈靠 reconciliation 入口**：新逻辑上线后，旧的僵死 Action 不需要手工修数——只要查询入口会触发补写，坏数据在第一次被看见时就修复；设计补写入口比写数据修复脚本更值。
+
+
+## 2026-09-18 Phase M（Memory 改造 M-01～M-05）
+
+### 做了什么
+
+按 [MEMORY_IMPLEMENTATION_PLAN.md](MEMORY_IMPLEMENTATION_PLAN.md) 一次一张卡交付：
+
+1. **M-01 评测基线**：先建尺子再动生产——对话 32 组（8 题材×24/48/96/192）、
+   剧情 10 组×10 集 typed delta 真值；四消融组（none/recent/current/structured）
+   四层评分（写入/召回/使用/成本）全部确定性。基线证实了设计文档的判断：
+   分段摘要只读最新一段，96 条消息后约束召回坍缩为 0；标题摘要路径不含
+   角色知识、伏笔从不回收。
+2. **M-02 对话链路**：三个消息入口原本各自构造 MessageService（主入口
+   /agent/turns 无摘要挂载——生产探针写进报告）；统一 wiring 工厂后全部
+   挂载。累计摘要 v2 用上一版+新区间滚动，v1 作迁移种子不改旧件；摘要调度
+   移出消息事务（fire-and-forget + 独立短事务 + 可见性等待），响应耗时不含
+   摘要 LLM。
+3. **M-03 剧情证据**：typed delta 只让 LLM 输出增量（无确认/来源字段），
+   服务端校验引用（未知角色/不存在事实 fail closed）、分配稳定 ID、纯
+   reducer 全量重建校验；正文与派生两个提交点，input_hash 幂等（同输入
+   重试零模型调用），迁移 0013 加 v2 部分唯一索引兜底并发。
+4. **M-04 统一读取**：Writer 进集前按 Run 工作集读 through=N-1 确切前态，
+   写后即派生；一次 5 集与 1+1+3 分批的每集 Writer 前态投影逐字一致，
+   重启（仅 DB）续写知识/伏笔不丢。采用变化自最早变化集起 stale，前缀
+   复用零重算；GET story-state 只读且零模型调用（模型调用即测试失败）。
+5. **M-05 可见性**：StoryStatePanel 以作者语言分账展示（作者事实带来源
+   跳转/角色已知/未发生计划），stale/pending 提供恢复入口；不暴露
+   "嵌入/摘要任务/Memory job"。
+
+### 验证
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest（后端全量） | 全绿 |
+| ruff / mypy（后端） | 通过 |
+| pnpm lint / tsc / vitest（前端） | 通过（228 例） |
+| alembic upgrade/downgrade 0013 | 通过 |
+| evaluate_memory.py --provider fake | 报告+JSON 产出，structured 组全门槛达标 |
+
+### 学到了什么
+
+1. **先建尺子再改秤**：M-01 的四消融组让 M-02/M-03 的每一步都能对着门槛
+   验证；"当前实现"组把生产语义复刻进 harness，缺口（96 条后召回 0）成为
+   修复的硬验收。
+2. **fire-and-forget 任务必须与测试清理和解**：后台摘要任务持有独立会话，
+   与逐测试截表竞争曾导致随机 ConnectionError——clean_db 先排空后台任务、
+   任务在会话删除时放弃,两层兜底后回归稳定。
+3. **幂等键即并发契约**：派生以 (源稿, 前态, Prompt 版本) 哈希为键,重试
+   零模型调用、并发只落一份,不需要分布式锁;唯一索引只是应用层去重的
+   数据库兜底,不是第一道防线。
+4. **"只读"要用测试钉死**:GET story-state 的零模型调用不是靠注释保证,
+   而是 monkeypatch 模型调用即断言失败——契约要变成可执行断言。
+
+
+## 2026-09-19 Phase M 双轴评审修复轮
+
+### 做了什么
+
+code-review(Standards + Spec 双轴)后发现并修复:
+
+1. **真实缺陷**:GET /story-state 默认工作集只扫第 1 集——中途换稿
+   检测不到 stale;`_closest_prefix_mismatch` 取的是"最长链的失配集"
+   而非全局最早失配集。两者均修正(默认扫到项目最大剧本集数)。
+2. **规格缺口**:Reviser 未接 StoryStateService(修订 Run 的
+   continuity_state_text 恒为空)——revise 节点改为与 continuity_check
+   同源加载 through=N-1 前态;加载失败回落空上下文并告警(fail-closed
+   门仍在 continuity_check,Reviser 不因证据链缺口中断)。创作 Run
+   进入时补齐累计摘要缺口(catch_up_project_summaries)。
+3. **收敛**:StoryWorkset.from_script_ids 工厂(三处重复组装合一);
+   GET story-state 不再为只读路径构造 LLM(StoryStateService agent
+   可选);删除与 ContextTooLargeError 一码两类的
+   ProtectedContextTooLargeError;episode_delta_factory 解析失败大声
+   失败;continuity_state_text 回归轻量摘要(checkpoint 膨胀)。
+4. **预算契约**:软上限 34/硬 40(10 集全流程≈33 次调用),DEV_PLAN
+   §2.3 同步。
+5. **测试债**:全部 29 个 mypy 测试错误清零(含 8 处存量);缺失中文
+   docstring 与裸 pytest.raises 补齐;评测模块级执行改 lru_cache。
+6. **e2e 稳定性**:/scripts/[episode] 重定向单次瞬时失败会落到项目
+   首页选错稿——允许一次重试。
+
+### 验证
+
+| 命令 | 结果 |
+| --- | --- |
+| uv run pytest(后端全量) | 全绿 |
+| ruff / mypy(app+tests) | 通过(0 错误) |
+| pnpm lint / tsc / vitest | 通过(228 例) |
+| scripts/e2e.sh REPEAT=5 | 65/65 通过 |
+
+### 学到了什么
+
+1. **同码不同果就是竞态的证据**:一次 stash 前后的 e2e 结果相反,
+   而后端进程根本没重载——先确认"运行的到底是哪份代码"再归因。
+2. **pkill 的模式会匹配自己的命令行**:`pkill -f "next dev"` 杀掉了
+   包含该字面量的宿主 shell,表现为命令无声失败;进程清理要用
+   不自匹配的模式或交给编排脚本。
+3. **二分要连进程一起分**:代码 checkout 而进程未重启的"二分"全部
+   无效;e2e.sh 这类自管生命周期的脚本才是可靠的实验载体。

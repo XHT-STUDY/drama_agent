@@ -75,7 +75,9 @@ async def test_conversation(db_session: Any, test_project: uuid.UUID) -> uuid.UU
 
 @pytest.fixture
 def fake_llm() -> FakeLLM:
-    """注册 conversation_summary 的 FakeLLM。"""
+    """注册 conversation_summary 与 episode_summary_v2 的 FakeLLM。"""
+    from app.llm.fake import episode_delta_factory
+
     llm = FakeLLM(seed=42)
     llm.register(
         "conversation_summary",
@@ -84,6 +86,7 @@ def fake_llm() -> FakeLLM:
             topics=["主角设定", "题材"],
         ),
     )
+    llm.register_factory("episode_summary_v2", episode_delta_factory)
     return llm
 
 

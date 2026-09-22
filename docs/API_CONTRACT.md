@@ -245,7 +245,7 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 
 **Action 生命周期与 Outcome（J-09，W1-04 诚实性版）**：确认后的 Run config 携带 `agent_action_id`，Dispatcher 在 Run 状态变化时同步 Action（queued→running→终态）。Run 终态后回写 `result`（AgentOutcome：`goal_status=achieved|partially_achieved|blocked`、`verification_status=verified|unverified`、`constraint_checks`（逐条创作要求 `{constraint, status: satisfied|unsatisfied|unverified, reason, evidence_refs}`）、`evidence_artifact_ids`、`evidence_refs`（带角色的本轮证据锚点：source_script/script/outline/evaluation/…）、`score_delta`、`remaining_constraints`、可空 `recommended_next_action`）并向会话追加 `action_result` 消息（metadata 同步 verification_status/constraint_checks）。**诚实性契约（W1-04）**：阶段一无"读正文比对要求"的可复核检查，自然语言创作要求一律如实标 `unverified` 交作者判断——执行完成、评分上涨、Schema 合法都不自动视为满足；语义未验证映射 `partially_achieved`，unverified 不混入 `remaining_constraints`（"未完成"只留给已知确定性失败）；单纯 unverified 不触发后续修订计划；旧结果反序列化默认 `unverified`（历史行无逐项核验记录，不自称已验证）。部分达成且深度 0 时创建 `parent_action_id`/`replan_depth=1` 的 proposed 子 Action 与 `action_plan` 消息（只展示等待确认，不自动建 Run）。Worker 崩溃后 GET Action 自动 reconciliation 补写（幂等，不重复消息/子提案）。新增 SSE 事件 `agent_action.updated`（payload 含 `agent_action_id`、`status`、`goal_status`），现有消费者忽略新字段仍兼容。
 
-**revise_script 计划（J-06）**：目标由服务端解析——目标集的最新 valid 剧本（Planner 不提供 UUID），来源快照含 checksum；目标集无有效剧本时 Turn→`failed`（404 `SCRIPT_NOT_FOUND` 语义，经 Turn `error_code` 返回）。Run options 携带 `source_script_artifact_id` / `episode_number` / `user_constraints`。
+**revise_script 计划（J-06）**：目标由服务端解析——目标集的最新 valid 剧本（Planner 不提供 UUID），来源快照含 checksum；目标集无有效剧本时 Turn→`failed`（404 `SCRIPT_NOT_FOUND` 语义，经 Turn `error_code` 返回）。Run options 携带 `source_script_artifact_id` / `episode_number` / `user_constraints` / `user_request`（IR-3 §8.3：用户原始请求=完整授权边界，结构化约束=索引；修订指令由两者组合而成，旧 Run 缺省 null）。**目标一致性（IR-3 §8.2）**：Planner 输出后服务端按 文本明确目标 > 活动上下文 > 模型推断 解析最终目标——集数分歧规范化为文本集数（记录 disagreement），点名大纲/设定却要改剧本时转澄清不生成 Action。
 
 **Wave 2 已知限制**：Planner 白名单开放 `create_script | explain | evaluate | revise_script | revise_outline`（J-06/J-08 起，M3 完成）+ 动态 `continue`（有门上 Run 时）；单集 evaluate 的 `episode_number` 进入计划与来源快照，但当前 Run 仍评估项目全部剧本。
 
@@ -309,7 +309,7 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 |------|------|------|------|
 | `action` | string | 是 | `create_script` / `evaluate` / `revise` / `revise_script` / `revise_outline` / `platform_smoke` / `import` / `export` |
 | `agent_action_id` | string | - | Run 响应字段：由 Agent 确认创建的 Run 携带触发它的 AgentAction ID（普通 Run 为 null，J-12） |
-| `options` | object | `create_script` 时必需 | 创作选项；`revise_script` 时含 `source_script_artifact_id` / `episode_number` / `user_constraints`；`revise_outline` 时含 `source_outline_artifact_id` / `user_constraints` |
+| `options` | object | `create_script` 时必需 | 创作选项；`revise_script` 时含 `source_script_artifact_id` / `episode_number` / `user_constraints` / `user_request`（可空）；`revise_outline` 时含 `source_outline_artifact_id` / `user_constraints` / `user_request`（可空） |
 | `options.user_input` | string (1-10000) | 是 | 用户创作的 Idea/Outline |
 | `options.source_type` | string | 否 | 默认 `"idea"` |
 | `options.outline_count` | int (1-100) | 否 | 默认 10 |
@@ -602,6 +602,36 @@ F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
 | 403 | `CROSS_PROJECT_ACCESS` | artifact 不属于给定 project_id |
 | 404 | `EXPORT_FILE_MISSING` | Artifact 不存在 / 非 export_file / 存储文件已丢失 |
 
+## GET /projects/{id}/story-state — 剧情状态只读查询（M-04/M-05）
+
+解析剧情连续性状态相对某工作集的就绪度。**只读**：不调用模型、不触发派生；
+显式刷新由继续创作 Run 完成，不在 GET 中执行。
+
+### 请求
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `through_episode` | int | 否 | 目标集数（1-200）；缺省取工作集内最大集数 |
+| `run_id` | UUID | 否 | 指定 Run 的冻结工作集；缺省用当前采用集合（各集最新 valid 剧本） |
+
+### 响应（200）
+
+| 字段 | 说明 |
+|------|------|
+| `status` | `ready`（链头覆盖到请求）/ `pending`（派生落后）/ `stale`（采用变化，后缀待复核）/ `gap`（有集缺正文）/ `missing`（尚无链） |
+| `through_episode` | 链头已覆盖集数 |
+| `stale_from_episode` | stale 时最早待复核集数 |
+| `missing_episodes` | gap 时缺失正文的集数列表 |
+| `state_artifact_id` / `basis` | 链头 Artifact 与工作集引用（StoryBible/大纲/各集剧本/单集证据） |
+| `projection` | 面板分账视图：作者事实（带来源 Artifact+场次）、角色已知信息、未闭合/已回收伏笔、道具归属、作者未来计划（未发生）、锁定事实 |
+| `warnings` | 人类可读提示 |
+
+### 错误码
+
+| 状态码 | code | 含义 |
+|--------|------|------|
+| 404 | `PROJECT_NOT_FOUND` / `RUN_NOT_FOUND` / `ARTIFACT_NOT_FOUND` | 项目 / Run / StoryBible·大纲缺失 |
+
 ## Artifact 类型
 
 | Type | 说明 | 集数 |
@@ -610,10 +640,11 @@ F-06：通过 HTTP 暴露修订闭环。返回 **202 + Run**，进度经
 | `story_bible` | StoryBible | — |
 | `episode_outline_set` | 10 集分集大纲 | — |
 | `script_draft` | 单集剧本 | 1-3 |
-| `continuity_state` | 连续性状态 | — |
 | `evaluation_report` | 评估报告（绑定被评估剧本版本） | 1-3 |
 | `revision_plan` | 修订计划（引用原稿 / 评估 / 锁定事实） | 1-3 |
 | `continuity_check` | 修订稿连续性检查结果 | 1-3 |
-| `conversation_summary` | 会话滚动摘要（G-01，消息数达阈值触发） | — |
+| `conversation_summary` | 会话累计摘要（G-01；M-02 起 v2 累计语义，content_schema_version=2.0） | — |
+| `episode_summary` | 单集剧情证据（M-03，typed delta + 源稿绑定，content_schema_version=2.0） | 1-N |
+| `continuity_state` | 连续性状态（M-03/M-04 起 v2 绑定工作集；v1 兼容可读） | — |
 | `import_classification` | 导入分类结果（G-04，`content_type` + 路由依据） | — |
 | `export_file` | 导出文件元数据（G-05/G-06，`storage_key` 指向 FileStore） | — |

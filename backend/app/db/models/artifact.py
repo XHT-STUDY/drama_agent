@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +36,19 @@ class Artifact(Base, UUIDMixin):
         ),
         CheckConstraint("version > 0", name="ck_artifacts_version_positive"),
         CheckConstraint("episode_number >= 1", name="ck_artifacts_episode_positive"),
+        # M-03(迁移 0013):v2 剧情派生证据以
+        # (project, type, episode, input_hash) 幂等;只约束 v2 记录,
+        # 历史 v1(input_hash 空或 schema 1.0)不受影响。
+        Index(
+            "uq_story_state_v2_dedup",
+            "project_id", "type", "episode_number", "input_hash",
+            unique=True,
+            postgresql_where=text(
+                "type IN ('episode_summary', 'continuity_state') "
+                "AND content_schema_version = '2.0' "
+                "AND input_hash IS NOT NULL"
+            ),
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(

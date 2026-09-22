@@ -1,12 +1,19 @@
-"""write_episode 节点 — 按集顺序生成剧本 (C-07 / G-02).
+"""write_episode 节点 — 按集顺序生成剧本 (C-07 / G-02 / M-04 W3-03).
 
-G-02 集成：改用 ContextBuilder.build_for("writer", ...) 按预算组装创作上下文，
-previous_summary_continuity 段 = 会话摘要（中期记忆）+ ContinuityManager 连续性，
-满足「多轮会话继续生成能读取摘要」的 Exit Gate。
+M-04 契约(docs/MEMORY_IMPLEMENTATION_PLAN.md §6):
+- 进入第 N 集前经 StoryStateService 加载 through=N-1 的确切前态
+  (按 Run 工作集:StoryBible/大纲/既有各集剧本 Artifact);
+- 已有剧本只跳过正文生成,不跳过派生证据完整性检查;
+- 每集正文保存后立即派生(单集证据 + 新状态);派生失败保留正文,
+  记录 derivation_pending_episode,Run 失败待 retry 只补派生;
+- Writer 上下文使用 v2 结构化状态投影(作者事实/角色知识/伏笔/道具
+  /时间线/锁定事实/作者计划分账),会话记忆为 M-02 有界合并;
+- 一次写 5 集与分批续写(1+1+3)使用同一前态语义——前缀证据复用。
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json as _json
 import logging
 import uuid
@@ -16,16 +23,21 @@ from langgraph.config import get_config
 
 from app.agents.base import BaseAgent
 from app.application.artifact_service import ArtifactService
+from app.application.story_state_service import (
+    DerivationOutcome,
+    StoryStateService,
+    StoryWorkset,
+)
 from app.core.config import load_settings
 from app.domain.context import TaskKind
-from app.domain.continuity import EpisodeSummary as EpSummary
+from app.domain.continuity import ContinuityState
 from app.domain.outline import EpisodeOutlineSet
 from app.domain.script import EpisodeWriterInput
 from app.domain.story_bible import StoryBible
 from app.events.publisher import EventPublisher
 from app.memory.context_builder import ContextBuilder
 from app.memory.continuity import ContinuityManager
-from app.memory.summary import latest_project_summary_text
+from app.memory.summary import catch_up_project_summaries, latest_project_summary_text
 from app.prompts.loader import PromptLoader
 from app.skills.episode_writer import EpisodeWriterSkill
 from app.workflows.checkpoint import node_failure, raise_if_cancelled
@@ -40,7 +52,7 @@ def _ctx() -> dict[str, Any]:
 
 
 async def write_episodes_node(state: CreationState) -> dict[str, Any]:
-    """按 1..3 顺序撰写各集剧本草稿。"""
+    """按 1..N 顺序撰写各集剧本草稿,并逐集推进剧情证据链。"""
     ctx = _ctx()
     db = ctx["db"]
     agent: BaseAgent = ctx["agent"]
@@ -67,17 +79,38 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
     outline_set = EpisodeOutlineSet.model_validate(outline_artifact.content)
     outline_aid = outline_artifact.id
 
-    continuity_mgr = ContinuityManager()
-    continuity_state = continuity_mgr.create_initial_state(story_bible)
+    character_names = {
+        ch["character_id"]: ch["name"]
+        for ch in [
+            story_bible.protagonist.model_dump(),
+            story_bible.antagonist.model_dump(),
+            *(c.model_dump() for c in story_bible.supporting_characters),
+        ]
+    }
 
     existing_scripts: dict[str, str] = state.get("script_artifact_ids", {})
     start_ep = state.get("current_episode", 1)
     completed_scripts: dict[str, str] = {}
+    derivation_pending: int | None = None
 
     # 从 workflow config 读取 script_count（兼容旧 config 无此字段）
     script_count = ctx.get("script_count", _MVP_DEFAULT_SCRIPT_COUNT)
     if script_count < 1:
         script_count = _MVP_DEFAULT_SCRIPT_COUNT
+
+    # M-04:冻结本次 Run 的作品工作集(既有各集剧本 → 确切前态链)
+    state_service = StoryStateService(agent)
+    workset = StoryWorkset.from_script_ids(
+        project_id=project_id,
+        story_bible_artifact_id=sb_artifact.id,
+        outline_artifact_id=outline_artifact.id,
+        script_artifact_ids=dict(existing_scripts),
+    )
+
+    # M-02:创作 Run 进入时补齐累计摘要缺口(后台 best-effort 失败的
+    # 掩护;属于后台创作过程,允许等待,不占消息提交延迟)
+    await catch_up_project_summaries(db, project_id, agent=agent)
+
     logger.info(
         "开始撰写剧本: 从第 %d 集到第 %d 集 (共 %d 集)",
         start_ep, script_count, script_count - start_ep + 1,
@@ -95,13 +128,36 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
     )
     progress("write_episodes", "started", 0.40)
 
+    # except 分支引用的结果字段先初始化(失败可发生在任何阶段)
+    summary_ids: dict[str, str] = {}
+    state_artifact_id: str | None = None
+
     try:
         skill = EpisodeWriterSkill()
         prompt_version = prompt_loader.get("write_episode").version
+        # 1) 已有集:只补派生证据完整性,不重新生成正文(W3-03)
+        pre_outcome: DerivationOutcome | None = None
+        if workset.scripts:
+            pre_outcome = await state_service.ensure_state_through(
+                db, workset, max(workset.scripts)
+            )
+            summary_ids = {
+                str(n): aid for n, aid in
+                pre_outcome.episode_summary_artifact_ids.items()
+            }
+            for n in sorted(workset.scripts):
+                completed_scripts[str(n)] = existing_scripts[str(n)]
+
+        current_state: ContinuityState | None = None
+        if pre_outcome is not None:
+            current_state = pre_outcome.state
+            state_artifact_id = pre_outcome.state_artifact_id
+        else:
+            initial = await state_service.ensure_state_through(db, workset, 0)
+            current_state = initial.state
 
         for ep_num in range(start_ep, script_count + 1):
             if str(ep_num) in existing_scripts:
-                completed_scripts[str(ep_num)] = existing_scripts[str(ep_num)]
                 continue
 
             # 多 Artifact 循环内的取消守卫：本集 Artifact 写入前检查
@@ -111,14 +167,18 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             if episode_outline is None:
                 raise ValueError(f"大纲中未找到第 {ep_num} 集")
 
-            continuity_text = continuity_mgr.get_context_for_episode(continuity_state, ep_num)
+            # ---- v2 前态投影(through=ep_num-1;不含本集候选稿) ----
+            continuity_text = ContinuityManager.get_context_for_episode_v2(
+                current_state, ep_num, character_names=character_names
+            )
             previous_summary = ""
             if ep_num > 1:
-                prev = [s for s in continuity_state.episode_summaries if s.episode_number == ep_num - 1]
+                prev = [s for s in current_state.episode_summaries
+                        if s.episode_number == ep_num - 1]
                 if prev:
                     previous_summary = prev[0].summary
 
-            # ---- G-02 集成点：旧会话优先摘要（中期记忆进创作上下文） ----
+            # ---- M-02:会话记忆有界合并(中期记忆进创作上下文) ----
             conversation_summary = await latest_project_summary_text(
                 db, artifact_svc, project_id
             )
@@ -147,7 +207,7 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                 current_target=_json.dumps(episode_outline, ensure_ascii=False),
             )
             logger.info(
-                "G-02 第 %d 集上下文组装: task=%s used=%s cut=%s rag_chunks=%d",
+                "第 %d 集上下文组装: task=%s used=%s cut=%s rag_chunks=%d",
                 ep_num, context_manifest.task,
                 context_manifest.sections_used, context_manifest.sections_cut,
                 len(context_manifest.rag_chunk_ids),
@@ -159,9 +219,7 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                 story_bible=story_bible.model_dump(),
                 previous_summary=previous_summary,
                 continuity_state=continuity_text,
-                # D-05: 优先消费本阶段检索结果，缺失时回退合并上下文（向后兼容）
                 rag_context=rag_context,
-                # G-02: ContextBuilder 组装的完整创作上下文
                 assembled_context=assembled_context,
             )
 
@@ -172,13 +230,8 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             })
             logger.info("第 %d 集 LLM 生成完成，开始后处理…", ep_num)
 
-            # 1. 序列化
-            logger.debug("第 %d 集: model_dump…", ep_num)
+            # 1. 序列化 + 持久化正文(提交点一:正文先行,派生失败不回滚)
             content = draft.model_dump(mode="json")
-            logger.debug("第 %d 集: model_dump 完成 (%d 字段)", ep_num, len(content))
-
-            # 2. 持久化 Artifact
-            logger.info("第 %d 集: 存入 Artifact…", ep_num)
             artifact = await artifact_svc.create_validated_artifact(
                 db, project_id=project_id, artifact_type="script_draft",
                 episode_number=ep_num, content=content, prompt_version=prompt_version,
@@ -195,33 +248,52 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
                     },
                 ],
             )
-            logger.info("第 %d 集: Artifact 已保存 (id=%s)", ep_num, str(artifact.id)[:12])
             completed_scripts[str(ep_num)] = str(artifact.id)
-
-            ep_summary = EpSummary(
-                episode_number=ep_num,
-                summary=f"第 {ep_num} 集完成: {draft.title}",
-                key_events=[s.action[:30] for s in draft.scenes[:3]],
-                ending_state=draft.ending_hook[:50],
+            workset = dataclasses.replace(
+                workset, scripts={**workset.scripts, ep_num: artifact.id}
             )
-            continuity_state = continuity_mgr.update_after_episode(continuity_state, ep_summary)
+
+            # 2. 派生证据(提交点二:失败保留正文,记录待补集号)
+            try:
+                outcome = await state_service.ensure_state_through(
+                    db, workset, ep_num
+                )
+                current_state = outcome.state
+                state_artifact_id = outcome.state_artifact_id
+                summary_ids = {
+                    str(n): aid
+                    for n, aid in outcome.episode_summary_artifact_ids.items()
+                }
+            except Exception as deriv_error:  # noqa: BLE001 — 分账保留正文
+                logger.error(
+                    "第 %d 集派生失败,正文已保留(derivation_pending): %s",
+                    ep_num, deriv_error,
+                )
+                derivation_pending = ep_num
+                raise
 
             # 3. 发布事件 + 提交
-            logger.info("第 %d 集: 发布 artifact.created 事件…", ep_num)
+            ep_progress = min(1.0, 0.40 + ep_num * 0.15)
             await publisher.publish(
                 db, run_id=run_id, event_type="artifact.created",
                 payload={
                     "artifact_id": str(artifact.id), "artifact_type": "script_draft",
                     "episode": ep_num, "version": artifact.version,
-                    "progress": 0.40 + ep_num * 0.15,
+                    "progress": ep_progress,
                     "message": f"第 {ep_num} 集剧本已完成",
                 },
                 autocommit=True,
             )
-            logger.info("第 %d 集: 事件已发布", ep_num)
-            progress("write_episodes", f"ep_{ep_num}_done", 0.40 + ep_num * 0.15)
+            progress("write_episodes", f"ep_{ep_num}_done", ep_progress)
 
-        continuity_text = continuity_mgr.get_context_for_episode(continuity_state, script_count + 1)
+        # 旧字段仅旧执行语义兼容;v2 读取走 continuity_state_artifact_id,
+        # 此处存轻量摘要避免 checkpoint 膨胀(DEV_PLAN §2.2)
+        continuity_text = (
+            f"剧情状态:截至第 {current_state.through_episode} 集,"
+            f"事实 {len(current_state.facts)} 条,"
+            f"未闭合伏笔 {len(current_state.open_loops)} 条,"
+            f"道具 {len(current_state.props)} 件"
+        )
 
         await publisher.publish(
             db, run_id=run_id, event_type="node.completed",
@@ -233,6 +305,9 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
         return {
             "script_artifact_ids": completed_scripts,
             "continuity_state_text": continuity_text,
+            "continuity_state_artifact_id": state_artifact_id,
+            "episode_summary_artifact_ids": summary_ids,
+            "story_state_semantics_version": 2,
             "completed_nodes": state.get("completed_nodes", []) + ["write_episodes"],
             "prompt_versions": {**state.get("prompt_versions", {}), "write_episode": prompt_version},
         }
@@ -243,10 +318,16 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             payload={"node": "write_episodes", "error": str(e)},
             autocommit=True,
         )
+        failure = node_failure("write_episodes", e)
+        if derivation_pending is not None:
+            failure["derivation_pending_episode"] = derivation_pending
         return {
-            **node_failure("write_episodes", e),
+            **failure,
             # 保留已写入的剧本，retry 时不重复调用已完成集
             "script_artifact_ids": completed_scripts,
+            "episode_summary_artifact_ids": summary_ids,
+            "continuity_state_artifact_id": state_artifact_id,
+            "story_state_semantics_version": 2,
         }
 
 

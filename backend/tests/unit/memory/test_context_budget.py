@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from app.core.errors import RequiredContextMissingError
 from app.domain.context import (
     CharacterRatioEstimator,
     ContextSection,
@@ -57,6 +58,7 @@ class TestTaskPolicies:
         builder = ContextBuilder(budget_tokens=2000)
         sections = _make_sections()
 
+        sections["current_target"] = "第 1 集大纲"
         _, req_manifest = builder.build_for("requirement", **sections)
         _, wr_manifest = builder.build_for("writer", **sections)
 
@@ -86,13 +88,17 @@ class TestTaskPolicies:
     def test_unknown_task_falls_back_to_writer(self) -> None:
         """未知任务回退 writer 策略（防御），不抛异常。"""
         builder = ContextBuilder(budget_tokens=2000)
-        _, manifest = builder.build_for("bogus_task", **_make_sections())
+        _, manifest = builder.build_for(
+            "bogus_task", **_make_sections(current_target="第 1 集大纲")
+        )
         assert manifest.task == "writer"
 
     def test_legacy_build_is_writer_policy(self) -> None:
         """C-06 build() 入口等价于 writer 策略（G-02 保留）。"""
         builder = ContextBuilder(budget_tokens=2000)
-        _, manifest = builder.build(**_make_sections())
+        _, manifest = builder.build(
+            **_make_sections(current_target="第 1 集大纲")
+        )
         assert manifest.task == "writer"
 
 
@@ -126,19 +132,18 @@ class TestOutputBuffer:
         # 其他段确实被裁剪了（预算确实吃紧）
         assert manifest.sections_truncated
 
-    def test_empty_current_target_ok(self) -> None:
-        """current_target 为空时不影响构建（其他段正常组装）。"""
+    def test_empty_current_target_fails_closed_for_writer(self) -> None:
+        """M-04 起 writer 无 current_target 不再"正常组装"——fail closed。"""
         builder = ContextBuilder(budget_tokens=1000)
-        _, manifest = builder.build_for(
-            "writer", **_make_sections(
-                system_rules="规则", user_request="请求",
-                story_bible_outline="设定",
-                previous_summary_continuity="", rag_fragments="",
-                current_target="",
+        with pytest.raises(RequiredContextMissingError):
+            builder.build_for(
+                "writer", **_make_sections(
+                    system_rules="规则", user_request="请求",
+                    story_bible_outline="设定",
+                    previous_summary_continuity="", rag_fragments="",
+                    current_target="",
+                )
             )
-        )
-        assert "system_rules" in manifest.sections_used
-        assert manifest.estimated_tokens > 0
 
 
 class TestContextTooLarge:
@@ -152,7 +157,7 @@ class TestContextTooLarge:
         with pytest.raises(ContextTooLargeError) as exc_info:
             builder.build_for("writer", **sections)
 
-        assert exc_info.value.code == "CONTEXT_TOO_LARGE"
+        assert exc_info.value.code == "PROTECTED_CONTEXT_TOO_LARGE"
         assert exc_info.value.status_code == 413
 
     def test_just_below_budget_succeeds(self) -> None:
@@ -218,6 +223,7 @@ class TestManifestEstimates:
             system_rules="规则" * 100,
             user_request="请求" * 100,
             story_bible_outline="设定" * 100,
+            current_target="第 1 集大纲" * 5,
         )
         _, manifest = builder.build_for("writer", **sections)
 
@@ -309,7 +315,9 @@ class TestBoundaryBudget:
 
     def test_large_budget_no_truncation(self) -> None:
         builder = ContextBuilder(budget_tokens=100000)
-        _, manifest = builder.build_for("writer", **_make_sections())
+        _, manifest = builder.build_for(
+            "writer", **_make_sections(current_target="第 1 集大纲")
+        )
         assert manifest.sections_truncated == []
         assert manifest.sections_cut == []
         assert manifest.budget_remaining >= 0
@@ -326,3 +334,43 @@ class TestBoundaryBudget:
         assert manifest.budget_remaining == max(
             0, manifest.budget_total - manifest.estimated_tokens
         )
+
+
+# ========================================================================
+# M-04/W3-06:必需段落 fail closed
+# ========================================================================
+
+
+@pytest.mark.unit
+class TestStrictRequiredSections:
+    def test_writer_missing_current_target_error_payload(self) -> None:
+        """错误码与详情字段完整(W3-06 稳定错误码)。"""
+        builder = ContextBuilder(budget_tokens=4000)
+        with pytest.raises(RequiredContextMissingError) as exc_info:
+            builder.build_for(
+                "writer",
+                user_request="写第 2 集",
+                story_bible_outline="设定",
+                current_target="",
+            )
+        assert exc_info.value.code == "REQUIRED_CONTEXT_MISSING"
+        assert "current_target" in exc_info.value.detail
+
+    def test_planner_missing_target_still_warns_only(self) -> None:
+        """规划类任务(REQUIREMENT)无当前目标仍只告警——项目级请求合法。"""
+        builder = ContextBuilder(budget_tokens=4000)
+        _, manifest = builder.build_for(
+            "requirement", user_request="看看项目进度", current_target="",
+        )
+        assert manifest.task == "requirement"
+
+    def test_protected_too_large_error_code(self) -> None:
+        """受保护内容超预算 → PROTECTED_CONTEXT_TOO_LARGE。"""
+        builder = ContextBuilder(budget_tokens=500)
+        with pytest.raises(ContextTooLargeError) as exc_info:
+            builder.build_for(
+                "writer",
+                user_request="写",
+                current_target="超" * 5000,
+            )
+        assert exc_info.value.code == "PROTECTED_CONTEXT_TOO_LARGE"

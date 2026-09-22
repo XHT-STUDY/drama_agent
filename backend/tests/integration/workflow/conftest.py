@@ -47,6 +47,10 @@ def fake_llm() -> FakeLLM:
     llm.register("outline", EpisodeOutlineSet.model_validate(_load_golden("outline_set_valid")))
     script_draft = ScriptDraft.model_validate(_load_golden("script_draft_valid"))
     llm.register("write_episode", script_draft)
+    # M-03/M-04:单集 typed delta 派生内容感知桩
+    from app.llm.fake import episode_delta_factory
+
+    llm.register_factory("episode_summary_v2", episode_delta_factory)
     # 评估 fixture：高分 golden（服务端回填 need_revision=False → creation 走 finalize）
     llm.register("evaluate_episode", EvaluationReport.model_validate(_load_golden("evaluation_report_valid")))
     # 修订分支 fixtures（F-05）：默认走"通过"语义（连续性 pass）

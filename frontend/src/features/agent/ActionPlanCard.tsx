@@ -292,6 +292,13 @@ export function ActionPlanCard({
         </div>
       )}
 
+      {plan.user_request && (
+        <div className="mt-2 text-xs text-[var(--text-muted)]" data-testid="plan-user-request">
+          原始请求：{plan.user_request}
+          {/* IR-3 §8.3：确认前可对照原文发现遗漏的约束 */}
+        </div>
+      )}
+
       <ol className="mt-3 space-y-1 text-xs text-[var(--text)]" data-testid="plan-steps">
         {plan.steps.map((step, i) => (
           <li key={step.step_id} className="flex gap-2">

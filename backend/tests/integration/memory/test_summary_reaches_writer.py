@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -91,13 +92,26 @@ class TestSummaryReachesWriter:
             ScriptDraft.model_validate(_load_golden("script_draft_valid")),
         )
 
-        # 1) 多轮对话超阈值 → 生成会话摘要（真实 MessageService 链路）
+        # 1) 多轮对话超阈值 → 调度累计摘要(M-02:调度移出消息响应路径,
+        #    本测试用同步内联调度器保证确定性)
         manager = ConversationSummaryManager(
             agent, prompt_loader, artifact_service, threshold=3, window=1
         )
+        scheduled: list[asyncio.Task[object]] = []
+
+        def inline_scheduler(conversation_id: object, count: int) -> None:
+            scheduled.append(
+                asyncio.get_running_loop().create_task(
+                    manager.maybe_summarize(
+                        db_session, conversation_id,  # type: ignore[arg-type]
+                        message_count=count,
+                    )
+                )
+            )
+
         svc = MessageService(
             short_term_store=InMemoryShortTermStore(keep_count=12),
-            summary_manager=manager,
+            summary_scheduler=inline_scheduler,
         )
         for seq, content in enumerate(
             ["我们想做一个足球少年逆袭的短剧。",
@@ -110,6 +124,7 @@ class TestSummaryReachesWriter:
                 MessageCreate(role="user", content=content),
             )
             assert resp.sequence == seq
+        await asyncio.gather(*scheduled)
         await db_session.flush()
 
         # 摘要已落库且属于本项目

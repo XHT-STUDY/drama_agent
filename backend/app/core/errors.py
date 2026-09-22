@@ -100,6 +100,27 @@ class InvalidActiveContextError(AppError):
     code = "INVALID_ACTIVE_CONTEXT"
 
 
+class StoryStateGapError(AppError):
+    """必需剧情状态缺失(缺正文/前态),停止依赖生成(422)。"""
+
+    status_code = 422
+    code = "STORY_STATE_GAP"
+
+
+class StoryStateStaleError(AppError):
+    """剧情状态相对当前采用工作集过期,需刷新后再生成(409)。"""
+
+    status_code = 409
+    code = "STORY_STATE_STALE"
+
+
+class RequiredContextMissingError(AppError):
+    """必需上下文来源缺失/跨项目/版本不匹配(422)。"""
+
+    status_code = 422
+    code = "REQUIRED_CONTEXT_MISSING"
+
+
 class AgentStateTransitionError(AppError):
     """AgentTurn 或 AgentAction 状态迁移不合法（409）。"""
 

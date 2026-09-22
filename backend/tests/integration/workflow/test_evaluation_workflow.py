@@ -186,3 +186,75 @@ class TestEvaluationWorkflow:
             report = await artifact_service.get_version(db, eval_aid)
             assert report.episode_number == int(ep)
             assert report.content["script_artifact_id"] == sid
+
+
+@pytest.mark.workflow
+@pytest.mark.asyncio
+class TestEvaluationScopeContractIR4:
+    """IR-4 §9.2：单集评估执行范围契约——Run state 与评估报告只有该集。"""
+
+    async def test_episode_scope_collects_only_target_episode(
+        self,
+        test_project: uuid.UUID,
+        workflow_config: RunnableConfig,
+        artifact_service: ArtifactService,
+    ) -> None:
+        """项目有 1/2/3 集，scope=episode(3) → 只收集第 3 集。"""
+        from app.application.workflow_dispatcher import collect_evaluation_scripts
+
+        db = workflow_config["configurable"]["db"]
+        await _seed_script(db, artifact_service, test_project, 1)
+        await _seed_script(db, artifact_service, test_project, 2)
+        script_3 = await _seed_script(db, artifact_service, test_project, 3)
+
+        collected = await collect_evaluation_scripts(
+            db, test_project, {"scope": "episode", "episode_number": 3}
+        )
+        assert collected == {3: script_3}
+
+    async def test_episode_scope_missing_script_fails_not_project(
+        self,
+        test_project: uuid.UUID,
+        workflow_config: RunnableConfig,
+        artifact_service: ArtifactService,
+    ) -> None:
+        """指定集不存在 → 明确失败，绝不退化为全项目评估。"""
+        from app.application.workflow_dispatcher import collect_evaluation_scripts
+        from app.core.errors import AppError
+
+        db = workflow_config["configurable"]["db"]
+        await _seed_script(db, artifact_service, test_project, 1)
+
+        with pytest.raises(AppError) as exc_info:
+            await collect_evaluation_scripts(
+                db, test_project, {"scope": "episode", "episode_number": 5}
+            )
+        assert exc_info.value.code == "SCRIPT_NOT_FOUND"
+
+    async def test_episode_scope_requires_episode_number(
+        self,
+        test_project: uuid.UUID,
+        workflow_config: RunnableConfig,
+    ) -> None:
+        from app.application.workflow_dispatcher import collect_evaluation_scripts
+        from app.core.errors import AppError
+
+        db = workflow_config["configurable"]["db"]
+        with pytest.raises(AppError) as exc_info:
+            await collect_evaluation_scripts(db, test_project, {"scope": "episode"})
+        assert exc_info.value.code == "INVALID_EVALUATION_SCOPE"
+
+    async def test_project_scope_collects_all_latest_valid(
+        self,
+        test_project: uuid.UUID,
+        workflow_config: RunnableConfig,
+        artifact_service: ArtifactService,
+    ) -> None:
+        from app.application.workflow_dispatcher import collect_evaluation_scripts
+
+        db = workflow_config["configurable"]["db"]
+        s1 = await _seed_script(db, artifact_service, test_project, 1)
+        s2 = await _seed_script(db, artifact_service, test_project, 2)
+
+        collected = await collect_evaluation_scripts(db, test_project, {"scope": "project"})
+        assert collected == {1: s1, 2: s2}

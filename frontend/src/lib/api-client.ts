@@ -29,6 +29,7 @@ import type {
   RevisionPlanArtifact,
   Run,
   ScriptDiff,
+  StoryStateResponse,
 } from "@/types/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1";
@@ -243,6 +244,24 @@ export const runsApi = {
       method: "POST",
       body: JSON.stringify(body),
     });
+  },
+};
+
+// ============================================================
+// 剧情状态（M-05：只读，不触发任何生成）
+// ============================================================
+
+export const storyStateApi = {
+  /** 解析剧情状态；默认当前采用集合，run_id 为该 Run 的冻结工作集 */
+  get(
+    projectId: string,
+    options?: { throughEpisode?: number; runId?: string },
+  ): Promise<StoryStateResponse> {
+    const params = new URLSearchParams();
+    if (options?.throughEpisode) params.set("through_episode", String(options.throughEpisode));
+    if (options?.runId) params.set("run_id", options.runId);
+    const qs = params.toString();
+    return request(`/projects/${projectId}/story-state${qs ? `?${qs}` : ""}`);
   },
 };
 

@@ -41,7 +41,10 @@ _GOLDEN = Path(__file__).resolve().parents[2] / "golden"
 
 def _load(name: str) -> dict[str, Any]:
     data = json.loads((_GOLDEN / f"{name}.json").read_text(encoding="utf-8"))
-    return data.get("expected_output", data) if isinstance(data, dict) else data
+    if isinstance(data, dict):
+        out: dict[str, Any] = data.get("expected_output", data)
+        return out
+    return {}
 
 
 def _script_content(title: str = "第三集") -> dict[str, Any]:
@@ -513,22 +516,23 @@ class TestExplainTurn:
                 citations=[],
             ),
         )
-        base = {
+        active_context: dict[str, Any] = {
+            "artifact_id": str(arts[0].id),
+            "artifact_type": "script_draft",
+            "episode_number": 3,
+            "scene_number": 1,
+        }
+        base: dict[str, Any] = {
             "content": "这场为什么突然翻脸",
             "idempotency_key": "hash-scene",
-            "active_context": {
-                "artifact_id": str(arts[0].id),
-                "artifact_type": "script_draft",
-                "episode_number": 3,
-                "scene_number": 1,
-            },
+            "active_context": active_context,
         }
         first = await agent_api.post(
             f"/api/v1/projects/{project.id}/agent/turns", json=base
         )
         assert first.status_code in (200, 202), first.text
         second = dict(base)
-        second["active_context"] = {**base["active_context"], "scene_number": 2}
+        second["active_context"] = {**active_context, "scene_number": 2}
         resp = await agent_api.post(
             f"/api/v1/projects/{project.id}/agent/turns", json=second
         )

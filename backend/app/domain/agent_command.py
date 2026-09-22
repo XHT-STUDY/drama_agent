@@ -177,6 +177,9 @@ class ReviseOutlineCommand(BaseModel):
     intent: Literal["revise_outline"] = "revise_outline"
     source_outline_id: UUID
     constraints: list[str] = Field(default_factory=list)
+    # IR-3 §8.3：原始用户请求（完整授权边界）。结构化 constraints 是索引，
+    # 模型遗漏约束时下游仍可从原文恢复；旧计划缺省 None（legacy）。
+    user_request: str | None = Field(default=None, max_length=4000)
 
 
 class ReviseScriptCommand(BaseModel):
@@ -188,6 +191,8 @@ class ReviseScriptCommand(BaseModel):
     source_script_id: UUID
     episode_number: int = Field(..., ge=1)
     constraints: list[str] = Field(default_factory=list)
+    # IR-3 §8.3：原始用户请求（完整授权边界），与 constraints 并行携带
+    user_request: str | None = Field(default=None, max_length=4000)
 
 
 class EvaluateCommand(BaseModel):
@@ -257,6 +262,10 @@ class AgentActionPlan(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     steps: list[ActionStep] = Field(..., min_length=1)
     expected_impact: list[str] = Field(default_factory=list)
+    # IR-3 §8.3：触发本计划的用户原始请求。旧计划缺省 None（legacy plan，
+    # 沿用旧 constraints）；修订类命令同时把原文写入 command.user_request，
+    # 使其可追踪到 Run config 与修订工作流输入。
+    user_request: str | None = Field(default=None, max_length=4000)
 
     @model_validator(mode="after")
     def _intent_matches_command(self) -> AgentActionPlan:

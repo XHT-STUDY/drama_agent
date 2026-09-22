@@ -117,9 +117,7 @@ class TestDeterministicOutcomeEval:
                     ):
                         failures.append(f"{case['id']}: 建议集数不符")
                 if no_next and recommendation is not None:
-                    failures.append(
-                        f"{case['id']}: 期望无建议但得到 {recommendation.intent}"
-                    )
+                    failures.append(f"{case['id']}: 期望无建议但得到 {recommendation.intent}")
 
             # replan_depth 透传（深度上限由 lifecycle 层强制，J-09 集成测试覆盖）
             depth = case["replan_depth"]
@@ -135,7 +133,10 @@ class TestDeterministicOutcomeEval:
             recommendation = AgentOutcomeService._recommended_next_action(evidence)
             if recommendation is not None:
                 assert recommendation.intent in {
-                    "create_script", "evaluate", "revise_script", "revise_outline",
+                    "create_script",
+                    "evaluate",
+                    "revise_script",
+                    "revise_outline",
                 }, case["id"]
 
 
@@ -169,7 +170,7 @@ class TestRealModelOutcomeEval:
             for key, value in dotenv_values(repo_root / ".env").items()
             if value and key.startswith(("LLM_", "RUN_"))
         }
-        settings = Settings(app_env="local", **real)
+        settings = Settings(app_env="local", **cast("dict[str, Any]", real))
         agent = BaseAgent(name="planner", llm=OpenAICompatibleLLM(settings))
         skill = AgentOutcomeEvaluatorSkill()
         loader = PromptLoader()

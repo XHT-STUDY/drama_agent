@@ -127,18 +127,21 @@ class MessageService:
     提供消息的追加和按会话分页查询。
     追加消息时自动分配递增 sequence，并校验跨项目写入保护。
 
-    G-01 挂载点：通过构造注入可选的短期记忆存储与摘要管理器
-    （默认 None 即 no-op，保持既有调用与单测不变）。
+    Memory 挂载(M-02):
+    - short_term_store:短期记忆窗口写入(best effort,失败不阻断消息);
+    - summary_scheduler:消息落库后调度的累计摘要补做(fire-and-forget,
+      消息响应耗时不含摘要 LLM 调用)。所有真实消息入口共享
+      app.memory.wiring.get_message_service() 的同一构造。
     """
 
     def __init__(
         self,
         *,
         short_term_store: Any = None,
-        summary_manager: Any = None,
+        summary_scheduler: Any = None,
     ) -> None:
         self._short_term = short_term_store
-        self._summary = summary_manager
+        self._summary_scheduler = summary_scheduler
 
     async def append(
         self,
@@ -200,8 +203,9 @@ class MessageService:
         if saved is None:
             raise RuntimeError("消息 sequence 分配失败")
 
-        # G-01 记忆挂载：DB 落库后 → 短期记忆写入 → 必要时触发会话摘要。
-        # 均为 best effort——记忆失败绝不阻断消息保存（验收）。
+        # Memory 挂载(M-02):DB 落库后 → 短期记忆写入(best effort)→
+        # 调度累计摘要(fire-and-forget,响应路径不等待摘要 LLM)。
+        # Redis/摘要失败绝不阻断消息保存;摘要缺口由下次触发或创作 Run 补齐。
         if self._short_term is not None:
             try:
                 await self._short_term.push(
@@ -216,12 +220,12 @@ class MessageService:
                     "短期记忆写入失败（conversation=%s），消息已落库",
                     conversation_id,
                 )
-        if self._summary is not None:
+        if self._summary_scheduler is not None:
             try:
-                await self._summary.maybe_summarize(db, conversation_id, message_count=next_sequence)
+                self._summary_scheduler(conversation_id, next_sequence)
             except Exception:
                 logger.exception(
-                    "会话摘要生成失败（conversation=%s），不影响消息保存",
+                    "会话摘要调度失败（conversation=%s），不影响消息保存",
                     conversation_id,
                 )
 

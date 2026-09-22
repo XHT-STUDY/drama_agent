@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from app.domain.conversation import (
     MessageListResponse,
     MessageResponse,
 )
+from app.memory.wiring import get_message_service
 
 logger = logging.getLogger(__name__)
 
@@ -33,65 +34,15 @@ router = APIRouter(tags=["conversations"])
 _conv_service = ConversationService()
 
 
-# ---- G-01 记忆挂载（惰性构建，避免 import 期副作用） ----
-
-
-def _build_msg_service() -> MessageService:
-    """构建带记忆挂载的 MessageService（生产路径）。
-
-    惰性构建：首次追加消息时才创建短期记忆存储与会话摘要管理器。
-    设计要点（G-01 验收）：
-    - Redis 不可用时短期记忆自动降级（回退 DB 恢复，消息不丢失）；
-    - 摘要生成失败只 log，绝不阻断消息保存。
-    """
-    from app.agents.base import BaseAgent
-    from app.application.artifact_service import ArtifactService
-    from app.core.config import Settings
-    from app.domain.summary import ConversationSummaryBody
-    from app.llm.fake import FakeLLM
-    from app.llm.openai_compatible import OpenAICompatibleLLM
-    from app.memory.short_term import RedisShortTermStore
-    from app.memory.summary import ConversationSummaryManager
-    from app.prompts.loader import PromptLoader
-
-    settings = Settings()
-    settings.apply_env_overrides()
-
-    store = RedisShortTermStore(
-        keep_count=settings.short_term_message_count,
-        ttl_seconds=settings.short_term_ttl_seconds,
-    )
-
-    if settings.app_env == "test":
-        fake = FakeLLM(seed=42)
-        fake.register(
-            "conversation_summary",
-            ConversationSummaryBody(summary="测试会话摘要", topics=["测试"]),
-        )
-        llm: Any = fake
-    else:
-        llm = OpenAICompatibleLLM(settings)
-
-    agent = BaseAgent(name="summarizer", llm=llm)
-    manager = ConversationSummaryManager(
-        agent,
-        PromptLoader(),
-        ArtifactService(),
-        threshold=settings.conversation_summary_threshold,
-        window=settings.short_term_message_count,
-    )
-    return MessageService(short_term_store=store, summary_manager=manager)
-
-
-_msg_service: MessageService | None = None
-
-
 def _get_msg_service() -> MessageService:
-    """惰性获取（进程内单例）带记忆挂载的 MessageService。"""
-    global _msg_service
-    if _msg_service is None:
-        _msg_service = _build_msg_service()
-    return _msg_service
+    """带记忆挂载的 MessageService(M-02 统一工厂,进程级单例)。
+
+    Agent Turn 与 Action 生命周期共用 app.memory.wiring.get_message_service()
+    的同一构造——任何真实消息入口都写入短期记忆并调度累计摘要。
+    """
+    svc = get_message_service()
+    assert isinstance(svc, MessageService)
+    return svc
 
 
 # ---- Conversation 端点 ----

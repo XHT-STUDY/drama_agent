@@ -25,7 +25,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.agent_outcome_service import AgentOutcomeService
-from app.application.conversation_service import MessageService
 from app.core.errors import AgentStateTransitionError
 from app.core.logging import get_logger
 from app.db.models.agent_action import AgentAction
@@ -40,6 +39,7 @@ from app.domain.agent_command import (
 )
 from app.domain.conversation import MessageCreate
 from app.events.publisher import EventPublisher
+from app.memory.wiring import get_message_service
 
 logger = get_logger(__name__)
 
@@ -91,7 +91,8 @@ class AgentActionLifecycle:
 
     def __init__(self) -> None:
         self._actions = None  # 惰性 AgentActionRepository（需要 db）
-        self._messages = MessageService()
+        # M-02:与其他消息入口共享统一记忆挂载工厂
+        self._messages = get_message_service()
         self._publisher = EventPublisher()
 
     # ------------------------------------------------------------------

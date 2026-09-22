@@ -1,0 +1,4042 @@
+{
+ "schema_version": "1.0",
+ "seed": 42,
+ "episode_count": 10,
+ "cases": [
+  {
+   "id": "story_contract",
+   "title": "雨夜遗契",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_lin",
+     "name": "林砚",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_zhao",
+     "name": "赵启明",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_su",
+      "name": "苏晚",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_gao",
+      "name": "高翔",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "母亲签名的契约真实存在",
+    "赵启明伪造过签名"
+   ],
+   "open_loops": [
+    "契约为何被藏二十年"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "雨夜遗契",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "林砚在旧宅整理母亲遗物，发现夹层里的股权转让契"
+      },
+      {
+       "scene_number": 2,
+       "action": "赵启明与神秘人通话，警告对方看好保险柜"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lin",
+      "char_zhao"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_contract",
+        "text": "旧宅夹层藏有母亲签名的股权转让契约",
+        "source_scene": 1,
+        "author_only_until": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_lin",
+        "fact_id": "f_contract",
+        "learned": false,
+        "source_scene": 1
+       }
+      ],
+      "loops_introduced": [
+       {
+        "loop_id": "loop_contract",
+        "description": "契约为何被藏二十年"
+       }
+      ],
+      "timeline_events": [
+       {
+        "event_id": "t_01_1",
+        "order_in_episode": 1,
+        "description": "林砚发现契约"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "识破伪装",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "林砚打开夹层读契约，得知股权被转移真相"
+      },
+      {
+       "scene_number": 2,
+       "action": "苏晚约林砚见面但欲言又止"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lin",
+      "char_su"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_transfer",
+        "text": "林家股权当年被赵启明伪造签名转移",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_lin",
+        "fact_id": "f_contract",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_lin",
+        "fact_id": "f_transfer",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "timeline_events": [
+       {
+        "event_id": "t_02_1",
+        "order_in_episode": 1,
+        "description": "林砚知晓股权真相"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "暗访旧账",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "林砚潜入档案室翻旧账"
+      },
+      {
+       "scene_number": 2,
+       "action": "高翔替林砚望风"
+      }
+     ],
+     "characters_in_episode": [
+      "char_gao",
+      "char_lin"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_ledger",
+        "text": "旧账显示一笔去向不明的保证金",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_lin",
+        "fact_id": "f_ledger",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_gao",
+        "fact_id": "f_ledger",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "鸿门宴",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "赵启明设宴试探林砚"
+      },
+      {
+       "scene_number": 2,
+       "action": "林砚不动声色周旋"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lin",
+      "char_zhao"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_zhao",
+        "to_character_id": "char_lin",
+        "before": "疏远防范",
+        "after": "正面试探"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "盟友知情",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "苏晚偶然看到契约照片，终于得知股权真相"
+      },
+      {
+       "scene_number": 2,
+       "action": "苏晚决定站到林砚一边"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lin",
+      "char_su"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_su",
+        "fact_id": "f_transfer",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "relationship_changes": [
+       {
+        "from_character_id": "char_su",
+        "to_character_id": "char_lin",
+        "before": "保持距离",
+        "after": "结盟"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "调包之夜",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "赵启明连夜调换保险柜文件"
+      },
+      {
+       "scene_number": 2,
+       "action": "高翔拍到调包过程"
+      }
+     ],
+     "characters_in_episode": [
+      "char_gao",
+      "char_zhao"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_swap",
+        "text": "赵启明深夜调换了保险柜证据",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_gao",
+        "fact_id": "f_swap",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "证据接力",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "高翔把调包照片交给苏晚"
+      },
+      {
+       "scene_number": 2,
+       "action": "苏晚存证后约见律师"
+      }
+     ],
+     "characters_in_episode": [
+      "char_gao",
+      "char_su"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_su",
+        "fact_id": "f_swap",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_photo",
+        "holder_character_id": "char_su",
+        "from_character_id": "char_gao",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "对簿公堂",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "法庭上照片成为关键证据"
+      },
+      {
+       "scene_number": 2,
+       "action": "赵启明当庭失态说出部分真相"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lin",
+      "char_su",
+      "char_zhao"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_court",
+        "text": "调包照片在法庭被采信",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_lin",
+        "fact_id": "f_swap",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_zhao",
+        "fact_id": "f_ledger",
+        "learned": true,
+        "source_scene": 2
+       }
+      ],
+      "loops_resolved": [
+       "loop_contract"
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "最后的反扑",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "赵启明绑架高翔逼交底片"
+      },
+      {
+       "scene_number": 2,
+       "action": "林砚用副本换人"
+      }
+     ],
+     "characters_in_episode": [
+      "char_gao",
+      "char_lin",
+      "char_zhao"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_photo",
+        "holder_character_id": "char_lin",
+        "from_character_id": "char_su",
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "尘埃落定",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "股权归还，赵启明被捕"
+      },
+      {
+       "scene_number": 2,
+       "action": "苏晚与林砚重建旧宅"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lin",
+      "char_su",
+      "char_zhao"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_end",
+        "text": "股权最终归还林家",
+        "source_scene": 1
+       }
+      ],
+      "relationship_changes": [
+       {
+        "from_character_id": "char_su",
+        "to_character_id": "char_lin",
+        "before": "结盟",
+        "after": "彼此托付"
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "赵启明当庭说出部分真相",
+     "reveal_episode": 8
+    }
+   ],
+   "project_id": "proj_story_01"
+  },
+  {
+   "id": "story_pawnshop",
+   "title": "当铺残诗",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_mochou",
+     "name": "莫愁",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_boss",
+     "name": "万老板",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_aqi",
+      "name": "阿七",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_yun",
+      "name": "云娘",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "玉佩刻痕是前朝密押",
+    "账册只有一本"
+   ],
+   "open_loops": [
+    "玉佩刻痕隐藏的身份秘密"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "当铺怪客",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "莫愁典当玉佩，当票编号甲字第一号"
+      },
+      {
+       "scene_number": 2,
+       "action": "云娘注意到玉佩内侧刻痕"
+      }
+     ],
+     "characters_in_episode": [
+      "char_boss",
+      "char_mochou",
+      "char_yun"
+     ],
+     "typed_delta": {
+      "loops_introduced": [
+       {
+        "loop_id": "loop_jade",
+        "description": "玉佩刻痕隐藏的身份秘密"
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_jade",
+        "holder_character_id": "char_boss",
+        "from_character_id": "char_mochou",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_yun",
+        "fact_id": "f_mark",
+        "learned": false,
+        "source_scene": 2
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_mark",
+        "text": "玉佩内侧有半句残诗刻痕",
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "夜市追凶",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "莫愁追踪可疑货郎"
+      },
+      {
+       "scene_number": 2,
+       "action": "货郎丢下写有甲字第一号的纸条"
+      }
+     ],
+     "characters_in_episode": [
+      "char_mochou"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_note",
+        "text": "当票编号出现在陌生人纸条上",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_mochou",
+        "fact_id": "f_note",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "绣坊疑云",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "云娘在绣坊发现同款刻痕绣样"
+      },
+      {
+       "scene_number": 2,
+       "action": "万老板秘密出货被阿七盯上"
+      }
+     ],
+     "characters_in_episode": [
+      "char_aqi",
+      "char_boss",
+      "char_yun"
+     ],
+     "typed_delta": {
+      "loops_introduced": [
+       {
+        "loop_id": "loop_shipment",
+        "description": "万老板深夜出货的货物去向"
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_yun",
+        "fact_id": "f_mark",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "地窖暗格",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "阿七潜入地窖发现暗格"
+      },
+      {
+       "scene_number": 2,
+       "action": "暗格里是与玉佩成对的另一半"
+      }
+     ],
+     "characters_in_episode": [
+      "char_aqi"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_pair",
+        "text": "地窖暗格藏着与玉佩成对的另一半",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_aqi",
+        "fact_id": "f_pair",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "假票风波",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "有人持伪造当票赎玉佩"
+      },
+      {
+       "scene_number": 2,
+       "action": "万老板识破假票暂缓交割"
+      }
+     ],
+     "characters_in_episode": [
+      "char_boss"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_fake",
+        "text": "有人试图用假当票赎走玉佩",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_boss",
+        "fact_id": "f_fake",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "残诗合璧",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "莫愁取回玉佩与暗格另一半拼合"
+      },
+      {
+       "scene_number": 2,
+       "action": "残诗指向城外废寺"
+      }
+     ],
+     "characters_in_episode": [
+      "char_boss",
+      "char_mochou"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_mochou",
+        "fact_id": "f_pair",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_mochou",
+        "fact_id": "f_mark",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "loops_resolved": [
+       "loop_jade"
+      ],
+      "props": [
+       {
+        "prop_id": "p_jade",
+        "holder_character_id": "char_mochou",
+        "from_character_id": "char_boss",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "废寺线索",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "废寺找到前朝账册"
+      },
+      {
+       "scene_number": 2,
+       "action": "云娘抄录关键页"
+      }
+     ],
+     "characters_in_episode": [
+      "char_yun"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_temple",
+        "text": "废寺藏有前朝账册",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_yun",
+        "fact_id": "f_temple",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "围寺之夜",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "万老板的人马围寺"
+      },
+      {
+       "scene_number": 2,
+       "action": "阿七掩护众人撤离"
+      }
+     ],
+     "characters_in_episode": [
+      "char_aqi",
+      "char_boss",
+      "char_mochou"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_aqi",
+        "to_character_id": "char_mochou",
+        "before": "受雇办事",
+        "after": "舍命相护"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "账册真相",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "账册证明玉佩主人身份"
+      },
+      {
+       "scene_number": 2,
+       "action": "云娘与莫愁相认"
+      }
+     ],
+     "characters_in_episode": [
+      "char_mochou",
+      "char_yun"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_mochou",
+        "fact_id": "f_temple",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_yun",
+        "fact_id": "f_pair",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "当铺交割",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "莫愁以账册换回自由身"
+      },
+      {
+       "scene_number": 2,
+       "action": "出货路线被官府查抄"
+      }
+     ],
+     "characters_in_episode": [
+      "char_boss",
+      "char_mochou"
+     ],
+     "typed_delta": {
+      "loops_resolved": [
+       "loop_shipment"
+      ],
+      "facts": [
+       {
+        "fact_id": "f_crack",
+        "text": "官府按账册查抄了出货路线",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_boss",
+        "fact_id": "f_crack",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "云娘与莫愁相认",
+     "reveal_episode": 9
+    }
+   ],
+   "project_id": "proj_story_02"
+  },
+  {
+   "id": "story_pocketwatch",
+   "title": "三点一刻",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_an",
+     "name": "安然",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_shen",
+     "name": "沈医生",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_bai",
+      "name": "白露",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_ke",
+      "name": "柯探长",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "怀表停在三点一刻是人为",
+    "悬案真凶只有一人"
+   ],
+   "open_loops": [
+    "怀表为何停在三点一刻"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "怀表初现",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "安然整理父亲遗物发现停摆怀表"
+      },
+      {
+       "scene_number": 2,
+       "action": "表盖内刻着一行小字"
+      }
+     ],
+     "characters_in_episode": [
+      "char_an"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_watch",
+        "text": "父亲遗物怀表停在三点一刻",
+        "source_scene": 1
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_watch",
+        "holder_character_id": "char_an",
+        "from_character_id": null,
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_an",
+        "fact_id": "f_watch",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "loops_introduced": [
+       {
+        "loop_id": "loop_watch",
+        "description": "怀表为何停在三点一刻"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "诊所托付",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "安然把怀表送去沈医生处修理"
+      },
+      {
+       "scene_number": 2,
+       "action": "沈医生认出表主旧照"
+      }
+     ],
+     "characters_in_episode": [
+      "char_an",
+      "char_shen"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_watch",
+        "holder_character_id": "char_shen",
+        "from_character_id": "char_an",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_shen",
+        "fact_id": "f_watch",
+        "learned": true,
+        "source_scene": 2
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_owner",
+        "text": "怀表原主与二十年前的案卷有关",
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "不速之客",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "白露潜入诊所翻找"
+      },
+      {
+       "scene_number": 2,
+       "action": "未找到怀表带走旧照"
+      }
+     ],
+     "characters_in_episode": [
+      "char_bai"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_photo",
+        "text": "诊所旧照被白露取走",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_bai",
+        "fact_id": "f_owner",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "案卷重启",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "柯探长调出二十年前的悬案卷宗"
+      },
+      {
+       "scene_number": 2,
+       "action": "卷宗提到同款怀表"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ke"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_ke",
+        "fact_id": "f_owner",
+        "learned": true,
+        "source_scene": 2
+       }
+      ],
+      "loops_introduced": [
+       {
+        "loop_id": "loop_case",
+        "description": "二十年前悬案的真凶"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "表停之谜",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "沈医生修好怀表又故意停回三点一刻"
+      },
+      {
+       "scene_number": 2,
+       "action": "留下字条给安然"
+      }
+     ],
+     "characters_in_episode": [
+      "char_an",
+      "char_shen"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_an",
+        "fact_id": "f_owner",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "截获旧照",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "柯探长截获白露的旧照"
+      },
+      {
+       "scene_number": 2,
+       "action": "照片背面有血书编号"
+      }
+     ],
+     "characters_in_episode": [
+      "char_bai",
+      "char_ke"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_photo",
+        "holder_character_id": "char_ke",
+        "from_character_id": "char_bai",
+        "source_scene": 1
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_blood",
+        "text": "旧照背面血书编号对应悬案证物",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_ke",
+        "fact_id": "f_blood",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "夜盗怀表",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "白露偷走修好的怀表"
+      },
+      {
+       "scene_number": 2,
+       "action": "沈医生受伤住院"
+      }
+     ],
+     "characters_in_episode": [
+      "char_bai",
+      "char_shen"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_watch",
+        "holder_character_id": "char_bai",
+        "from_character_id": "char_shen",
+        "source_scene": 1
+       }
+      ],
+      "relationship_changes": [
+       {
+        "from_character_id": "char_bai",
+        "to_character_id": "char_shen",
+        "before": "互不相识",
+        "after": "伤害与被伤害"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "交易流产",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "白露欲卖怀表被柯探长布控抓捕"
+      },
+      {
+       "scene_number": 2,
+       "action": "怀表物归原主"
+      }
+     ],
+     "characters_in_episode": [
+      "char_an",
+      "char_bai",
+      "char_ke"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_watch",
+        "holder_character_id": "char_an",
+        "from_character_id": "char_bai",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_an",
+        "fact_id": "f_blood",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "loops_resolved": [
+       "loop_watch"
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "真凶落网",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "血书编号牵出真凶"
+      },
+      {
+       "scene_number": 2,
+       "action": "沈医生道出当年隐情"
+      }
+     ],
+     "characters_in_episode": [
+      "char_an",
+      "char_ke",
+      "char_shen"
+     ],
+     "typed_delta": {
+      "loops_resolved": [
+       "loop_case"
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_an",
+        "fact_id": "f_blood",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "表针重启",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "安然让怀表重新走动"
+      },
+      {
+       "scene_number": 2,
+       "action": "三人告别"
+      }
+     ],
+     "characters_in_episode": [
+      "char_an",
+      "char_ke",
+      "char_shen"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_restart",
+        "text": "怀表在结案后重新走动",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_an",
+        "fact_id": "f_restart",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "沈医生道出当年隐情",
+     "reveal_episode": 9
+    }
+   ],
+   "project_id": "proj_story_03"
+  },
+  {
+   "id": "story_freight",
+   "title": "货运时间表",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_ji",
+     "name": "季风",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_lu",
+     "name": "陆组长",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_xia",
+      "name": "夏荷",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_wu",
+      "name": "吴会计",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "收网必须晚于真账移交",
+    "举报信只有一封"
+   ],
+   "open_loops": [
+    "匿名举报人的身份"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "匿名举报",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "季风收到匿名举报信"
+      },
+      {
+       "scene_number": 2,
+       "action": "信中提到货运时间表"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ji"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_letter",
+        "text": "匿名举报信附有货运时间表",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_ji",
+        "fact_id": "f_letter",
+        "learned": true,
+        "source_scene": 2
+       }
+      ],
+      "loops_introduced": [
+       {
+        "loop_id": "loop_informant",
+        "description": "匿名举报人的身份"
+       }
+      ],
+      "timeline_events": [
+       {
+        "event_id": "t_1",
+        "order_in_episode": 2,
+        "description": "收到举报信"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "初查货站",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "季风与夏荷踏勘货站"
+      },
+      {
+       "scene_number": 2,
+       "action": "抄录夜间车次"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ji",
+      "char_xia"
+     ],
+     "typed_delta": {
+      "timeline_events": [
+       {
+        "event_id": "t_2",
+        "order_in_episode": 1,
+        "description": "踏勘货站"
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_xia",
+        "fact_id": "f_letter",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "账房漏洞",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "吴会计被约谈露出破绽"
+      },
+      {
+       "scene_number": 2,
+       "action": "两套账册浮出水面"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lu",
+      "char_wu"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_books",
+        "text": "货运公司存在两套账册",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_lu",
+        "fact_id": "f_books",
+        "learned": true,
+        "source_scene": 2
+       },
+       {
+        "character_id": "char_wu",
+        "fact_id": "f_letter",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "timeline_events": [
+       {
+        "event_id": "t_3",
+        "order_in_episode": 1,
+        "description": "约谈吴会计"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "深夜盯梢",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "季风蹲守记录换柜过程"
+      },
+      {
+       "scene_number": 2,
+       "action": "照片补全链条"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ji"
+     ],
+     "typed_delta": {
+      "timeline_events": [
+       {
+        "event_id": "t_4",
+        "order_in_episode": 1,
+        "description": "蹲守换柜"
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_ji",
+        "fact_id": "f_books",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "内部阻力",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "上级要求暂缓行动"
+      },
+      {
+       "scene_number": 2,
+       "action": "陆组长顶住压力继续侦查"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ji",
+      "char_lu"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_lu",
+        "to_character_id": "char_ji",
+        "before": "普通同事",
+        "after": "力排众议的支持"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "关键证人",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "吴会计决定交出真账"
+      },
+      {
+       "scene_number": 2,
+       "action": "夏荷护送证人"
+      }
+     ],
+     "characters_in_episode": [
+      "char_wu",
+      "char_xia"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_wu",
+        "fact_id": "f_books",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_books",
+        "holder_character_id": "char_xia",
+        "from_character_id": "char_wu",
+        "source_scene": 2
+       }
+      ],
+      "timeline_events": [
+       {
+        "event_id": "t_5",
+        "order_in_episode": 1,
+        "description": "真账移交"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "调包未遂",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "有人夜袭证物室"
+      },
+      {
+       "scene_number": 2,
+       "action": "备份账册起作用"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lu",
+      "char_xia"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_backup",
+        "text": "真账另有备份在夏荷处",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_xia",
+        "fact_id": "f_backup",
+        "learned": true,
+        "source_scene": 2
+       },
+       {
+        "character_id": "char_lu",
+        "fact_id": "f_backup",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "收网时刻",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "按时间表布控收网"
+      },
+      {
+       "scene_number": 2,
+       "action": "主犯落网"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ji",
+      "char_lu"
+     ],
+     "typed_delta": {
+      "timeline_events": [
+       {
+        "event_id": "t_6",
+        "order_in_episode": 1,
+        "description": "收网抓捕"
+       }
+      ],
+      "loops_resolved": [
+       "loop_informant"
+      ],
+      "facts": [
+       {
+        "fact_id": "f_informant",
+        "text": "举报人是离职的前站务员",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_ji",
+        "fact_id": "f_informant",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "供述闭环",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "主犯供述与账册吻合"
+      },
+      {
+       "scene_number": 2,
+       "action": "吴会计获从宽处理"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lu",
+      "char_wu"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_lu",
+        "fact_id": "f_informant",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "结案陈词",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "季风在结案会上还原全过程"
+      },
+      {
+       "scene_number": 2,
+       "action": "时间线完整闭环"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ji",
+      "char_lu",
+      "char_wu",
+      "char_xia"
+     ],
+     "typed_delta": {
+      "timeline_events": [
+       {
+        "event_id": "t_7",
+        "order_in_episode": 1,
+        "description": "结案陈词"
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "主犯落网",
+     "reveal_episode": 8
+    }
+   ],
+   "project_id": "proj_story_04"
+  },
+  {
+   "id": "story_fakedeath",
+   "title": "渡口血衣",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_qiao",
+     "name": "乔安",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_fan",
+     "name": "范统",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_mei",
+      "name": "梅香",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_du",
+      "name": "杜捕头",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "范统假死是自导",
+    "真凶只有一个"
+   ],
+   "open_loops": [
+    "范统是生是死"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "渡口血案",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "乔安在渡口发现血衣"
+      },
+      {
+       "scene_number": 2,
+       "action": "梅香认出是范统的外套"
+      }
+     ],
+     "characters_in_episode": [
+      "char_mei",
+      "char_qiao"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_blood_cloth",
+        "text": "渡口血衣属于范统",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_qiao",
+        "fact_id": "f_blood_cloth",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_mei",
+        "fact_id": "f_blood_cloth",
+        "learned": true,
+        "source_scene": 2
+       }
+      ],
+      "loops_introduced": [
+       {
+        "loop_id": "loop_fan_alive",
+        "description": "范统是生是死"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "头七守灵",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "范家设灵堂"
+      },
+      {
+       "scene_number": 2,
+       "action": "乔安夜里守灵听到异响"
+      }
+     ],
+     "characters_in_episode": [
+      "char_qiao"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_alive",
+        "text": "范统假死藏在城外义庄",
+        "source_scene": 2,
+        "author_only_until": 8
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "义庄脚印",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "乔安在义庄发现新鲜脚印"
+      },
+      {
+       "scene_number": 2,
+       "action": "脚印通向河边"
+      }
+     ],
+     "characters_in_episode": [
+      "char_qiao"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_qiao",
+        "fact_id": "f_alive",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "梅香的疑心",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "梅香发现灵位前多了供果"
+      },
+      {
+       "scene_number": 2,
+       "action": "疑心有人夜里来过"
+      }
+     ],
+     "characters_in_episode": [
+      "char_mei"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_mei",
+        "fact_id": "f_alive",
+        "learned": false,
+        "source_scene": 1
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_fruit",
+        "text": "灵位前出现新鲜供果",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "官府结案",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "杜捕头以溺亡结案"
+      },
+      {
+       "scene_number": 2,
+       "action": "众人以为范统已死"
+      }
+     ],
+     "characters_in_episode": [
+      "char_du",
+      "char_mei"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_du",
+        "fact_id": "f_alive",
+        "learned": false,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_mei",
+        "fact_id": "f_alive",
+        "learned": false,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "夜半笛声",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "乔安循笛声到义庄"
+      },
+      {
+       "scene_number": 2,
+       "action": "与蒙面人短暂交手"
+      }
+     ],
+     "characters_in_episode": [
+      "char_qiao"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_flute",
+        "text": "夜里笛声来自义庄方向",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_qiao",
+        "fact_id": "f_flute",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "供果之谜",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "梅香蹲守灵堂整夜"
+      },
+      {
+       "scene_number": 2,
+       "action": "看清送供果之人身形酷似范统"
+      }
+     ],
+     "characters_in_episode": [
+      "char_mei"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_mei",
+        "fact_id": "f_alive",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "义庄现身",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "范统在义庄现身说法"
+      },
+      {
+       "scene_number": 2,
+       "action": "假死是为引出真凶"
+      }
+     ],
+     "characters_in_episode": [
+      "char_du",
+      "char_fan",
+      "char_qiao"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_du",
+        "fact_id": "f_alive",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "loops_resolved": [
+       "loop_fan_alive"
+      ],
+      "timeline_events": [
+       {
+        "event_id": "t_reveal",
+        "order_in_episode": 1,
+        "description": "范统现身"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "真凶现形",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "真凶趁乱袭击范统"
+      },
+      {
+       "scene_number": 2,
+       "action": "杜捕头及时赶到擒获"
+      }
+     ],
+     "characters_in_episode": [
+      "char_du",
+      "char_fan",
+      "char_qiao"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_du",
+        "to_character_id": "char_qiao",
+        "before": "公事公办",
+        "after": "信任并肩"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "渡口送别",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "案情昭雪"
+      },
+      {
+       "scene_number": 2,
+       "action": "范统与梅香渡口送别乔安"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fan",
+      "char_mei",
+      "char_qiao"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_case_end",
+        "text": "渡口血案真凶伏法",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_mei",
+        "fact_id": "f_case_end",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "假死是为引出真凶",
+     "reveal_episode": 8
+    }
+   ],
+   "project_id": "proj_story_05"
+  },
+  {
+   "id": "story_betrayal",
+   "title": "茶楼结盟",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_ye",
+     "name": "叶知秋",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_he",
+     "name": "何总",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_tang",
+      "name": "唐薇",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_lao",
+      "name": "老周",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "唐薇受何总胁迫",
+    "录音是唯一物证"
+   ],
+   "open_loops": [
+    "账本真正主人的身份"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "茶楼结盟",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "叶知秋与唐薇在茶楼结盟"
+      },
+      {
+       "scene_number": 2,
+       "action": "约定共享线索"
+      }
+     ],
+     "characters_in_episode": [
+      "char_tang",
+      "char_ye"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_tang",
+        "to_character_id": "char_ye",
+        "before": "初识",
+        "after": "结盟"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "账本复印件",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "老周送来账本复印件"
+      },
+      {
+       "scene_number": 2,
+       "action": "叶知秋收进保险柜"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lao",
+      "char_ye"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_copy",
+        "text": "账本复印件在叶知秋的保险柜",
+        "source_scene": 2
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_copybook",
+        "holder_character_id": "char_ye",
+        "from_character_id": "char_lao",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_ye",
+        "fact_id": "f_copy",
+        "learned": true,
+        "source_scene": 2
+       }
+      ],
+      "loops_introduced": [
+       {
+        "loop_id": "loop_owner",
+        "description": "账本真正主人的身份"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "饭局试探",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "何总设饭局试探唐薇"
+      },
+      {
+       "scene_number": 2,
+       "action": "唐薇表面周旋"
+      }
+     ],
+     "characters_in_episode": [
+      "char_he",
+      "char_tang"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_he",
+        "fact_id": "f_copy",
+        "learned": false,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "背叛之夜",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "唐薇把保险柜密码卖给何总"
+      },
+      {
+       "scene_number": 2,
+       "action": "账本复印件失窃"
+      }
+     ],
+     "characters_in_episode": [
+      "char_he",
+      "char_tang"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_tang",
+        "to_character_id": "char_ye",
+        "before": "结盟",
+        "after": "背叛"
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_copybook",
+        "holder_character_id": "char_he",
+        "from_character_id": "char_tang",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_he",
+        "fact_id": "f_copy",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_stolen",
+        "text": "账本复印件被唐薇窃走转卖",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "老周警告",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "老周察觉内鬼报警示"
+      },
+      {
+       "scene_number": 2,
+       "action": "叶知秋不动声色"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lao",
+      "char_ye"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_lao",
+        "fact_id": "f_stolen",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "将计就计",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "叶知秋放出假账本引蛇出洞"
+      },
+      {
+       "scene_number": 2,
+       "action": "何总中计"
+      }
+     ],
+     "characters_in_episode": [
+      "char_he",
+      "char_ye"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_trap",
+        "text": "叶知秋用假账本设局",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_ye",
+        "fact_id": "f_stolen",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "对峙天台",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "叶知秋与唐薇天台对峙"
+      },
+      {
+       "scene_number": 2,
+       "action": "唐薇道出被胁迫隐情"
+      }
+     ],
+     "characters_in_episode": [
+      "char_tang",
+      "char_ye"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_tang",
+        "to_character_id": "char_ye",
+        "before": "背叛",
+        "after": "被胁迫的愧疚"
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_ye",
+        "fact_id": "f_trap",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "内鬼反水",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "唐薇倒戈提供录音"
+      },
+      {
+       "scene_number": 2,
+       "action": "录音坐实何总指令"
+      }
+     ],
+     "characters_in_episode": [
+      "char_tang",
+      "char_ye"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_audio",
+        "text": "唐薇握有何总指令的录音",
+        "source_scene": 1
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_audio",
+        "holder_character_id": "char_ye",
+        "from_character_id": "char_tang",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "股权摊牌",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "股东大会上录音摊牌"
+      },
+      {
+       "scene_number": 2,
+       "action": "何总出局"
+      }
+     ],
+     "characters_in_episode": [
+      "char_he",
+      "char_tang",
+      "char_ye"
+     ],
+     "typed_delta": {
+      "loops_resolved": [
+       "loop_owner"
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_he",
+        "fact_id": "f_audio",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "茶楼重逢",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "结盟 restored,叶唐重新合作"
+      },
+      {
+       "scene_number": 2,
+       "action": "老周退休"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lao",
+      "char_tang",
+      "char_ye"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_tang",
+        "to_character_id": "char_ye",
+        "before": "被胁迫的愧疚",
+        "after": "重新结盟"
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "何总出局",
+     "reveal_episode": 9
+    }
+   ],
+   "project_id": "proj_story_06"
+  },
+  {
+   "id": "story_twinhalf",
+   "title": "事故两半页",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_shu",
+     "name": "舒航",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_gu",
+     "name": "顾平",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_ning",
+      "name": "宁霜",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_fei",
+      "name": "费主管",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "报告被人为撕成两半",
+    "签名不可伪造"
+   ],
+   "open_loops": [
+    "事故报告的另一半在哪"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "事故报告",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "舒航拿到事故报告上半页"
+      },
+      {
+       "scene_number": 2,
+       "action": "宁霜拿到下半页"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ning",
+      "char_shu"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_upper",
+        "text": "事故报告上半页指向操作失误",
+        "source_scene": 1
+       },
+       {
+        "fact_id": "f_lower",
+        "text": "下半页指向设备被改动",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_shu",
+        "fact_id": "f_upper",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_ning",
+        "fact_id": "f_lower",
+        "learned": true,
+        "source_scene": 2
+       }
+      ],
+      "loops_introduced": [
+       {
+        "loop_id": "loop_report",
+        "description": "事故报告的另一半在哪"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "档案室",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "顾平帮忙混入档案室"
+      },
+      {
+       "scene_number": 2,
+       "action": "登记簿露出借阅记录"
+      }
+     ],
+     "characters_in_episode": [
+      "char_gu",
+      "char_shu"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_gu",
+        "fact_id": "f_upper",
+        "learned": false,
+        "source_scene": 1
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_borrow",
+        "text": "报告另一半两周前被费主管借走",
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "宁霜的发现",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "宁霜比对图纸"
+      },
+      {
+       "scene_number": 2,
+       "action": "确认改动签名是费主管"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ning"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_ning",
+        "fact_id": "f_borrow",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "打草惊蛇",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "费主管提前销毁部分图纸"
+      },
+      {
+       "scene_number": 2,
+       "action": "顾平拍下残页"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fei",
+      "char_gu"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_gu",
+        "fact_id": "f_lower",
+        "learned": true,
+        "source_scene": 2
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_destroy",
+        "text": "费主管销毁图纸未遂留残页",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "联盟初成",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "舒航与宁霜交换情报"
+      },
+      {
+       "scene_number": 2,
+       "action": "拼图接近完整"
+      }
+     ],
+     "characters_in_episode": [
+      "char_ning",
+      "char_shu"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_shu",
+        "fact_id": "f_lower",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_ning",
+        "fact_id": "f_upper",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "质询会上",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "费主管倒打一耙"
+      },
+      {
+       "scene_number": 2,
+       "action": "顾平出示借阅记录"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fei",
+      "char_gu"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_fei",
+        "fact_id": "f_borrow",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "残页复原",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "技术科复原残页"
+      },
+      {
+       "scene_number": 2,
+       "action": "签名链完整"
+      }
+     ],
+     "characters_in_episode": [
+      "char_gu"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_chain",
+        "text": "残页复原后签名链指向费主管",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_gu",
+        "fact_id": "f_chain",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "反咬一口",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "费主管指认顾平篡改"
+      },
+      {
+       "scene_number": 2,
+       "action": "会议陷入僵局"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fei",
+      "char_gu"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_fei",
+        "to_character_id": "char_gu",
+        "before": "同事",
+        "after": "互相指认"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "两页合璧",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "上下半页合璧验证"
+      },
+      {
+       "scene_number": 2,
+       "action": "真相定论"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fei",
+      "char_ning",
+      "char_shu"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_shu",
+        "fact_id": "f_chain",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_ning",
+        "fact_id": "f_chain",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_fei",
+        "fact_id": "f_chain",
+        "learned": true,
+        "source_scene": 2
+       }
+      ],
+      "loops_resolved": [
+       "loop_report"
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "复盘大会",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "事故定性为人为破坏"
+      },
+      {
+       "scene_number": 2,
+       "action": "责任追究到位"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fei",
+      "char_gu",
+      "char_ning",
+      "char_shu"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_gu",
+        "fact_id": "f_destroy",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "事故定性为人为破坏",
+     "reveal_episode": 10
+    }
+   ],
+   "project_id": "proj_story_07"
+  },
+  {
+   "id": "story_brokensword",
+   "title": "断剑铭文",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_mu",
+     "name": "牧遥",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_shan",
+     "name": "单雄",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_rou",
+      "name": "柔嘉",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_pu",
+      "name": "蒲师爷",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "断剑铭文不可磨改",
+    "北境旧档只有一部"
+   ],
+   "open_loops": [
+    "断剑主人的下落"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "断剑出土",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "牧遥在河滩挖出断剑"
+      },
+      {
+       "scene_number": 2,
+       "action": "剑身铭文残缺"
+      }
+     ],
+     "characters_in_episode": [
+      "char_mu"
+     ],
+     "typed_delta": {
+      "loops_introduced": [
+       {
+        "loop_id": "loop_sword",
+        "description": "断剑主人的下落"
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_sword",
+        "holder_character_id": "char_mu",
+        "from_character_id": null,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "铸剑谱",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "柔嘉翻出铸剑谱比对"
+      },
+      {
+       "scene_number": 2,
+       "action": "断剑出自名师"
+      }
+     ],
+     "characters_in_episode": [
+      "char_rou"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_master",
+        "text": "断剑出自名师欧冶一脉",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_rou",
+        "fact_id": "f_master",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "悬赏令",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "单雄贴出悬赏令寻断剑"
+      },
+      {
+       "scene_number": 2,
+       "action": "各路人马云集"
+      }
+     ],
+     "characters_in_episode": [
+      "char_shan"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_shan",
+        "fact_id": "f_master",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "错认剑主",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "蒲师爷断案认错剑主"
+      },
+      {
+       "scene_number": 2,
+       "action": "众人以为结案"
+      }
+     ],
+     "characters_in_episode": [
+      "char_pu"
+     ],
+     "typed_delta": {
+      "loops_resolved": [
+       "loop_sword"
+      ],
+      "facts": [
+       {
+        "fact_id": "f_wrong",
+        "text": "蒲师爷认错了剑主",
+        "source_scene": 1,
+        "author_only_until": 7
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "铭文补字",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "柔嘉补齐铭文三字"
+      },
+      {
+       "scene_number": 2,
+       "action": "指向北境戍卒"
+      }
+     ],
+     "characters_in_episode": [
+      "char_rou"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_inscript",
+        "text": "铭文补齐后指向北境戍卒",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_rou",
+        "fact_id": "f_inscript",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "旧档对勘",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "牧遥查北境旧档"
+      },
+      {
+       "scene_number": 2,
+       "action": "发现同名阵亡记录"
+      }
+     ],
+     "characters_in_episode": [
+      "char_mu"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_mu",
+        "fact_id": "f_inscript",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_record",
+        "text": "北境旧档有同名阵亡记录",
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "重开悬案",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "阵亡记录与断剑年代矛盾"
+      },
+      {
+       "scene_number": 2,
+       "action": "悬案重开"
+      }
+     ],
+     "characters_in_episode": [
+      "char_pu",
+      "char_shan"
+     ],
+     "typed_delta": {
+      "loops_introduced": [
+       {
+        "loop_id": "loop_sword",
+        "description": "断剑主人身份存疑重开"
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_pu",
+        "fact_id": "f_record",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_shan",
+        "fact_id": "f_wrong",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "北境来客",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "北境老卒现身作证"
+      },
+      {
+       "scene_number": 2,
+       "action": "剑主另有其人"
+      }
+     ],
+     "characters_in_episode": [
+      "char_mu"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_witness",
+        "text": "老卒证明剑主是护送将领",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_mu",
+        "fact_id": "f_witness",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "真相与私心",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "单雄曾隐瞒证词"
+      },
+      {
+       "scene_number": 2,
+       "action": "为保悬赏赏金"
+      }
+     ],
+     "characters_in_episode": [
+      "char_rou",
+      "char_shan"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_rou",
+        "fact_id": "f_witness",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "relationship_changes": [
+       {
+        "from_character_id": "char_shan",
+        "to_character_id": "char_mu",
+        "before": "悬赏对立",
+        "after": "失信于人"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "断剑归鞘",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "剑主遗族领回断剑"
+      },
+      {
+       "scene_number": 2,
+       "action": "悬案真结"
+      }
+     ],
+     "characters_in_episode": [
+      "char_mu",
+      "char_pu",
+      "char_rou",
+      "char_shan"
+     ],
+     "typed_delta": {
+      "loops_resolved": [
+       "loop_sword"
+      ],
+      "props": [
+       {
+        "prop_id": "p_sword",
+        "holder_character_id": "char_pu",
+        "from_character_id": "char_mu",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_pu",
+        "fact_id": "f_witness",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "悬案真结",
+     "reveal_episode": 10
+    }
+   ],
+   "project_id": "proj_story_08"
+  },
+  {
+   "id": "story_recipe",
+   "title": "酱园秘方",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_fang",
+     "name": "方掌柜",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_dian",
+     "name": "刁三",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_xing",
+      "name": "杏儿",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_lao",
+      "name": "劳伯",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "秘方分两半保管",
+    "仿品缺下半口诀必露馅"
+   ],
+   "open_loops": [
+    "秘方全本能否保全"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "秘方传家",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "方掌柜把秘方口诀传给杏儿一半"
+      },
+      {
+       "scene_number": 2,
+       "action": "另一半锁在账房"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fang",
+      "char_xing"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_half1",
+        "text": "秘方上半口诀在杏儿脑中",
+        "source_scene": 1
+       },
+       {
+        "fact_id": "f_half2",
+        "text": "秘方下半锁在账房铁盒",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_xing",
+        "fact_id": "f_half1",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_box",
+        "holder_character_id": "char_fang",
+        "from_character_id": null,
+        "source_scene": 2
+       }
+      ],
+      "loops_introduced": [
+       {
+        "loop_id": "loop_recipe",
+        "description": "秘方全本能否保全"
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "刁三窥视",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "刁三买通伙计打探"
+      },
+      {
+       "scene_number": 2,
+       "action": "只探得铁盒位置"
+      }
+     ],
+     "characters_in_episode": [
+      "char_dian"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_dian",
+        "fact_id": "f_half2",
+        "learned": false,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "劳伯护院",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "劳伯夜巡吓退窃贼"
+      },
+      {
+       "scene_number": 2,
+       "action": "铁盒加固"
+      }
+     ],
+     "characters_in_episode": [
+      "char_lao"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_lao",
+        "fact_id": "f_half2",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "杏儿学艺",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "杏儿默写上半口诀练习"
+      },
+      {
+       "scene_number": 2,
+       "action": "被窗外影子窥见一角"
+      }
+     ],
+     "characters_in_episode": [
+      "char_xing"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_peek",
+        "text": "有人窥见上半口诀一角",
+        "source_scene": 2,
+        "author_only_until": 6
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "仿品上市",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "刁三推出仿制酱料"
+      },
+      {
+       "scene_number": 2,
+       "action": "味道差之千里"
+      }
+     ],
+     "characters_in_episode": [
+      "char_dian",
+      "char_fang"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_dian",
+        "fact_id": "f_half1",
+        "learned": false,
+        "source_scene": 1
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_fake2",
+        "text": "仿制酱料缺少下半口诀",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "内鬼现形",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "窥视者是账房伙计"
+      },
+      {
+       "scene_number": 2,
+       "action": "被劳伯揪出"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fang",
+      "char_lao"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_fang",
+        "fact_id": "f_peek",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_dian",
+        "fact_id": "f_peek",
+        "learned": true,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "对簿公堂",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "方掌柜以口诀残缺证仿冒"
+      },
+      {
+       "scene_number": 2,
+       "action": "官府查封仿品"
+      }
+     ],
+     "characters_in_episode": [
+      "char_dian",
+      "char_fang"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_dian",
+        "fact_id": "f_half1",
+        "learned": false,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "托付全本",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "方掌柜病重,把下半口诀传给杏儿"
+      },
+      {
+       "scene_number": 2,
+       "action": "杏儿学成全本"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fang",
+      "char_xing"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_xing",
+        "fact_id": "f_half2",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "props": [
+       {
+        "prop_id": "p_box",
+        "holder_character_id": "char_xing",
+        "from_character_id": "char_fang",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "刁三末路",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "仿品滞销,刁三铤而走险"
+      },
+      {
+       "scene_number": 2,
+       "action": "被劳伯扭送官府"
+      }
+     ],
+     "characters_in_episode": [
+      "char_dian",
+      "char_lao"
+     ],
+     "typed_delta": {
+      "relationship_changes": [
+       {
+        "from_character_id": "char_dian",
+        "to_character_id": "char_fang",
+        "before": "商业窥伺",
+        "after": "以身试法被擒"
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_lao",
+        "fact_id": "f_fake2",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "酱园新章",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "杏儿执掌酱园"
+      },
+      {
+       "scene_number": 2,
+       "action": "秘方全本传成"
+      }
+     ],
+     "characters_in_episode": [
+      "char_fang",
+      "char_lao",
+      "char_xing"
+     ],
+     "typed_delta": {
+      "loops_resolved": [
+       "loop_recipe"
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_xing",
+        "fact_id": "f_fake2",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "杏儿执掌酱园",
+     "reveal_episode": 10
+    }
+   ],
+   "project_id": "proj_story_09"
+  },
+  {
+   "id": "story_threekeys",
+   "title": "三钥谷",
+   "characters": {
+    "protagonist": {
+     "character_id": "char_nan",
+     "name": "南绪",
+     "visible_goal": "查明真相并夺回属于自己的东西"
+    },
+    "antagonist": {
+     "character_id": "char_zuo",
+     "name": "左使",
+     "visible_goal": "维持现有局面，阻止真相曝光"
+    },
+    "supporting_characters": [
+     {
+      "character_id": "char_qing",
+      "name": "青萝",
+      "visible_goal": "协助主角"
+     },
+     {
+      "character_id": "char_yan",
+      "name": "砚台",
+      "visible_goal": "观察局势"
+     }
+    ]
+   },
+   "locked_facts": [
+    "三把钥匙缺一不可",
+    "山门只能开一次"
+   ],
+   "open_loops": [
+    "三把钥匙的收集"
+   ],
+   "episodes": [
+    {
+     "episode_number": 1,
+     "title": "三钥传说",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "南绪得到第一把钥匙"
+      },
+      {
+       "scene_number": 2,
+       "action": "另两把下落不明"
+      }
+     ],
+     "characters_in_episode": [
+      "char_nan"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_key1",
+        "holder_character_id": "char_nan",
+        "from_character_id": null,
+        "source_scene": 1
+       }
+      ],
+      "loops_introduced": [
+       {
+        "loop_id": "loop_keys",
+        "description": "三把钥匙的收集"
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_nan",
+        "fact_id": "f_key1",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_key1",
+        "text": "第一把钥匙开启山门",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 2,
+     "title": "左使夺钥",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "左使伏击南绪"
+      },
+      {
+       "scene_number": 2,
+       "action": "第一把钥匙易主"
+      }
+     ],
+     "characters_in_episode": [
+      "char_nan",
+      "char_zuo"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_key1",
+        "holder_character_id": "char_zuo",
+        "from_character_id": "char_nan",
+        "source_scene": 2
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_zuo",
+        "fact_id": "f_key1",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 3,
+     "title": "青萝的第二把",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "青萝以信物换得第二把钥匙"
+      },
+      {
+       "scene_number": 2,
+       "action": "条件是护送她入谷"
+      }
+     ],
+     "characters_in_episode": [
+      "char_qing"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_key2",
+        "holder_character_id": "char_qing",
+        "from_character_id": null,
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_qing",
+        "fact_id": "f_key1",
+        "learned": false,
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 4,
+     "title": "谷口会合",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "南绪与青萝谷口会合"
+      },
+      {
+       "scene_number": 2,
+       "action": "得知第一把被夺"
+      }
+     ],
+     "characters_in_episode": [
+      "char_nan",
+      "char_qing"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_qing",
+        "fact_id": "f_key1",
+        "learned": true,
+        "source_scene": 2
+       },
+       {
+        "character_id": "char_nan",
+        "fact_id": "f_key2h",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_key2h",
+        "text": "第二把钥匙在青萝手中",
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 5,
+     "title": "砚台的第三把",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "砚台公开拍卖第三把钥匙"
+      },
+      {
+       "scene_number": 2,
+       "action": "左使志在必得"
+      }
+     ],
+     "characters_in_episode": [
+      "char_yan",
+      "char_zuo"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_key3",
+        "holder_character_id": "char_yan",
+        "from_character_id": null,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 6,
+     "title": "拍卖之夜",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "南绪拍下第三把"
+      },
+      {
+       "scene_number": 2,
+       "action": "左使抬价失败"
+      }
+     ],
+     "characters_in_episode": [
+      "char_nan",
+      "char_yan",
+      "char_zuo"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_key3",
+        "holder_character_id": "char_nan",
+        "from_character_id": "char_yan",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_yan",
+        "fact_id": "f_key2h",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 7,
+     "title": "以物易物",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "青萝用第二把换回第一把"
+      },
+      {
+       "scene_number": 2,
+       "action": "两人各持其一"
+      }
+     ],
+     "characters_in_episode": [
+      "char_qing",
+      "char_zuo"
+     ],
+     "typed_delta": {
+      "props": [
+       {
+        "prop_id": "p_key1",
+        "holder_character_id": "char_qing",
+        "from_character_id": "char_zuo",
+        "source_scene": 1
+       },
+       {
+        "prop_id": "p_key2",
+        "holder_character_id": "char_zuo",
+        "from_character_id": "char_qing",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_zuo",
+        "fact_id": "f_key2h",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 8,
+     "title": "山门之约",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "三人在山门前对峙"
+      },
+      {
+       "scene_number": 2,
+       "action": "僵持不下"
+      }
+     ],
+     "characters_in_episode": [
+      "char_nan",
+      "char_qing",
+      "char_zuo"
+     ],
+     "typed_delta": {
+      "knowledge": [
+       {
+        "character_id": "char_nan",
+        "fact_id": "f_key2s",
+        "learned": true,
+        "source_scene": 1
+       },
+       {
+        "character_id": "char_qing",
+        "fact_id": "f_key3n",
+        "learned": true,
+        "source_scene": 1
+       }
+      ],
+      "facts": [
+       {
+        "fact_id": "f_key2s",
+        "text": "第二把钥匙现由左使持有",
+        "source_scene": 1
+       },
+       {
+        "fact_id": "f_key3n",
+        "text": "第三把钥匙由南绪拍得",
+        "source_scene": 2
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 9,
+     "title": "合钥开门",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "三人被迫合作"
+      },
+      {
+       "scene_number": 2,
+       "action": "山门开启"
+      }
+     ],
+     "characters_in_episode": [
+      "char_nan",
+      "char_qing",
+      "char_zuo"
+     ],
+     "typed_delta": {
+      "loops_resolved": [
+       "loop_keys"
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_zuo",
+        "fact_id": "f_key3n",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    },
+    {
+     "episode_number": 10,
+     "title": "谷中抉择",
+     "scenes": [
+      {
+       "scene_number": 1,
+       "action": "谷中秘藏现世"
+      },
+      {
+       "scene_number": 2,
+       "action": "三人各取所需和解"
+      }
+     ],
+     "characters_in_episode": [
+      "char_nan",
+      "char_qing",
+      "char_yan",
+      "char_zuo"
+     ],
+     "typed_delta": {
+      "facts": [
+       {
+        "fact_id": "f_treasure",
+        "text": "秘藏是前朝经卷",
+        "source_scene": 1
+       }
+      ],
+      "knowledge": [
+       {
+        "character_id": "char_yan",
+        "fact_id": "f_treasure",
+        "learned": true,
+        "source_scene": 1
+       }
+      ]
+     }
+    }
+   ],
+   "future_plans": [
+    {
+     "text": "秘藏是前朝经卷",
+     "reveal_episode": 10
+    }
+   ],
+   "project_id": "proj_story_10"
+  }
+ ]
+}

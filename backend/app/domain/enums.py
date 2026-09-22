@@ -36,6 +36,7 @@ class ArtifactType(StrEnum):
     REVISION_PLAN = "revision_plan"
     CONTINUITY_CHECK = "continuity_check"
     CONTINUITY_STATE = "continuity_state"
+    EPISODE_SUMMARY = "episode_summary"
     CONVERSATION_SUMMARY = "conversation_summary"
     IMPORT_CLASSIFICATION = "import_classification"
     EXPORT_FILE = "export_file"

@@ -17,8 +17,17 @@ import logging
 from typing import Any, cast
 
 from app.agents.base import BaseAgent
-from app.domain.continuity import EpisodeSummary, StoryLoop, TimelineEvent
-from app.domain.summary import SummaryInput, SummaryOutput
+from app.domain.continuity import (
+    ContinuityState,
+    EpisodeSummary,
+    StoryLoop,
+    TimelineEvent,
+)
+from app.domain.summary import (
+    EpisodeDelta,
+    SummaryInput,
+    SummaryOutput,
+)
 from app.prompts.loader import PromptLoader
 from app.skills.protocol import Skill, SkillMetadata
 
@@ -50,7 +59,7 @@ class SummarizerSkill(Skill):
     # ---- 公开 API ----
 
     async def execute(self, context: dict[str, Any]) -> SummaryOutput:
-        """执行剧集摘要生成。
+        """执行剧集摘要生成(v1 路径,兼容保留)。
 
         context 必需键:
             input: SummaryInput — 剧本草稿 + 连续性状态
@@ -117,6 +126,77 @@ class SummarizerSkill(Skill):
 
         return output
 
+    # ---- v2 typed delta 路径(M-03) ----
+
+    async def execute_delta(
+        self,
+        agent: BaseAgent,
+        prompt_loader: PromptLoader,
+        *,
+        episode_number: int,
+        script_content: dict[str, Any],
+        previous_state: ContinuityState,
+    ) -> EpisodeDelta:
+        """从单集正文提取 typed delta(v2)。
+
+        只负责 Prompt 组装、LLM 调用与结构性校验(episode 匹配、
+        引用下标合法);语义引用校验(角色/事实/伏笔存在性)由
+        StoryStateService 在 reduce 前执行——Skill 不访问 DB。
+
+        Raises:
+            SummarizerValidationError: 结构校验失败
+            RuntimeError: LLM 调用失败
+        """
+        tpl = prompt_loader.get("episode_summary_v2")
+        rendered = tpl.render(
+            episode_number=str(episode_number),
+            script_draft=_json.dumps(script_content, ensure_ascii=False, indent=2),
+            continuity_context=continuity_context_projection(previous_state),
+        )
+        result = await agent.generate_structured(
+            EpisodeDelta,
+            [{"role": "user", "content": rendered}],
+            prompt_name="episode_summary_v2",
+            temperature=0.2,
+        )
+        if result.error_code or result.parsed is None:
+            logger.error(
+                "typed delta LLM 失败: code=%s detail=%s",
+                result.error_code, result.error_detail,
+            )
+            raise RuntimeError(
+                f"episode_summary_v2 LLM 调用失败: "
+                f"{result.error_code} - {result.error_detail}"
+            )
+        delta = cast("EpisodeDelta", result.parsed)
+        self._validate_delta(delta, episode_number)
+        return delta
+
+    def _validate_delta(self, delta: EpisodeDelta, expected_episode: int) -> None:
+        """结构校验:集号匹配、引用下标合法、伏笔重开/回收 ID 合法形状。"""
+        errors: list[str] = []
+        if delta.episode_number != expected_episode:
+            errors.append(
+                f"episode_number 不匹配: 期望 {expected_episode}, "
+                f"实际 {delta.episode_number}"
+            )
+        if not delta.summary.strip():
+            errors.append("summary 为空")
+        for i, knowledge in enumerate(delta.knowledge):
+            if knowledge.new_fact_index is not None and knowledge.new_fact_index >= len(
+                delta.facts
+            ):
+                errors.append(
+                    f"knowledge[{i}].new_fact_index {knowledge.new_fact_index} "
+                    f"越界(facts 共 {len(delta.facts)} 条)"
+                )
+        if errors:
+            msg = "typed delta 结构校验失败:\n" + "\n".join(
+                f"  - {e}" for e in errors
+            )
+            logger.error(msg)
+            raise SummarizerValidationError(msg)
+
     # ---- 后校验 ----
 
     def _validate_output(self, output: SummaryOutput, expected_episode: int) -> None:
@@ -157,6 +237,31 @@ class SummarizerSkill(Skill):
 # ========================================================================
 # 辅助函数
 # ========================================================================
+
+
+def continuity_context_projection(state: ContinuityState) -> str:
+    """把前态投影为 LLM 可引用的紧凑 JSON(角色/已知事实/开放伏笔/道具)。
+
+    只暴露可引用实体与其稳定 ID——事实 ID → 文本、开放伏笔 ID → 描述、
+    角色与已知 fact_id、道具当前持有者;已回收伏笔与作者计划不进入
+    (前者无需引用,后者不得泄露给正文提取)。
+    """
+    projection: dict[str, Any] = {
+        "characters": sorted(state.character_states.keys()),
+        "character_known_facts": {
+            cid: [k.fact_id for k in cs.known_facts]
+            for cid, cs in state.character_states.items()
+            if cs.known_facts
+        },
+        "facts": {fid: f.text for fid, f in state.facts.items()},
+        "open_loops": {
+            loop.loop_id: loop.description for loop in state.open_loops
+        },
+        "props": {
+            pid: p.holder_character_id for pid, p in state.props.items()
+        },
+    }
+    return _json.dumps(projection, ensure_ascii=False, indent=1)
 
 
 def summary_output_to_episode_summary(output: SummaryOutput) -> EpisodeSummary:

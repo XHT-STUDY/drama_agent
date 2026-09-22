@@ -230,7 +230,7 @@ Idea / Outline / TXT / DOCX
 - 第一次失败使用原 Prompt 重试，第二次失败附加精简的 Schema 错误；
 - 仍失败则节点失败，不写入正式 Artifact；
 - 单节点默认超时 180 秒；
-- MVP 单次完整 Demo 的模型调用软上限为 18 次；
+- MVP 单次完整 Demo 的模型调用软上限为 34 次(M-03 起每集增加 1 次剧情派生调用,10 集全流程≈33 次;硬上限 40,见 config run_max_llm_*)
 - 任何重试都写入 llm_call_attempt 追踪信息。
 
 ---
@@ -3445,6 +3445,40 @@ Phase J 的 12 个任务全部完成但版本仍停在 0.1.0-rc1。定版落袋�
 | L-4 | 剧本分批生成 | L-3 | 1d | ✅ DONE（2026-08-24）：continue 请求 batch_size（本批集数，封顶目标）；批模式 stop_after=scripts——write_episodes 写 existing+batch 集、评估后停 scripts 门；RunResponse 暴露 stage_gate；计划卡按门类型显示按钮组（下一集/下 5 集/剩余全部；大纲门同样提供三种起批方式）；write_episodes 复用 existing 跳过续写 |
 
 ---
+
+## 20.7 Phase IR 规划（意图识别优化，2026-09-18 登记）
+
+> 依据文档：`docs/INTENT_RECOGNITION_OPTIMIZATION_PLAN.md`（决策已确认）。
+> 目标：把意图识别升级为"turn_type + intent + target + 约束 + 执行范围"联合契约，
+> 可测量、可校验、可追踪；不新增 intent 枚举，不开放模型自由工具调用。
+> 四阶段串行、各自独立可合并；全部完成定义见该文档 §14。
+
+| # | 任务 | 依赖 | 估算 | 要点 |
+|---:|---|---|---:|---|
+| IR-1 | 修正评测尺子 | — | 2–3d | ✅ DONE（2026-09-18）：`agent_commands.json` 升级 dataset v3（88 条）——6 条旧 `plan/explain` 按 v1.4 重标为 answer 分支、新增 21 条 continue 基础集与 2 条明确目标×上下文冲突用例、新增 split/target_type/batch_size/risk/coverage 标注；新增纯函数评分器 `tests/evals/command_scorer.py`（turn_type→intent→target→batch 分层、micro/macro、混淆矩阵、§4.3 失败分类、§3.3 发版门槛）；harness 重写（评分器单测用伪造结果验证 target/batch 指标与门槛；结果文件新鲜度契约防旧结果冒充；`EVAL_REPORT_ONLY=1` 开发期只产报告，默认发版模式门槛不达标即非零退出）；v1.3 旧结果归档 `results/archive/`；AGENT_EVAL_REPORT/METHOD/TEST_PLAN 同步 |
+| IR-2 | 扩充代表性数据 | IR-1 | 4–6d | ✅ DONE（2026-09-18）：`agent_commands.json` 扩至 240 条（dataset v4）+ 新增 `agent_commands_holdout.json` 120 条，合并分布恰为 §7.2 配额（45/50/45/55/45/40/80）；交叉覆盖下限全部达标（active ctx 62/60、冲突 32/30、多轮 60/60、口语 50/50、复合 40/40、白名单漂移 45/40、明确集数 100/80、范围外 40/40）；契约测试守护分布/下限/ID 全局唯一/盲测原文不进 Prompt/preflight 标注与真实行为一致（发现并修复 3 条 preflight 误触发标注）；多轮用例经 recent_dialog 走生产 project_context 最近消息路径；真实评测支持 EVAL_SPLIT×EVAL_REPEATS，门槛按最差一次判定；`tests/evals/README.md` 标注规范+纪律+已知边界+changelog |
+| IR-3 | 强化生产路由 | IR-2 | 5–8d | ✅ DONE（2026-09-18）：domain 新增 `resolve_plan_target` 纯函数（文本明确目标 > 活动上下文 > 模型推断；集数分歧规范化为文本并记录 disagreement；点名大纲/设定却要改剧本 → 澄清不生成 Action），Skill 在模型输出后执行校验；多目标正则收敛（单一大纲对象的多个集数=条目引用，cmd-036/175 恢复为回归样本，dataset v5）；`user_request` 原文贯穿 AgentActionPlan/Revise 命令/Run config/工作流状态，dispatcher 以"原文=完整授权边界+结构化约束=索引"组合进修订输入（旧计划 legacy 兼容）；explain 分流补齐"查看已有评估"（读 evaluation Artifact，不触发新评估，不误读剧本正文）；确认短路增加最近 assistant 消息保护（非 action_plan/action_result 时回落 Planner）+ 低基数遥测日志；前端类型与 ActionPlanCard 展示原始请求 |
+| IR-4 | 端到端与运行闭环 | IR-3 | 4–6d | ⏳ PARTIAL（2026-09-18）：✅ 单集评估执行范围契约——Dispatcher 新增 `collect_evaluation_scripts`（scope=episode 只取指定集最新 valid，缺失→明确失败绝不退化为全项目；scope=project 才收全部），计划层 `_script_snapshots` 对缺失目标集同样明确失败（此前产出空快照计划），4 条范围契约测试；⬜ 低基数 Prometheus 指标（planner/target/clarification/shortcut，现有低基数结构化日志已埋点）、§9.3 端到端语义矩阵扩展、线上失败样本回灌流程——待后续任务卡 |
+
+---
+
+## 20.8 Phase M 规划（Memory 改造，2026-09-18 登记；M-01～M-05 已交付）
+
+> 依据：[MEMORY_DESIGN.md](MEMORY_DESIGN.md) 与
+> [MEMORY_IMPLEMENTATION_PLAN.md](MEMORY_IMPLEMENTATION_PLAN.md)。
+> 对应 Agent Native 阶段三 W3-01～W3-04/W3-06/W3-07。
+
+| # | 任务 | 估算 | 状态 |
+|---:|---|---:|---|
+| M-01 | Memory 评测基线（对话 32 组×4 长度档 + 剧情 10 组×10 集；四消融组；四层评分；生产探针） | 1.5d | ✅ DONE（2026-09-18）：`tests/golden/memory/`、`tests/evals/memory_harness/`、`scripts/evaluate_memory.py`、`docs/MEMORY_EVAL_REPORT.md`；基线缺口量化——current 组 96/192 条消息约束召回坍缩为 0、剧情标题摘要路径无角色知识 |
+| M-02 | 对话 Memory 生产链路 | 2d | ✅ DONE（2026-09-18）：统一 `app/memory/wiring.py` 工厂（/agent/turns·Action·普通消息 API 共享挂载）；累计摘要 v2（conversation_summary@2.0.0，previous/digest/幂等输入，v1 迁移种子）；摘要调度移出响应路径（后台短事务+可见性等待）；项目级有界合并（跨会话不比较 sequence）；AgentContextService 走 ShortTermStore |
+| M-03 | 持久化剧情证据与 ContinuityState | 3d | ✅ DONE（2026-09-18）：typed delta（EpisodeDelta）+ v2 envelope（basis/事实/知识/道具/计划，区间与引用校验，v1 兼容）；ContinuityManager.apply_episode_delta 纯 reducer（服务端稳定 ID）；StoryStateService（episode_summary_v2 Prompt、语义引用校验 fail closed、input_hash 幂等、正文/派生分账）；迁移 0013 部分唯一索引；M-01 剧情数据集经生产 reducer 消费通过 |
+| M-04 | 统一写作/修订/恢复/失效读取 | 3.5d | ✅ DONE（2026-09-18）：write_episodes 按 Run 工作集加载 through=N-1 确切前态、写后即派生、失败保留正文（derivation_pending_episode）；Run State v2 字段；continuity_check 弃标题回放走同一服务；resolve_status（ready/pending/stale/gap/missing）+ `GET /projects/{id}/story-state`（零模型调用）；ContextBuilder strict_required（REQUIRED_CONTEXT_MISSING / PROTECTED_CONTEXT_TOO_LARGE）；一次 5 集 vs 1+1+3 前态一致、重启续写不丢知识 |
+| M-05 | 状态可见性与退出验收 | 1.5d | ✅ DONE（2026-09-18）：前端 StoryStatePanel（状态徽章/工作集基准/作者事实来源跳转/角色已知/未发生计划分账，恢复入口）+ AgentWorkspace 集成 + 9 组件测试；API_CONTRACT/TEST_PLAN/KNOWN_LIMITATIONS/EVAL_REPORT/DEV_LOG 更新。**待办**：真实模型固定集评测（EVAL_LLM_ENABLED=1） |
+
+退出验收（2026-09-18）：后端 ruff/mypy/pytest 全量全绿；前端 lint/tsc/228 组件测试全绿；
+迁移 0013 upgrade/downgrade 验证通过；v1 摘要与旧 Run 兼容读取保持。
+真实模型评测与 Mem0 决策门未触发（见 KNOWN_LIMITATIONS §6）。
 
 ## 21. MVP 后续 Backlog
 

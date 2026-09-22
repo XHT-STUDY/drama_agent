@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { artifactsApi, conversationsApi, runsApi } from "@/lib/api-client";
+import { artifactsApi, conversationsApi, runsApi, storyStateApi } from "@/lib/api-client";
 import { latestValidPerEpisode } from "@/lib/artifact-latest";
 import { EpisodeNav } from "@/features/episodes/EpisodeNav";
 import type { EpisodeNavItem } from "@/features/episodes/EpisodeNav";
@@ -30,6 +30,7 @@ import {
 import { ActionPlanCard } from "./ActionPlanCard";
 import { AgentComposer } from "./AgentComposer";
 import { ArtifactCanvas } from "./ArtifactCanvas";
+import { StoryStatePanel } from "@/features/story-bible/StoryStatePanel";
 import { UploadInput } from "./UploadInput";
 import { ConversationPanel } from "./ConversationPanel";
 import { MessageList } from "./MessageList";
@@ -130,6 +131,13 @@ export function AgentWorkspace({ projectId, project }: Props) {
     queryKey: ["project-scripts-index", projectId],
     queryFn: () => artifactsApi.listAllByType(projectId, "script_draft"),
   });
+  // M-05:剧情状态只读查询(零模型调用;分批/采用变化后面板给出恢复入口)
+  const storyStateQuery = useQuery({
+    queryKey: ["story-state", projectId],
+    queryFn: () => storyStateApi.get(projectId),
+    staleTime: 30_000,
+  });
+
   const defaultResolvedRef = useRef(false);
   useEffect(() => {
     if (location.artifactId !== null || defaultResolvedRef.current) return;
@@ -493,6 +501,23 @@ export function AgentWorkspace({ projectId, project }: Props) {
             </button>
           </span>
         </div>
+      )}
+
+      {storyStateQuery.data && storyStateQuery.data.status !== "missing" && (
+        <details className="mb-3 rounded-lg" data-testid="story-state-details">
+          <summary className="cursor-pointer select-none text-xs text-[var(--text-muted)]">
+            剧情状态（截至第 {storyStateQuery.data.projection?.through_episode ?? 0} 集）
+          </summary>
+          <div className="mt-2">
+            <StoryStatePanel
+              state={storyStateQuery.data}
+              onRefresh={() =>
+                queryClient.invalidateQueries({ queryKey: ["story-state", projectId] })
+              }
+              onOpenSource={(artifactId) => location.openArtifact(artifactId)}
+            />
+          </div>
+        </details>
       )}
 
       {location.artifactId ? (

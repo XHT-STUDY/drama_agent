@@ -17,16 +17,22 @@ import re
 from typing import Any
 
 from app.domain.continuity import (
+    CharacterKnowledge,
     CharacterState,
     ContinuityState,
     EpisodeSummary,
+    FactRecord,
+    FuturePlan,
+    PropRecord,
     RelationshipChange,
+    StateBasis,
     StoryLoop,
     TimelineEvent,
 )
 from app.domain.revision import ContinuityViolation, ContinuityWarning
 from app.domain.script import ScriptDraft
 from app.domain.story_bible import StoryBible
+from app.domain.summary import EpisodeDelta
 
 logger = logging.getLogger(__name__)
 
@@ -35,20 +41,20 @@ class ContinuityManager:
     """跨集连续性状态管理器。
 
     管理从 StoryBible 到逐集更新后的完整连续性状态。
-    所有更新方法返回新 ContinuityState（不可变语义）。
+    所有更新方法返回新 ContinuityState(不可变语义)。
     """
 
     # ---- 初始状态创建 ----
 
     @staticmethod
     def create_initial_state(story_bible: StoryBible) -> ContinuityState:
-        """从 StoryBible 创建初始 ContinuityState。
+        """从 StoryBible 创建初始 ContinuityState(v1 兼容入口)。
 
         自动填充:
         - locked_facts: 从 StoryBible.locked_facts 直接复制
         - open_loops: 从 StoryBible.open_loops 创建 StoryLoop 列表
         - character_states: 为每个角色创建初始 CharacterState
-        - through_episode: 设为 0（尚未完成任何一集）
+        - through_episode: 设为 0(尚未完成任何一集)
 
         Args:
             story_bible: 已生成的 StoryBible
@@ -59,7 +65,7 @@ class ContinuityManager:
         # 从 StoryBible 提取 locked_facts
         locked_facts: list[str] = list(story_bible.locked_facts)
 
-        # 从 StoryBible.open_loops 创建 StoryLoop（初始均为 open）
+        # 从 StoryBible.open_loops 创建 StoryLoop(初始均为 open)
         open_loops: list[StoryLoop] = []
         for idx, loop_desc in enumerate(story_bible.open_loops):
             loop = StoryLoop(
@@ -97,6 +103,267 @@ class ContinuityManager:
             open_loops=open_loops,
             episode_summaries=[],
             character_states=character_states,
+        )
+
+    @staticmethod
+    def create_initial_state_v2(
+        story_bible: StoryBible,
+        *,
+        basis: StateBasis,
+    ) -> ContinuityState:
+        """从 StoryBible 创建 v2 初始状态(绑定确切工作集)。
+
+        角色/伏笔初始化规则与 v1 相同(bible 伏笔 loop_001… 稳定 ID),
+        envelope 记录 basis;locked_facts 保持文本列表
+        (与 facts(正文事实)分账——设定事实不冒充已发生事件)。
+        """
+        v1 = ContinuityManager.create_initial_state(story_bible)
+        return ContinuityState(
+            content_schema_version="2.0",
+            basis=basis,
+            through_episode=0,
+            episode_summaries=[],
+            open_loops=[loop.model_copy() for loop in v1.open_loops],
+            resolved_loops=[],
+            locked_facts=list(v1.locked_facts),
+            character_states={
+                cid: cs.model_copy() for cid, cs in v1.character_states.items()
+            },
+        )
+
+    # ---- v2 typed delta reducer(M-03) ----
+
+    @staticmethod
+    def apply_episode_delta(
+        state: ContinuityState,
+        delta: EpisodeDelta,
+        *,
+        source_script_artifact_id: str,
+        summary_artifact_id: str | None = None,
+        assigned_ids: dict[str, str] | None = None,
+    ) -> ContinuityState:
+        """应用一集 typed delta,返回新状态(纯函数,不改入参)。
+
+        服务端规则(MEMORY_DESIGN §7.4):
+        - 新事实/伏笔/事件/道具缺省 ID 时按稳定规则分配
+          (fact_{ep:02d}_{idx:02d} 等,不让各集都生成 loop_001);
+          分配结果写入 assigned_ids(可选,供服务端校验/审计);
+        - 事实不可变:首见记录来源,后续同 ID 不覆盖;
+        - 角色知识只按 learned=True 增加,不删除;
+        - 伏笔允许 open→resolved→open(重开);
+        - 未来计划在 reveal_episode 当集(或之后)标记 revealed,
+          且仅当该集正文确实经过本 reducer 应用。
+
+        输出重新经 Pydantic 完整校验(不走 model_copy(update=...) 绕过)。
+        引用合法性(角色存在、事实存在、伏笔 open)由调用方
+        StoryStateService 在 reduce 前校验;本方法只做状态变换。
+        """
+        episode = delta.episode_number
+        assigned = assigned_ids if assigned_ids is not None else {}
+
+        facts: dict[str, FactRecord] = {k: v.model_copy() for k, v in state.facts.items()}
+        new_fact_ids: list[str | None] = []
+        for idx, fact in enumerate(delta.facts):
+            if fact.fact_id:
+                if fact.fact_id not in facts:
+                    raise ValueError(f"facts 引用了不存在的事实 {fact.fact_id}")
+                new_fact_ids.append(fact.fact_id)  # 既有事实不可变
+                continue
+            new_fid = f"fact_{episode:02d}_{idx + 1:02d}"
+            while new_fid in facts:
+                new_fid = new_fid + "x"
+            assigned[fact.text] = new_fid
+            new_fact_ids.append(new_fid)
+            facts[new_fid] = FactRecord(
+                text=fact.text,
+                source_episode=episode,
+                source_scene=fact.source_scene,
+                source_artifact_id=source_script_artifact_id,
+            )
+
+        # 角色知识
+        character_states = {
+            cid: cs.model_copy(deep=True) for cid, cs in state.character_states.items()
+        }
+        for knowledge in delta.knowledge:
+            if not knowledge.learned:
+                continue
+            kfid: str
+            if knowledge.new_fact_index is not None:
+                if not (0 <= knowledge.new_fact_index < len(new_fact_ids)):
+                    raise ValueError(
+                        f"knowledge.new_fact_index {knowledge.new_fact_index} "
+                        "越界"
+                    )
+                kfid = str(new_fact_ids[knowledge.new_fact_index])
+            else:
+                kfid = knowledge.fact_id or ""
+            if kfid and kfid not in facts and kfid not in new_fact_ids:
+                raise ValueError(f"knowledge 引用了不存在的事实 {kfid}")
+            cs = character_states.get(knowledge.character_id)
+            if cs is None:
+                raise ValueError(
+                    f"knowledge 引用了未知角色 {knowledge.character_id}"
+                )
+            if not any(k.fact_id == kfid for k in cs.known_facts):
+                cs.known_facts.append(
+                    CharacterKnowledge(
+                        fact_id=kfid,
+                        learned_episode=episode,
+                        source_scene=knowledge.source_scene,
+                        source_artifact_id=source_script_artifact_id,
+                    )
+                )
+                cs.last_updated_episode = episode
+
+        # 伏笔
+        open_loops = [loop.model_copy() for loop in state.open_loops]
+        resolved_loops = [loop.model_copy() for loop in state.resolved_loops]
+        resolved_now = set(delta.loops_resolved)
+        for intro in delta.loops_introduced:
+            existing = next(
+                (lp for lp in open_loops + resolved_loops
+                 if lp.loop_id == intro.loop_id),
+                None,
+            )
+            if intro.loop_id and existing is not None:
+                # 重开:resolved → open
+                if existing.status == "resolved":
+                    resolved_loops = [
+                        lp for lp in resolved_loops if lp.loop_id != intro.loop_id
+                    ]
+                    open_loops.append(
+                        existing.model_copy(
+                            update={
+                                "status": "open",
+                                "resolved_episode": None,
+                                "description": intro.description,
+                                "source_artifact_id": source_script_artifact_id,
+                            }
+                        )
+                    )
+                continue
+            lid: str
+            if intro.loop_id:
+                lid = intro.loop_id
+            else:
+                n = len([lp for lp in open_loops + resolved_loops
+                         if lp.introduced_episode == episode]) + 1
+                lid = f"loop_{episode:02d}_{n:02d}"
+                while any(lp.loop_id == lid for lp in open_loops + resolved_loops):
+                    n += 1
+                    lid = f"loop_{episode:02d}_{n:02d}"
+                assigned[intro.description] = lid
+            open_loops.append(
+                StoryLoop(
+                    loop_id=lid,
+                    description=intro.description,
+                    introduced_episode=episode,
+                    status="open",
+                    source_artifact_id=source_script_artifact_id,
+                )
+            )
+        if resolved_now:
+            still_open: list[StoryLoop] = []
+            for loop in open_loops:
+                if loop.loop_id in resolved_now:
+                    resolved_loops.append(
+                        loop.model_copy(
+                            update={
+                                "status": "resolved",
+                                "resolved_episode": episode,
+                            }
+                        )
+                    )
+                else:
+                    still_open.append(loop)
+            open_loops = still_open
+
+        # 道具
+        props = {k: v.model_copy() for k, v in state.props.items()}
+        for idx, prop in enumerate(delta.props):
+            if prop.prop_id:
+                pid = prop.prop_id
+            else:
+                pid = f"prop_{episode:02d}_{idx + 1:02d}"
+                while pid in props:
+                    pid += "x"
+                assigned[f"prop:{pid}"] = pid
+            props[pid] = PropRecord(
+                holder_character_id=prop.holder_character_id,
+                from_character_id=prop.from_character_id,
+                source_episode=episode,
+                source_scene=prop.source_scene,
+                source_artifact_id=source_script_artifact_id,
+            )
+
+        # 关系与时间线
+        relationships = list(state.relationship_changes) + [
+            RelationshipChange(
+                from_character_id=r.from_character_id,
+                to_character_id=r.to_character_id,
+                episode_number=episode,
+                before=r.before,
+                after=r.after,
+            )
+            for r in delta.relationships
+        ]
+        timeline = list(state.timeline_events) + [
+            TimelineEvent(
+                event_id=(t.event_id or f"tl_{episode:02d}_{t.order_in_episode:03d}"),
+                episode_number=episode,
+                order_in_episode=t.order_in_episode,
+                description=t.description,
+                source_artifact_id=source_script_artifact_id,
+            )
+            for t in delta.timeline_events
+        ]
+
+        # 未来计划:新增 + 按集数揭示
+        future_plans: list[FuturePlan] = []
+        for existing_plan in state.future_plans:
+            revealed = existing_plan.revealed or episode >= existing_plan.reveal_episode
+            future_plans.append(
+                existing_plan.model_copy(update={"revealed": revealed})
+            )
+        for plan in delta.future_plans:
+            if not any(p.text == plan.text for p in future_plans):
+                future_plans.append(
+                    FuturePlan(
+                        text=plan.text,
+                        reveal_episode=plan.reveal_episode,
+                        revealed=episode >= plan.reveal_episode,
+                        source_episode=episode,
+                    )
+                )
+
+        summary = EpisodeSummary(
+            episode_number=episode,
+            summary=delta.summary,
+            key_events=delta.key_events,
+            ending_state=delta.ending_state,
+        )
+        basis = state.basis.model_copy(deep=True) if state.basis else None
+        if basis is not None:
+            basis.script_artifact_ids[str(episode)] = source_script_artifact_id
+            if summary_artifact_id:
+                basis.episode_summary_artifact_ids[str(episode)] = summary_artifact_id
+
+        # 全量重建 + Pydantic 完整校验(W3-02:禁止 model_copy 绕过验证)
+        return ContinuityState(
+            content_schema_version="2.0",
+            basis=basis,
+            through_episode=episode,
+            episode_summaries=list(state.episode_summaries) + [summary],
+            open_loops=open_loops,
+            resolved_loops=resolved_loops,
+            locked_facts=list(state.locked_facts),
+            character_states=character_states,
+            relationship_changes=relationships,
+            timeline_events=timeline,
+            facts=facts,
+            props=props,
+            future_plans=future_plans,
         )
 
     # ---- 剧集后更新 ----
@@ -183,6 +450,119 @@ class ContinuityManager:
             relationship_changes=new_relationships,
             timeline_events=new_timeline,
         )
+
+    # ---- v2 上下文渲染(M-04) ----
+
+    @staticmethod
+    def get_context_for_episode_v2(
+        state: ContinuityState,
+        episode: int,
+        *,
+        character_names: dict[str, str] | None = None,
+    ) -> str:
+        """为第 episode 集生成 v2 连续性上下文(结构化状态投影)。
+
+        分区:前情摘要 / 已发生事实(带来源) / 角色已知信息(与作者事实
+        分账)/ 未闭合与已回收伏笔 / 道具归属 / 关系 / 时间线 / 锁定事实 /
+        作者未来计划(显式标注"未发生,不得写成正文事实")。
+        只含 source_episode < episode 的内容——检查/写作第 N 集使用
+        through=N-1 前态,不得把第 N 集候选新稿写入前态。
+        """
+        names = character_names or {}
+        parts: list[str] = []
+
+        prev = [x for x in state.episode_summaries if x.episode_number < episode]
+        if prev:
+            parts.append("## 前集摘要")
+            for x in sorted(prev, key=lambda i: i.episode_number):
+                parts.append(f"### 第 {x.episode_number} 集")
+                parts.append(x.summary)
+                if x.key_events:
+                    parts.append("**关键事件**: " + "；".join(x.key_events))
+            parts.append("")
+
+        facts = {fid: f for fid, f in state.facts.items()
+                 if f.source_episode < episode}
+        if facts:
+            parts.append("## 已发生事实(作者视角)")
+            for fid, f in sorted(facts.items()):
+                parts.append(
+                    f"- [{fid}] {f.text}"
+                    f"(第{f.source_episode}集第{f.source_scene}场)"
+                )
+            parts.append("")
+
+        knowledge_lines: list[str] = []
+        for cid, cs in state.character_states.items():
+            known = sorted(
+                (k.fact_id, k.learned_episode) for k in cs.known_facts
+                if k.learned_episode < episode
+            )
+            if known:
+                label = names.get(cid, cid)
+                items = "、".join(f"{fid}(第{ep}集得知)" for fid, ep in known)
+                knowledge_lines.append(f"- {label}({cid})已知: {items}")
+        if knowledge_lines:
+            parts.append("## 角色已知信息(未列出的角色不知道这些事实)")
+            parts.extend(knowledge_lines)
+            parts.append("")
+
+        open_loops = list(state.open_loops)
+        if open_loops:
+            parts.append("## 未闭合伏笔")
+            for lp in open_loops:
+                intro = f"第{lp.introduced_episode}集" if lp.introduced_episode else "StoryBible"
+                parts.append(f"- [{lp.loop_id}] {lp.description}({intro}引入)")
+            parts.append("")
+        resolved = [lp for lp in state.resolved_loops
+                    if (lp.resolved_episode or 0) < episode]
+        if resolved:
+            parts.append("## 已回收伏笔(不得重复回收)")
+            for lp in resolved:
+                parts.append(f"- [{lp.loop_id}] {lp.description}")
+            parts.append("")
+
+        props = {pid: p for pid, p in state.props.items()
+                 if p.source_episode < episode}
+        if props:
+            parts.append("## 道具归属")
+            for pid, p in sorted(props.items()):
+                holder = names.get(p.holder_character_id, p.holder_character_id)
+                parts.append(f"- {pid} 现由 {holder}({p.holder_character_id}) 持有")
+            parts.append("")
+
+        relations = [r for r in state.relationship_changes
+                     if r.episode_number < episode]
+        if relations:
+            parts.append("## 关系变化")
+            for r in relations:
+                a = names.get(r.from_character_id, r.from_character_id)
+                b = names.get(r.to_character_id, r.to_character_id)
+                parts.append(f"- 第{r.episode_number}集: {a}→{b}: {r.before or '?'} → {r.after}")
+            parts.append("")
+
+        events = [t for t in state.timeline_events
+                  if t.episode_number < episode]
+        if events:
+            events = sorted(events, key=lambda t: (t.episode_number, t.order_in_episode))
+            parts.append("## 时间线(已发生)")
+            for t in events:
+                parts.append(f"- 第{t.episode_number}集: {t.description}")
+            parts.append("")
+
+        if state.locked_facts:
+            parts.append("## 锁定事实(不可修改)")
+            parts.extend(f"- {x}" for x in state.locked_facts)
+            parts.append("")
+
+        pending_plans = [plan for plan in state.future_plans if not plan.revealed]
+        if pending_plans:
+            parts.append("## 作者未来计划(未发生,不得写成已发生事实)")
+            for plan in pending_plans:
+                parts.append(f"- (计划,第{plan.reveal_episode}集揭示) {plan.text}")
+            parts.append("")
+
+        return "\n".join(parts)
 
     # ---- locked facts 管理 ----
 
