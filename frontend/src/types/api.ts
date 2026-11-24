@@ -155,6 +155,10 @@ export interface DialogueLine {
   line_type?: DialogueLineType;
 }
 
+export type SceneBlock =
+  | { kind: "action"; text: string }
+  | ({ kind: "dialogue" } & DialogueLine);
+
 export interface Scene {
   scene_number: number;
   location: string;
@@ -164,6 +168,7 @@ export interface Scene {
   characters: string[];
   action: string;
   dialogue: DialogueLine[];
+  blocks?: SceneBlock[] | null;
 }
 
 export interface ScriptDraftContent {

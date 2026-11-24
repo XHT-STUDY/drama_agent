@@ -128,6 +128,22 @@ AgentTurn、AgentAction、WorkflowRun 与 Artifact 的展示引用，不承载�
 | GET | `/artifacts/{id}/links` | 源依赖查询 |
 | GET | `/artifacts/{id}/references?relation=&type=` | 反向引用查询（J-08：如仍引用旧大纲的剧本） |
 
+#### 剧本正文顺序
+
+`script_draft` 的版本由 Artifact 的 `content_schema_version` 标识。历史 1.0 场次只有 `action` 和 `dialogue`，按动作后接台词显示。新生成稿、有序导入稿和修订稿使用 2.0，有序场次的 `content.scenes[].blocks` 数组按观众所见所闻的顺序排列。例如：
+
+```json
+[
+  {"kind": "action", "text": "小周把信推到桌边。"},
+  {"kind": "dialogue", "speaker": "阿兰", "text": "你看过了？", "line_type": "dialogue"},
+  {"kind": "action", "text": "小周收回手。"}
+]
+```
+
+- 动作块包含 `kind`、`text`。台词块包含 `kind`、`speaker`、`text`，可带 `parenthetical`，其 `line_type` 为 `dialogue`、`vo` 或 `os`。
+- 2.0 场次同时保留 `action` 和 `dialogue`，由 `blocks` 投影生成，用于兼容旧调用方。有序场次的展示、导出和 Diff 以 `blocks` 为准。
+- 对旧稿做局部修订时，未改动场次可以继续沿用旧结构，因此 2.0 稿件也应逐场判断是否存在 `blocks`。旧版本原样保存。结构化导入保留源稿 `plain_text`，生成和修订稿的 `plain_text` 由服务端渲染。
+
 ## GET /artifacts/diff — 两版本 Diff
 
 对比同一 Artifact 的两个不可变版本（from → to），输出场景感知的增删改变化。

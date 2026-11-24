@@ -212,6 +212,8 @@ async def revise_node(state: CreationState) -> dict[str, Any]:
             artifact_type="script_draft",
             episode_number=plan.episode_number,
             content=draft_content,
+            content_schema_version=result.script_draft.content_schema_version,
+            dedup_extra=f"script_schema:{result.script_draft.content_schema_version}",
             status="draft",
             prompt_version=prompt_version,
             source_artifact_ids=[

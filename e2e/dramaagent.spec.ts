@@ -92,8 +92,14 @@ test.describe("H-07 全链路 Demo", () => {
       await page.goto(`/projects/${pid}/scripts/1`);
       await expect(page.getByTestId("artifact-canvas")).toBeVisible();
       await expect(page.getByTestId("canvas-artifact-meta")).toContainText("第 1 集");
+      const sceneLines = page.locator("#scene-1 p");
+      await expect(sceneLines.nth(0)).toHaveText("△教练宣布淘汰名单。");
+      await expect(sceneLines.nth(1)).toContainText("林峰，你知道的，职业足球很残酷");
+      await expect(sceneLines.nth(2)).toContainText("△林峰听到自己的名字");
+      await page.reload();
+      await expect(sceneLines.nth(1)).toContainText("林峰，你知道的，职业足球很残酷");
       // 评估面板：低分场景 need_revision=true → 「⚠️ 需修订」
-      await page.getByRole("button", { name: "评估" }).click();
+      await page.getByTestId("artifact-canvas").getByRole("button", { name: "评估", exact: true }).click();
       await expect(page.getByText("需修订").first()).toBeVisible();
       await expect(page.getByText("📊 维度评分")).toBeVisible();
     });

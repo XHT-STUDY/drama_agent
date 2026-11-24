@@ -23,7 +23,7 @@ from app.agents.base import BaseAgent
 from app.application.artifact_service import ArtifactService
 from app.application.run_service import RunService
 from app.domain.continuity import ContinuityState
-from app.domain.script import EpisodeWriterInput, ScriptDraft
+from app.domain.script import EpisodeWriterInput, OrderedScriptDraft, ScriptDraft
 from app.events.publisher import EventPublisher
 from app.llm.fake import FakeLLM
 from app.prompts.loader import PromptLoader
@@ -182,8 +182,8 @@ class TestStoryStateRecovery:
         )
         factory_a = _CountingDeltaFactory()
         llm_a = FakeLLM(seed=42)
-        llm_a.register("write_episode", ScriptDraft.model_validate(
-            _load_golden("script_draft_valid")))
+        llm_a.register("write_episode", OrderedScriptDraft.model_validate(
+            _load_golden("script_draft_ordered")))
         llm_a.register_factory("episode_summary_v2", factory_a)
         captured_a: list[EpisodeWriterInput] = []
         result_a = await _invoke_node(
@@ -206,8 +206,8 @@ class TestStoryStateRecovery:
         )
         factory_b = _CountingDeltaFactory()
         llm_b = FakeLLM(seed=42)
-        llm_b.register("write_episode", ScriptDraft.model_validate(
-            _load_golden("script_draft_valid")))
+        llm_b.register("write_episode", OrderedScriptDraft.model_validate(
+            _load_golden("script_draft_ordered")))
         llm_b.register_factory("episode_summary_v2", factory_b)
         captured_b: list[EpisodeWriterInput] = []
         agent_b = BaseAgent(name="writer", llm=llm_b)
@@ -261,8 +261,8 @@ class TestStoryStateRecovery:
         run, sb, outline = await _seed(db_session, artifact_service, test_project)
         factory = _CountingDeltaFactory()
         llm = FakeLLM(seed=42)
-        llm.register("write_episode", ScriptDraft.model_validate(
-            _load_golden("script_draft_valid")))
+        llm.register("write_episode", OrderedScriptDraft.model_validate(
+            _load_golden("script_draft_ordered")))
         llm.register_factory("episode_summary_v2", factory)
 
         first = await _invoke_node(
@@ -282,8 +282,8 @@ class TestStoryStateRecovery:
         )
         async with factory2() as fresh_db:
             llm2 = FakeLLM(seed=42)
-            llm2.register("write_episode", ScriptDraft.model_validate(
-                _load_golden("script_draft_valid")))
+            llm2.register("write_episode", OrderedScriptDraft.model_validate(
+                _load_golden("script_draft_ordered")))
             llm2.register_factory("episode_summary_v2", factory)
             resumed_state = _base_state(
                 run, test_project, sb, outline,
@@ -322,8 +322,8 @@ class TestStoryStateRecovery:
         factory = _CountingDeltaFactory()
         factory.fail_episodes = {3}
         llm = FakeLLM(seed=42)
-        llm.register("write_episode", ScriptDraft.model_validate(
-            _load_golden("script_draft_valid")))
+        llm.register("write_episode", OrderedScriptDraft.model_validate(
+            _load_golden("script_draft_ordered")))
         llm.register_factory("episode_summary_v2", factory)
         agent = BaseAgent(name="writer", llm=llm)
 
@@ -371,8 +371,8 @@ class TestStoryStateRecovery:
         run, sb, outline = await _seed(db_session, artifact_service, test_project)
         factory = _CountingDeltaFactory()
         llm = FakeLLM(seed=42)
-        llm.register("write_episode", ScriptDraft.model_validate(
-            _load_golden("script_draft_valid")))
+        llm.register("write_episode", OrderedScriptDraft.model_validate(
+            _load_golden("script_draft_ordered")))
         llm.register_factory("episode_summary_v2", factory)
         captured: list[EpisodeWriterInput] = []
 
@@ -396,8 +396,8 @@ class TestStoryStateRecovery:
         run, sb, outline = await _seed(db_session, artifact_service, test_project)
         factory = _CountingDeltaFactory()
         llm = FakeLLM(seed=42)
-        llm.register("write_episode", ScriptDraft.model_validate(
-            _load_golden("script_draft_valid")))
+        llm.register("write_episode", OrderedScriptDraft.model_validate(
+            _load_golden("script_draft_ordered")))
         llm.register_factory("episode_summary_v2", factory)
 
         result = await _invoke_node(
@@ -421,8 +421,8 @@ class TestStoryStateRecovery:
         run, sb, outline = await _seed(db_session, artifact_service, test_project)
         factory = _CountingDeltaFactory()
         llm = FakeLLM(seed=42)
-        llm.register("write_episode", ScriptDraft.model_validate(
-            _load_golden("script_draft_valid")))
+        llm.register("write_episode", OrderedScriptDraft.model_validate(
+            _load_golden("script_draft_ordered")))
         llm.register_factory("episode_summary_v2", factory)
         agent = BaseAgent(name="writer", llm=llm)
 

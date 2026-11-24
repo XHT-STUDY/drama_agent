@@ -2,8 +2,8 @@
 
 职责:
 - 接收单集 Outline、StoryBible、前集摘要、连续性状态
-- 调用 LLM 生成 ScriptDraft (Scene/DialogueLine + plain_text)
-- 使用 WordCountTool/DialogueRatioTool 覆盖 LLM 自报指标
+- 调用 LLM 生成有序场景，服务端生成 ScriptDraft 和剧本纯文本
+- 使用 WordCountTool/DialogueRatioTool 计算文本指标
 - 按 1→2→3 集顺序生成 (每集独立 ScriptDraft Artifact)
 - 校验 Scene 编号连续性、角色可追溯、ending_hook 对应
 - 不写数据库——Artifact 持久化由调用节点/Service 负责
@@ -21,11 +21,11 @@ from typing import Any, cast
 from uuid import UUID
 
 from app.agents.base import BaseAgent
-from app.domain.script import EpisodeWriterInput, ScriptDraft
+from app.domain.script import EpisodeWriterInput, OrderedScriptDraft, ScriptDraft
 from app.prompts.loader import PromptLoader
 from app.skills.protocol import Skill, SkillMetadata
 from app.tools.dialogue_ratio import DialogueRatioTool
-from app.tools.script_render import script_plain_text
+from app.tools.script_render import materialize_script_draft
 from app.tools.word_count import WordCountTool
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ class EpisodeWriterSkill(Skill):
     """单集剧本写作 Skill。
 
     从单集大纲生成完整剧本草稿 (Scene/DialogueLine + plain_text)。
-    使用确定性工具覆盖 LLM 自报的 word_count 和 dialogue_ratio。
+    使用确定性工具计算 word_count 和 dialogue_ratio。
     """
 
     metadata = SkillMetadata(
@@ -74,7 +74,7 @@ class EpisodeWriterSkill(Skill):
             outline_artifact_id: UUID — 关联的分集大纲 Artifact ID
 
         Returns:
-            校验通过且指标已覆盖的 ScriptDraft
+            校验通过且附有文本指标的 ScriptDraft
 
         Raises:
             EpisodeWriterValidationError: 结构校验失败
@@ -121,7 +121,7 @@ class EpisodeWriterSkill(Skill):
         ]
 
         result = await agent.generate_structured(
-            ScriptDraft,
+            OrderedScriptDraft,
             messages,
             prompt_name="write_episode",
             temperature=0.8,
@@ -137,60 +137,37 @@ class EpisodeWriterSkill(Skill):
                 f"Episode Writer LLM 调用失败: {result.error_code} - {result.error_detail}"
             )
 
-        draft = cast(ScriptDraft, result.parsed)
+        output = cast(OrderedScriptDraft, result.parsed)
+        draft = materialize_script_draft(output, outline_artifact_id)
 
-        # 3. 覆盖 LLM 自报指标 (验收项 1)
-        await self._override_metrics(draft)
+        # 3. 计算成稿文本指标
+        await self._compute_metrics(draft)
 
         # 4. 后校验
         self._validate_draft(draft, ew_input)
 
-        # 5. 设置关联 Artifact ID
-        draft.referenced_outline_artifact_id = outline_artifact_id
-
         return draft
 
-    # ---- 指标覆盖 ----
+    # ---- 文本指标 ----
 
-    async def _override_metrics(self, draft: ScriptDraft) -> None:
-        """使用确定性工具计算并覆盖 LLM 自报的指标。
+    async def _compute_metrics(self, draft: ScriptDraft) -> None:
+        """使用确定性工具计算成稿指标。
 
-        plain_text: 从 scenes 确定性渲染（中文短剧剧本格式），不信任 LLM 自报文本
+        plain_text: 由服务端按有序段落渲染后传入
         word_count: 使用 WordCountTool 统计 plain_text 中文+标点数
         dialogue_ratio: 使用 DialogueRatioTool 计算 scenes 中对白占比
 
         仅记录告警，不因轻微越界直接失败。
         """
-        # plain_text 覆盖（与导出/前端展示/diff 共用同一渲染器，保证格式一致）
-        rendered = script_plain_text(
-            draft.episode_number, [s.model_dump() for s in draft.scenes]
-        )
-        if draft.plain_text != rendered:
-            logger.info("第 %d 集 plain_text 覆盖: 服务端确定性渲染", draft.episode_number)
-            draft.plain_text = rendered
-
-        # 字数覆盖
         wc_result = await self._word_counter.execute(plain_text=draft.plain_text)
-        computed_wc = int(wc_result.get("chinese_chars_with_punct", 0))
-        if draft.word_count != computed_wc:
-            logger.info(
-                "第 %d 集 word_count 覆盖: LLM=%d → Tool=%d",
-                draft.episode_number, draft.word_count, computed_wc,
-            )
-            draft.word_count = computed_wc
+        draft.word_count = int(wc_result.get("chinese_chars_with_punct", 0))
 
-        # 对白比例覆盖
         scenes_raw = [s.model_dump() for s in draft.scenes]
         dr_result = await self._dialogue_calc.execute(
             scenes=scenes_raw, plain_text=draft.plain_text,
         )
         computed_ratio = float(dr_result.get("dialogue_ratio", 0.0))
-        if abs(draft.dialogue_ratio - computed_ratio) > 0.001:
-            logger.info(
-                "第 %d 集 dialogue_ratio 覆盖: LLM=%.3f → Tool=%.3f",
-                draft.episode_number, draft.dialogue_ratio, computed_ratio,
-            )
-            draft.dialogue_ratio = computed_ratio
+        draft.dialogue_ratio = computed_ratio
 
         # 对白比例告警 (不阻断)
         if computed_ratio < _DIALOGUE_RATIO_LOW_WARN:

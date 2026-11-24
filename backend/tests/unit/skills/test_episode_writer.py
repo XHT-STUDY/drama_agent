@@ -22,7 +22,7 @@ import pytest
 
 from app.agents.base import BaseAgent
 from app.agents.creation import CreationAgent
-from app.domain.script import EpisodeWriterInput, ScriptDraft
+from app.domain.script import EpisodeWriterInput, OrderedScriptDraft, ScriptDraft
 from app.domain.story_bible import StoryBible
 from app.llm.fake import FakeLLM
 from app.prompts.loader import PromptLoader
@@ -93,12 +93,12 @@ def _ep1_outline() -> dict[str, Any]:
     return cast(dict[str, Any], data["episodes"][0])
 
 
-def _valid_script_draft() -> ScriptDraft:
-    """加载合法 ScriptDraft golden fixture."""
+def _valid_script_draft() -> OrderedScriptDraft:
+    """加载 Writer 的有序剧本样例。"""
     data = json.loads(
-        (GOLDEN_DIR / "script_draft_valid.json").read_text(encoding="utf-8")
+        (GOLDEN_DIR / "script_draft_ordered.json").read_text(encoding="utf-8")
     )
-    return ScriptDraft.model_validate(data)
+    return OrderedScriptDraft.model_validate(data)
 
 
 # ========================================================================
@@ -140,19 +140,17 @@ class TestEpisodeWriterSkillHappyPath:
         assert len(result.scenes) >= 2
         assert result.plain_text
 
-    async def test_word_count_overridden(
+    async def test_word_count_calculated(
         self,
         skill: EpisodeWriterSkill,
         agent: BaseAgent,
         prompt_loader: PromptLoader,
         fake_llm: FakeLLM,
     ) -> None:
-        """验收项 1: LLM 自报 word_count 被 Tool 覆盖."""
+        """有序正文的字数由服务端工具计算。"""
         sb = _football_story_bible()
         outline = _ep1_outline()
         expected = _valid_script_draft()
-        # LLM "谎报" 字数
-        expected.word_count = 99999
         fake_llm.register("write_episode", expected)
 
         ew_input = EpisodeWriterInput(
@@ -184,7 +182,6 @@ class TestEpisodeWriterSkillHappyPath:
         outline = _ep1_outline()
         expected = _valid_script_draft()
         # LLM "谎报" 比例
-        expected.dialogue_ratio = 0.999
         fake_llm.register("write_episode", expected)
 
         ew_input = EpisodeWriterInput(
@@ -200,8 +197,7 @@ class TestEpisodeWriterSkillHappyPath:
             "outline_artifact_id": uuid4(),
         })
 
-        # Tool 计算的比例应与 LLM 原始值不同
-        assert result.dialogue_ratio != 0.999
+        assert 0 < result.dialogue_ratio < 1
 
     async def test_scene_count_minimum(
         self,

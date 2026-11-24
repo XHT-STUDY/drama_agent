@@ -27,7 +27,7 @@ from app.application.run_service import RunService
 from app.domain.evaluation import EvaluationReport
 from app.domain.outline import EpisodeOutlineSet
 from app.domain.requirement import NormalizedRequirement
-from app.domain.script import ScriptDraft
+from app.domain.script import OrderedScriptDraft, ScriptDraft
 from app.domain.story_bible import StoryBible
 from app.events.publisher import EventPublisher
 from app.llm.budget import enter_run, exit_run
@@ -63,7 +63,7 @@ def _register_golden(llm: FakeLLM, *, high_score: bool = True) -> None:
     )
     llm.register("story_bible", StoryBible.model_validate(_load_golden("story_bible_football")))
     llm.register("outline", EpisodeOutlineSet.model_validate(_load_golden("outline_set_valid")))
-    llm.register("write_episode", ScriptDraft.model_validate(_load_golden("script_draft_valid")))
+    llm.register("write_episode", OrderedScriptDraft.model_validate(_load_golden("script_draft_ordered")))
     from app.llm.fake import episode_delta_factory
 
     llm.register_factory("episode_summary_v2", episode_delta_factory)

@@ -26,7 +26,7 @@ from app.application.artifact_service import ArtifactService
 from app.application.conversation_service import MessageService
 from app.application.run_service import RunService
 from app.domain.conversation import MessageCreate
-from app.domain.script import EpisodeWriterInput, ScriptDraft
+from app.domain.script import EpisodeWriterInput, OrderedScriptDraft, ScriptDraft
 from app.events.publisher import EventPublisher
 from app.llm.fake import FakeLLM
 from app.memory.short_term import InMemoryShortTermStore
@@ -89,7 +89,7 @@ class TestSummaryReachesWriter:
         # 0) 注册 write_episode golden fixture（skill 需走通 LLM 调用）
         fake_llm.register(
             "write_episode",
-            ScriptDraft.model_validate(_load_golden("script_draft_valid")),
+            OrderedScriptDraft.model_validate(_load_golden("script_draft_ordered")),
         )
 
         # 1) 多轮对话超阈值 → 调度累计摘要(M-02:调度移出消息响应路径,

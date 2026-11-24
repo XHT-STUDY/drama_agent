@@ -1268,10 +1268,10 @@ def _register_fake_fixtures(llm: Any) -> None:
     from app.domain.requirement import NormalizedRequirement
     from app.domain.revision import (
         ContinuitySemanticCheck,
+        OrderedRevisionResult,
         RevisionPlan,
-        RevisionResult,
     )
-    from app.domain.script import ScriptDraft
+    from app.domain.script import OrderedScriptDraft
     from app.domain.story_bible import StoryBible
 
     llm.register("normalize_requirement", NormalizedRequirement.model_validate(_load("requirement_football")))
@@ -1284,7 +1284,7 @@ def _register_fake_fixtures(llm: Any) -> None:
         ArtifactExplanationOutput.model_validate(_load("artifact_explanation_valid")),
     )
     llm.register("outline", EpisodeOutlineSet.model_validate(_load("outline_set_valid")))
-    llm.register("write_episode", ScriptDraft.model_validate(_load("script_draft_valid")))
+    llm.register("write_episode", OrderedScriptDraft.model_validate(_load("script_draft_ordered")))
     # M-03/M-04:单集 typed delta 派生用内容感知桩(集数随集变化)
     from app.llm.fake import episode_delta_factory
 
@@ -1302,7 +1302,9 @@ def _register_fake_fixtures(llm: Any) -> None:
         llm.register("evaluate_episode", EvaluationReport.model_validate(_load("evaluation_report_valid")))
     # 修订分支 fixtures（F-05）：仅防御性注册，正常高分路径不触发
     llm.register("revision_plan", RevisionPlan.model_validate(_load("revision_plan_valid")))
-    llm.register("revise_episode", RevisionResult.model_validate(_load("revised_episode_football")))
+    llm.register(
+        "revise_episode", OrderedRevisionResult.model_validate(_load("revised_episode_ordered")),
+    )
     llm.register(
         "continuity_semantic_check",
         ContinuitySemanticCheck.model_validate(_load("continuity_semantic_check_valid")),

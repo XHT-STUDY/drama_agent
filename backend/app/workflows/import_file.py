@@ -27,6 +27,7 @@ from app.application.artifact_service import ArtifactService
 from app.core.config import load_settings
 from app.db.repositories.uploads import UploadRepository
 from app.domain.import_file import ImportClassificationInput
+from app.domain.script import ORDERED_SCRIPT_SCHEMA_VERSION
 from app.events.publisher import EventPublisher
 from app.prompts.loader import PromptLoader
 from app.skills.import_classifier import ImportClassifierSkill
@@ -199,6 +200,7 @@ async def import_file_node(state: ImportState) -> dict[str, Any]:
                     artifact_type="script_draft",
                     episode_number=1,
                     content=script_content,
+                    content_schema_version=ORDERED_SCRIPT_SCHEMA_VERSION,
                     source_artifact_ids=[
                         {
                             "artifact_id": str(artifact.id),

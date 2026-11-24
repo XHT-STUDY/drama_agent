@@ -11,7 +11,7 @@
  */
 
 import React from "react";
-import type { ScriptDraftContent } from "@/types/api";
+import type { Scene, SceneBlock, ScriptDraftContent } from "@/types/api";
 
 // ============================================================
 // 辅助组件
@@ -50,6 +50,13 @@ function DialogueLineView({ line }: {
       <span className="ml-1">{line.text}</span>
     </p>
   );
+}
+
+function sceneBodyBlocks(scene: Scene): SceneBlock[] {
+  return scene.blocks ?? [
+    { kind: "action", text: scene.action ?? "" },
+    ...(scene.dialogue ?? []).map((line) => ({ ...line, kind: "dialogue" as const })),
+  ];
 }
 
 // ============================================================
@@ -131,26 +138,20 @@ export function ScriptView({ content, highlightedScenes = [] }: Props) {
                   </div>
                 )}
 
-                {/* 动作描述：每行加 △ 前缀 */}
-                {scene.action &&
-                  scene.action
+                {sceneBodyBlocks(scene).map((block, blockIndex) => {
+                  if (block.kind === "dialogue") {
+                    return <DialogueLineView key={blockIndex} line={block} />;
+                  }
+                  return block.text
                     .split("\n")
-                    .map((a) => a.trim())
-                    .filter((a) => a.length > 0)
-                    .map((a, i) => (
-                      <p key={i} className="text-sm leading-relaxed text-gray-700">
-                        △{a}
+                    .map((line) => line.trim().replace(/^(?:△\s*)+/, ""))
+                    .filter((line) => line.length > 0)
+                    .map((line, lineIndex) => (
+                      <p key={`${blockIndex}-${lineIndex}`} className="text-sm leading-relaxed text-gray-700">
+                        △{line}
                       </p>
-                    ))}
-
-                {/* 台词 */}
-                {scene.dialogue && scene.dialogue.length > 0 && (
-                  <div className="mt-1">
-                    {scene.dialogue.map((line, i) => (
-                      <DialogueLineView key={i} line={line} />
-                    ))}
-                  </div>
-                )}
+                    ));
+                })}
               </div>
             );
           })}

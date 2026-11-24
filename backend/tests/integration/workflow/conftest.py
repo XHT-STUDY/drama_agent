@@ -18,10 +18,10 @@ from app.domain.outline import EpisodeOutlineSet
 from app.domain.requirement import NormalizedRequirement
 from app.domain.revision import (
     ContinuitySemanticCheck,
+    OrderedRevisionResult,
     RevisionPlan,
-    RevisionResult,
 )
-from app.domain.script import ScriptDraft
+from app.domain.script import OrderedScriptDraft
 from app.domain.story_bible import StoryBible
 from app.events.publisher import EventPublisher
 from app.llm.fake import FakeLLM
@@ -45,7 +45,7 @@ def fake_llm() -> FakeLLM:
     llm.register("normalize_requirement", NormalizedRequirement.model_validate(req_golden))
     llm.register("story_bible", StoryBible.model_validate(_load_golden("story_bible_football")))
     llm.register("outline", EpisodeOutlineSet.model_validate(_load_golden("outline_set_valid")))
-    script_draft = ScriptDraft.model_validate(_load_golden("script_draft_valid"))
+    script_draft = OrderedScriptDraft.model_validate(_load_golden("script_draft_ordered"))
     llm.register("write_episode", script_draft)
     # M-03/M-04:单集 typed delta 派生内容感知桩
     from app.llm.fake import episode_delta_factory
@@ -55,7 +55,9 @@ def fake_llm() -> FakeLLM:
     llm.register("evaluate_episode", EvaluationReport.model_validate(_load_golden("evaluation_report_valid")))
     # 修订分支 fixtures（F-05）：默认走"通过"语义（连续性 pass）
     llm.register("revision_plan", RevisionPlan.model_validate(_load_golden("revision_plan_valid")))
-    llm.register("revise_episode", RevisionResult.model_validate(_load_golden("revised_episode_football")))
+    llm.register(
+        "revise_episode", OrderedRevisionResult.model_validate(_load_golden("revised_episode_ordered")),
+    )
     llm.register(
         "continuity_semantic_check",
         ContinuitySemanticCheck.model_validate(_load_golden("continuity_semantic_check_valid")),

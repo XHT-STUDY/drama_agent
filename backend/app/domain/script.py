@@ -4,10 +4,17 @@ word_count 和 dialogue_ratio 由确定性 Tool 计算，
 不可信任 LLM 自报数值。
 """
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 
 class EpisodeWriterInput(BaseModel):
@@ -57,8 +64,29 @@ class DialogueLine(BaseModel):
     )
 
 
-class Scene(BaseModel):
-    """单场戏。"""
+class ActionBlock(BaseModel):
+    """场景中的一段可拍摄动作。"""
+
+    model_config = {"extra": "forbid"}
+
+    kind: Literal["action"]
+    text: str = Field(min_length=1, pattern=r"\S")
+
+
+class DialogueBlock(DialogueLine):
+    """场景中的一段对白、旁白或独白。"""
+
+    kind: Literal["dialogue"]
+    speaker: str = Field(..., description="说话角色名", min_length=1, pattern=r"\S")
+    text: str = Field(..., description="台词文本", min_length=1, pattern=r"\S")
+
+
+SceneBlock = Annotated[ActionBlock | DialogueBlock, Field(discriminator="kind")]
+ORDERED_SCRIPT_SCHEMA_VERSION = "2.0"
+
+
+class SceneHeading(BaseModel):
+    """新旧场景共用的场次和出场信息。"""
 
     model_config = {"extra": "forbid"}
 
@@ -70,26 +98,83 @@ class Scene(BaseModel):
         description="内/外景：内、外、内/外；缺省按 外 处理",
     )
     characters: list[str] = Field(default_factory=list, description="出场角色列表")
-    action: str = Field(..., description="动作描写，可含多行（每行一个镜头/动作）", min_length=1)
-    dialogue: list[DialogueLine] = Field(
-        default_factory=list, description="台词列表"
+
+
+class OrderedScene(SceneHeading):
+    """模型必须为每场提交有序正文。"""
+
+    blocks: list[SceneBlock] = Field(
+        min_length=1, description="按剧情发生顺序排列的动作和台词"
     )
 
 
-class ScriptDraft(BaseModel):
-    """单集剧本草稿。
+class Scene(SceneHeading):
+    """含历史字段及可选有序正文的场景。"""
 
-    每集独立为一个 Artifact；word_count 与 dialogue_ratio
-    由服务端确定性 Tool 计算后覆盖 LLM 自报值。
-    """
+    action: str = Field(default="", description="动作描写，按行分隔")
+    dialogue: list[DialogueLine] = Field(default_factory=list, description="台词列表")
+    blocks: list[SceneBlock] | None = Field(
+        default=None, min_length=1, description="按观众所见所闻顺序排列的动作和台词"
+    )
+
+    @model_validator(mode="after")
+    def _derive_legacy_fields(self) -> "Scene":
+        if self.blocks is None:
+            if not self.action:
+                raise ValueError("旧格式场景需要动作描写")
+            return self
+
+        self.action = "\n".join(block.text for block in self.blocks if block.kind == "action")
+        self.dialogue = [
+            DialogueLine(
+                speaker=block.speaker, text=block.text,
+                parenthetical=block.parenthetical, line_type=block.line_type,
+            )
+            for block in self.blocks if block.kind == "dialogue"
+        ]
+        return self
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.blocks is None:
+            data.pop("blocks", None)
+        return data
+
+
+class ScriptDraftHeading(BaseModel):
+    """生成输出和持久化稿件共用的剧集信息。"""
 
     model_config = {"extra": "forbid"}
 
     episode_number: int = Field(..., description="集号", ge=1)
     title: str = Field(..., description="本集标题", min_length=1)
     opening_hook: str = Field(..., description="开头钩子文本", min_length=1)
-    scenes: list[Scene] = Field(..., description="场次列表")
     ending_hook: str = Field(..., description="结尾钩子文本", min_length=1)
+
+    @field_validator("scenes", check_fields=False)
+    @classmethod
+    def _check_scene_numbers_consecutive(
+        cls, scenes: list[SceneHeading]
+    ) -> list[SceneHeading]:
+        """场次编号应连续且不重复，从 1 开始。"""
+        numbers = [scene.scene_number for scene in scenes]
+        expected = list(range(1, len(numbers) + 1))
+        if sorted(numbers) != expected:
+            raise ValueError(f"场次编号应连续且不重复，期望 {expected}，实际 {numbers}")
+        return scenes
+
+
+class OrderedScriptDraft(ScriptDraftHeading):
+    """Writer 和 Reviser 的有序剧本输出。"""
+
+    scenes: list[OrderedScene] = Field(min_length=2, description="场次列表")
+
+
+class ScriptDraft(ScriptDraftHeading):
+    """持久化的剧本草稿。正文和统计由服务端生成。"""
+
+    scenes: list[Scene] = Field(..., description="场次列表")
     plain_text: str = Field(..., description="纯文本全文", min_length=1)
     word_count: int = Field(default=0, description="服务端计算的字数", ge=0)
     dialogue_ratio: float = Field(
@@ -101,25 +186,15 @@ class ScriptDraft(BaseModel):
 
     @model_validator(mode="after")
     def _check_min_scenes(self) -> "ScriptDraft":
-        """每集至少需要 2 场戏。"""
         if len(self.scenes) < 2:
             raise ValueError(
-                f"第 {self.episode_number} 集至少需要 2 场戏，"
-                f"当前为 {len(self.scenes)}"
+                f"第 {self.episode_number} 集至少需要 2 场戏，当前为 {len(self.scenes)}"
             )
         return self
 
-    @model_validator(mode="after")
-    def _check_scene_numbers_consecutive(self) -> "ScriptDraft":
-        """场次编号应连续且不重复，从 1 开始。"""
-        numbers = [s.scene_number for s in self.scenes]
-        expected = list(range(1, len(numbers) + 1))
-        if sorted(numbers) != expected:
-            duplicates = {n for n in numbers if numbers.count(n) > 1}
-            if duplicates:
-                raise ValueError(f"场次编号重复: {sorted(duplicates)}")
-            raise ValueError(
-                f"场次编号不连续，期望从 1 开始的连续编号，"
-                f"实际: {sorted(numbers)}"
-            )
-        return self
+    @property
+    def content_schema_version(self) -> str:
+        """标记包含有序场景的稿件，包括局部升级的修订稿。"""
+        if any(scene.blocks is not None for scene in self.scenes):
+            return ORDERED_SCRIPT_SCHEMA_VERSION
+        return "1.0"

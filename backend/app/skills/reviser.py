@@ -3,10 +3,10 @@
 职责:
 - 接收原稿、修订计划、StoryBible、当前集大纲与连续性状态 (RevisionTaskInput)
 - 在模型输入中显式列出 preserve 与禁止修改项（锁定事实 / 各 operation preserve / 角色 forbidden_changes）
-- 调用 LLM 生成 RevisionResult：**完整新稿**（不输出原地 patch）+ 每个 operation 的执行记录
+- 调用 LLM 生成有序场景和每个 operation 的执行记录，服务端构建完整新稿
 - 权威字段覆盖: episode_number / title / referenced_outline_artifact_id / source_* 由服务端决定，
   不信任 LLM 自报
-- 服务端重新计算文本指标（word_count / dialogue_ratio），覆盖 LLM 自估值
+- 服务端计算成稿文本指标（word_count / dialogue_ratio）
 - 执行记录规范化: 剔除臆造、补齐缺失、按计划顺序输出（每个 operation 有执行结果或未执行说明）
 
 模块边界:
@@ -23,15 +23,16 @@ from typing import Any, cast
 from app.agents.base import BaseAgent
 from app.domain.revision import (
     OperationExecution,
+    OrderedRevisionResult,
     RevisionResult,
     RevisionTaskInput,
     normalize_executions,
 )
-from app.domain.script import ScriptDraft
+from app.domain.script import Scene, ScriptDraft
 from app.prompts.loader import PromptLoader
 from app.skills.protocol import Skill, SkillMetadata
 from app.tools.dialogue_ratio import DialogueRatioTool
-from app.tools.script_render import script_plain_text
+from app.tools.script_render import materialize_script_draft
 from app.tools.word_count import WordCountTool
 
 logger = logging.getLogger(__name__)
@@ -92,10 +93,18 @@ class ReviserSkill(Skill):
             logger.error("Prompt 加载失败: %s", e)
             raise
 
+        # 有序场景只向模型传一份正文，旧场景仍提供动作与对白字段。
+        source = task_input.script_draft.model_dump(
+            mode="json", exclude={"plain_text", "word_count", "dialogue_ratio"},
+        )
+        for scene in source["scenes"]:
+            if "blocks" in scene:
+                scene.pop("action", None)
+                scene.pop("dialogue", None)
         rendered = tpl.render(
             episode_number=str(task_input.episode_number),
             script_draft=_json.dumps(
-                task_input.script_draft.model_dump(mode="json"),
+                source,
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -119,7 +128,7 @@ class ReviserSkill(Skill):
             {"role": "user", "content": rendered},
         ]
         result = await agent.generate_structured(
-            RevisionResult,
+            OrderedRevisionResult,
             messages,
             prompt_name="revise_episode",
             temperature=0.4,
@@ -135,16 +144,35 @@ class ReviserSkill(Skill):
                 f"Reviser Skill LLM 调用失败: {result.error_code} - {result.error_detail}"
             )
 
-        rev_result = cast(RevisionResult, result.parsed)
+        rev_result = cast(OrderedRevisionResult, result.parsed)
 
-        # 3. 权威字段覆盖（不信任 LLM 自报）+ 服务端重算文本指标
-        draft = rev_result.script_draft
-        draft.episode_number = task_input.episode_number
-        draft.title = task_input.script_draft.title
-        draft.referenced_outline_artifact_id = (
-            task_input.script_draft.referenced_outline_artifact_id
+        # 单场改稿从原稿复制未授权的场次，避免模型改写或重排其他场次。
+        original = task_input.script_draft
+        output = rev_result.script_draft
+        output.episode_number = task_input.episode_number
+        output.title = original.title
+        targets = {op.target_scene_number for op in task_input.revision_plan.operations}
+        scenes: list[Scene] | None = None
+        if None not in targets:
+            edits = {scene.scene_number: scene for scene in output.scenes}
+            original_numbers = {scene.scene_number for scene in original.scenes}
+            if not targets.issubset(original_numbers) or not targets.issubset(edits):
+                raise ReviserValidationError("修订结果缺少计划指定的场次")
+            scenes = [
+                Scene.model_validate(edits[scene.scene_number].model_dump())
+                if scene.scene_number in targets
+                else scene.model_copy(deep=True)
+                for scene in original.scenes
+            ]
+            if original.scenes[0].scene_number not in targets:
+                output.opening_hook = original.opening_hook
+            if original.scenes[-1].scene_number not in targets:
+                output.ending_hook = original.ending_hook
+
+        draft = materialize_script_draft(
+            output, original.referenced_outline_artifact_id, scenes=scenes
         )
-        await self._override_metrics(draft)
+        await self._compute_metrics(draft)
 
         # 4. 执行记录规范化: 剔除臆造 / 补齐缺失 / 按计划顺序全覆盖
         executions = normalize_executions(
@@ -171,44 +199,25 @@ class ReviserSkill(Skill):
         )
         return final
 
-    # ---- 文本指标重算（服务端确定性覆盖） ----
+    # ---- 文本指标 ----
 
-    async def _override_metrics(self, draft: ScriptDraft) -> None:
-        """使用确定性工具重算并覆盖 LLM 自报的 word_count / dialogue_ratio。
+    async def _compute_metrics(self, draft: ScriptDraft) -> None:
+        """使用确定性工具计算成稿的 word_count 和 dialogue_ratio。
 
-        plain_text 同步从 scenes 确定性渲染（中文短剧剧本格式），不信任 LLM 自报文本。
+        plain_text 来自服务端按有序段落渲染的结果。
 
         Args:
-            draft: 修订后的剧本（原地覆盖指标）
+            draft: 修订后的剧本
         """
-        # plain_text 覆盖（与写作/导出/前端展示/diff 共用同一渲染器）
-        rendered = script_plain_text(
-            draft.episode_number, [s.model_dump() for s in draft.scenes]
-        )
-        if draft.plain_text != rendered:
-            logger.info("第 %d 集 plain_text 覆盖: 服务端确定性渲染", draft.episode_number)
-            draft.plain_text = rendered
-
         wc_result = await self._word_counter.execute(plain_text=draft.plain_text)
-        computed_wc = int(wc_result.get("chinese_chars_with_punct", 0))
-        if draft.word_count != computed_wc:
-            logger.info(
-                "第 %d 集 word_count 覆盖: LLM=%d → Tool=%d",
-                draft.episode_number, draft.word_count, computed_wc,
-            )
-            draft.word_count = computed_wc
+        draft.word_count = int(wc_result.get("chinese_chars_with_punct", 0))
 
         scenes_raw = [s.model_dump() for s in draft.scenes]
         dr_result = await self._dialogue_calc.execute(
             scenes=scenes_raw, plain_text=draft.plain_text,
         )
         computed_ratio = float(dr_result.get("dialogue_ratio", 0.0))
-        if abs(draft.dialogue_ratio - computed_ratio) > 0.001:
-            logger.info(
-                "第 %d 集 dialogue_ratio 覆盖: LLM=%.3f → Tool=%.3f",
-                draft.episode_number, draft.dialogue_ratio, computed_ratio,
-            )
-            draft.dialogue_ratio = computed_ratio
+        draft.dialogue_ratio = computed_ratio
 
         if computed_ratio < _DIALOGUE_RATIO_LOW_WARN:
             logger.warning(

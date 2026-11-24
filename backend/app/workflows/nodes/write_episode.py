@@ -235,6 +235,8 @@ async def write_episodes_node(state: CreationState) -> dict[str, Any]:
             artifact = await artifact_svc.create_validated_artifact(
                 db, project_id=project_id, artifact_type="script_draft",
                 episode_number=ep_num, content=content, prompt_version=prompt_version,
+                content_schema_version=draft.content_schema_version,
+                dedup_extra=f"script_schema:{draft.content_schema_version}",
                 source_artifact_ids=[
                     {
                         "artifact_id": state["outline_set_artifact_id"],

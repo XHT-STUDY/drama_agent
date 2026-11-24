@@ -98,6 +98,19 @@ class TestSceneLines:
         assert "△狂风裹挟着冰屑横扫荒原。" in lines
         assert "△风雪中，苏翊裹紧领口。" in lines
 
+    def test_action_markers_render_once(self) -> None:
+        scene = make_scene(
+            characters=[],
+            dialogue=[{"speaker": "苏翊", "text": "看！△在这里。"}],
+            action="动作甲。\n △ 动作乙，纸上画着△。\n △　△ 动作丙。\n  △  \n",
+        )
+        assert scene_lines(1, scene, with_heading=False) == [
+            "△动作甲。",
+            "△动作乙，纸上画着△。",
+            "△动作丙。",
+            "苏翊：看！△在这里。",
+        ]
+
 
 class TestScriptPlainText:
     def test_scenes_separated_by_blank_line(self) -> None:

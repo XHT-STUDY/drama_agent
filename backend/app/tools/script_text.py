@@ -43,7 +43,7 @@ _ACTION_LINE_RE = re.compile(r"^\s*△\s*(.*?)\s*$")
 # 台词：`角色（情绪）：对白` / `角色VO：对白` 等
 _DIALOGUE_RE = re.compile(r"^\s*([^：:]{1,20})[：:]\s*(.+?)\s*$")
 # 说话人段拆解：`苏翊` / `苏翊OS` / `苏翊（冷静）` / `林晓VO（高亢）`
-_SPEAKER_RE = re.compile(r"^(.*?)(VO|OS)?\s*[（(]([^）)]*)[）)]?\s*$")
+_SPEAKER_RE = re.compile(r"^(.*?)(VO|OS)?\s*(?:[（(]([^）)]*)[）)]?)?\s*$")
 
 _LINE_TYPE_MAP = {"VO": "vo", "OS": "os"}
 
@@ -101,12 +101,13 @@ def _append_action(scene: dict[str, Any], text: str) -> None:
     if not text:
         return
     scene["action"] = (scene["action"] + "\n" + text).strip()
+    scene["blocks"].append({"kind": "action", "text": text})
 
 
 def _finalize_scene(scene: dict[str, Any]) -> dict[str, Any]:
-    """结算一场戏：保证 action 非空（Scene 校验 min_length=1）。"""
-    if not (scene.get("action") or "").strip():
-        scene["action"] = _ACTION_FALLBACK
+    """保留纯台词场，空场沿用转场占位。"""
+    if not scene["blocks"]:
+        _append_action(scene, _ACTION_FALLBACK)
     return scene
 
 
@@ -147,6 +148,7 @@ def full_script_to_script_draft(
                 "characters": [],
                 "action": "",
                 "dialogue": [],
+                "blocks": [],
             }
             if int_ext:
                 scene["int_ext"] = int_ext
@@ -177,6 +179,7 @@ def full_script_to_script_draft(
             if line_type != "dialogue":
                 entry["line_type"] = line_type
             current["dialogue"].append(entry)
+            current["blocks"].append({**entry, "kind": "dialogue"})
             if speaker not in current["characters"]:
                 current["characters"].append(speaker)
         else:

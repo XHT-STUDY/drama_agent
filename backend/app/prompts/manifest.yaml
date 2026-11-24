@@ -58,6 +58,15 @@ prompts:
     changelog: "v1.2: 剧本正文改为中文短剧剧本格式（场景头 `集-场 时间 内/外 地点` / 人物行 / △动作 / 对白·VO·OS 台词），新增 int_ext 与 line_type 字段，plain_text 由服务端从 scenes 确定性渲染。v1.1: 注入 ContextBuilder 按预算组装的创作上下文（G-02）——当前集大纲完整不截断，旧会话摘要经连续性段进入上下文"
     user_content_vars: [assembled_context]
 
+  - name: write_episode
+    version: "2.0.0"
+    input_schema: EpisodeWriterInput
+    output_schema: OrderedScriptDraft
+    owner: writer
+    template: episode_writer_v3.md
+    changelog: "按剧情发生顺序输出每场的动作和台词块，正文与统计由服务端生成"
+    user_content_vars: [assembled_context]
+
   # ---- 剧集评估 ----
   - name: evaluate_episode
     version: "1.3.0"
@@ -86,6 +95,15 @@ prompts:
     owner: reviser
     template: reviser.md
     changelog: "v1.1: script_draft 新增 int_ext / line_type 字段，plain_text 由服务端按中文短剧剧本格式渲染。v1.0: 按修订计划局部改写单集剧本，输出完整新稿与 operation 执行记录；显式列出 preserve 与禁止修改项"
+    user_content_vars: [story_bible, episode_outline, script_draft]
+
+  - name: revise_episode
+    version: "2.0.0"
+    input_schema: RevisionTaskInput
+    output_schema: OrderedRevisionResult
+    owner: reviser
+    template: reviser_v2.md
+    changelog: "修订输出有序动作与台词块，沿用修订约束和操作记录"
     user_content_vars: [story_bible, episode_outline, script_draft]
 
   # ---- 连续性语义检查 ----

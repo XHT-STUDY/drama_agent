@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.tools.script_render import scene_body_blocks
+
 # 归一化时移除的字符：所有空白 + 中英文标点（引用漂移最常见的差异来源）
 _NORMALIZE_STRIP_RE = re.compile(r"[\s，。！？；：、“”‘’（）《》〈〉【】—…·,.\!?;:\"'()\[\]<>{}]")
 
@@ -29,10 +31,7 @@ def scene_texts_from_content(content: dict[str, Any]) -> dict[int, str]:
     for scene in content.get("scenes") or []:
         if not isinstance(scene, dict):
             continue
-        parts = [scene.get("action") or ""]
-        for line in scene.get("dialogue") or []:
-            if isinstance(line, dict):
-                parts.append(line.get("text") or "")
+        parts = [block.get("text") or "" for block in scene_body_blocks(scene)]
         texts[int(scene.get("scene_number", 0))] = "".join(parts)
     return texts
 

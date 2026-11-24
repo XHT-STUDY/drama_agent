@@ -26,7 +26,7 @@ import { ScriptView } from "@/features/scripts/ScriptView";
 import { ScoreBar } from "@/features/evaluations/ScoreBar";
 import { IssueCard } from "@/features/evaluations/IssueCard";
 import { EvaluationPanel } from "@/features/evaluations/EvaluationPanel";
-import type { ScriptDraftContent, EvaluationReportContent, EvaluationIssue } from "@/types/api";
+import type { Scene, ScriptDraftContent, EvaluationReportContent, EvaluationIssue } from "@/types/api";
 
 // ============================================================
 // 工厂函数
@@ -270,6 +270,38 @@ describe("ScriptView", () => {
     // 3 个场景各有一段动作描述，匹配"激烈的训练开始了"
     const actions = screen.getAllByText(/激烈的训练开始了/);
     expect(actions.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("动作行只显示一个三角标记", () => {
+    const scene = {
+      ...makeScene(1),
+      action: "动作甲。\n △ 动作乙，纸上画着△。\n △　△ 动作丙。\n  △  \n",
+    };
+    render(<ScriptView content={makeScriptContent({ scenes: [scene] })} />);
+
+    const actionLines = Array.from(
+      document.querySelectorAll("#scene-1 > p"),
+      (line) => line.textContent ?? "",
+    ).filter((line) => line.startsWith("△"));
+    expect(actionLines).toEqual(["△动作甲。", "△动作乙，纸上画着△。", "△动作丙。"]);
+    expect(screen.getByText("我会赢下这场比赛！")).toBeTruthy();
+  });
+
+  it("按有序块交错展示动作、对白、旁白和独白", () => {
+    const scene: Scene = {
+      ...makeScene(1),
+      blocks: [
+        { kind: "action", text: "△△ 进攻开始。" },
+        { kind: "dialogue", speaker: "林风", text: "给我！" },
+        { kind: "action", text: "队友传球。" },
+        { kind: "dialogue", speaker: "教练", text: "射门。", line_type: "vo" },
+        { kind: "dialogue", speaker: "林风", text: "我能行。", line_type: "os" },
+      ],
+    };
+    render(<ScriptView content={makeScriptContent({ scenes: [scene] })} />);
+
+    const lines = Array.from(document.querySelectorAll("#scene-1 p"), (line) => line.textContent);
+    expect(lines).toEqual(["△进攻开始。", "林风给我！", "△队友传球。", "教练VO射门。", "林风OS我能行。"]);
   });
 
   it("显示字号统计", () => {

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.domain.continuity import ContinuityState
 from app.domain.evaluation import EvaluationIssue, EvaluationReport
-from app.domain.script import ScriptDraft
+from app.domain.script import OrderedScriptDraft, ScriptDraft
 
 
 class RevisionOperation(BaseModel):
@@ -130,6 +130,15 @@ class OperationExecution(BaseModel):
         ..., description="执行结果: applied / partial / skipped"
     )
     note: str = Field(..., description="执行说明或未执行原因", min_length=1)
+
+
+class OrderedRevisionResult(BaseModel):
+    """Reviser 的生成结果，稿件来源由服务器补齐。"""
+
+    model_config = {"extra": "forbid"}
+
+    script_draft: OrderedScriptDraft
+    operation_executions: list[OperationExecution] = Field(default_factory=list)
 
 
 class RevisionResult(BaseModel):

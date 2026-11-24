@@ -12,7 +12,7 @@
 
 - 场景头：`{集号}-{场号} {时间} {内/外} {地点}`，缺省内外景按 外 处理；
 - 出场人物：`人物：A、B`（无人物信息时省略）；
-- 动作：action 按行拆分，每行加 `△` 前缀；
+- 动作：action 按行拆分，每个非空动作行以一个 `△` 开头；
 - 台词：`角色名（情绪）：文本`；旁白为 `角色名VO（情绪）：文本`，
   内心独白为 `角色名OS（情绪）：文本`。
 
@@ -22,13 +22,19 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterator
 from typing import Any
+from uuid import UUID
+
+from app.domain.script import OrderedScriptDraft, Scene, ScriptDraft
 
 # 台词类型 → 角色名后缀
 _LINE_TYPE_SUFFIX: dict[str, str] = {"dialogue": "", "vo": "VO", "os": "OS"}
 
 # 内外景缺省值
 DEFAULT_INT_EXT = "外"
+_ACTION_PREFIX_RE = re.compile(r"^(?:△\s*)+")
 
 
 def scene_heading(episode_number: int, scene: dict[str, Any]) -> str:
@@ -48,12 +54,26 @@ def _characters_line(scene: dict[str, Any]) -> str | None:
     return f"人物：{'、'.join(chars)}"
 
 
-def _action_lines(scene: dict[str, Any]) -> list[str]:
-    """动作描述行：action 按行拆分，每行加 △ 前缀。"""
-    raw = str(scene.get("action") or "").strip()
-    if not raw:
-        return []
-    return [f"△{line.strip()}" for line in raw.splitlines() if line.strip()]
+def scene_body_blocks(scene: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """按稿件保存的顺序读取正文，旧场景沿用历史顺序。"""
+    blocks = scene.get("blocks")
+    if blocks is not None:
+        yield from blocks
+        return
+    yield {"kind": "action", "text": scene.get("action") or ""}
+    for line in scene.get("dialogue") or []:
+        if isinstance(line, dict):
+            yield {**line, "kind": "dialogue"}
+
+
+def _action_lines(raw: str) -> list[str]:
+    """规范动作行开头的 △，保留正文中的符号。"""
+    lines: list[str] = []
+    for line in raw.splitlines():
+        action = _ACTION_PREFIX_RE.sub("", line.strip())
+        if action:
+            lines.append(f"△{action}")
+    return lines
 
 
 def dialogue_line(d: dict[str, Any]) -> str:
@@ -82,8 +102,11 @@ def scene_lines(
     characters_line = _characters_line(scene)
     if characters_line:
         lines.append(characters_line)
-    lines.extend(_action_lines(scene))
-    lines.extend(dialogue_line(d) for d in scene.get("dialogue") or [])
+    for block in scene_body_blocks(scene):
+        if block["kind"] == "action":
+            lines.extend(_action_lines(block["text"]))
+        elif block["kind"] == "dialogue":
+            lines.append(dialogue_line(block))
     return lines
 
 
@@ -91,3 +114,25 @@ def script_plain_text(episode_number: int, scenes: list[dict[str, Any]]) -> str:
     """整集剧本 → plain_text（场次间以空行分隔）。"""
     blocks = ["\n".join(scene_lines(episode_number, scene)) for scene in scenes]
     return "\n\n".join(blocks)
+
+
+def materialize_script_draft(
+    output: OrderedScriptDraft,
+    outline_artifact_id: UUID,
+    *,
+    scenes: list[Scene] | None = None,
+) -> ScriptDraft:
+    """以生成结果的顺序构造正式稿和兼容正文。"""
+    if scenes is None:
+        scenes = [Scene.model_validate(scene.model_dump()) for scene in output.scenes]
+    return ScriptDraft(
+        episode_number=output.episode_number,
+        title=output.title,
+        opening_hook=output.opening_hook,
+        ending_hook=output.ending_hook,
+        scenes=scenes,
+        plain_text=script_plain_text(
+            output.episode_number, [scene.model_dump() for scene in scenes]
+        ),
+        referenced_outline_artifact_id=outline_artifact_id,
+    )

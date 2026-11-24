@@ -7,7 +7,7 @@
 - 每个 operation 有执行结果或未执行说明（normalize_executions 全覆盖）
 - 新稿 source 包含原稿、评估、计划（source_* 权威回填）
 - 在模型输入中显式列出 preserve 与禁止修改项（protection_block）
-- 服务端重算文本指标（word_count / dialogue_ratio 覆盖 LLM 自报）
+- 服务端计算成稿的 word_count 和 dialogue_ratio
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from app.agents.base import BaseAgent
 from app.agents.revision import RevisionAgent
 from app.domain.revision import (
     OperationExecution,
+    OrderedRevisionResult,
     RevisionOperation,
     RevisionPlan,
     RevisionResult,
@@ -266,7 +267,11 @@ def revision_agent(agent: BaseAgent, skill_registry: SkillRegistry) -> RevisionA
 
 
 def _register_rev(agent: BaseAgent, result: RevisionResult) -> None:
-    cast(FakeLLM, agent.llm).register("revise_episode", result)
+    output = OrderedRevisionResult.model_validate(_load_golden("revised_episode_ordered.json"))
+    output.script_draft.episode_number = result.script_draft.episode_number
+    output.script_draft.title = result.script_draft.title
+    output.operation_executions = result.operation_executions
+    cast(FakeLLM, agent.llm).register("revise_episode", output)
 
 
 async def _execute(
@@ -309,6 +314,23 @@ class TestReviserSkill:
         assert len(result.script_draft.scenes) >= 2
         assert [e.operation_id for e in result.operation_executions] == ["op_001"]
         assert result.operation_executions[0].status == "applied"
+
+    async def test_target_scene_uses_blocks_and_other_scenes_are_unchanged(
+        self, skill: ReviserSkill, agent: BaseAgent, prompt_loader: PromptLoader
+    ) -> None:
+        task = _task_input()
+        original = task.script_draft.model_dump()
+        output = OrderedRevisionResult.model_validate(_load_golden("revised_episode_ordered.json"))
+        output.script_draft.scenes[1].blocks[0].text = "未经授权的场景改写。"
+        cast(FakeLLM, agent.llm).register("revise_episode", output)
+
+        result = await _execute(skill, agent, prompt_loader, task)
+
+        assert result.script_draft.scenes[0].blocks == output.script_draft.scenes[0].blocks
+        assert result.script_draft.scenes[1].model_dump() == original["scenes"][1]
+        assert task.script_draft.model_dump() == original
+        assert "未经授权" not in result.script_draft.plain_text
+        assert result.script_draft.content_schema_version == "2.0"
 
     async def test_new_draft_parses_as_script_draft(
         self, skill: ReviserSkill, agent: BaseAgent, prompt_loader: PromptLoader

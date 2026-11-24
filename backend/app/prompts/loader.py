@@ -117,13 +117,20 @@ def _auto_register_domain_schemas() -> None:
         ContinuityViolation,
         ContinuityWarning,
         OperationExecution,
+        OrderedRevisionResult,
         RevisionOperation,
         RevisionPlan,
         RevisionPlanInput,
         RevisionResult,
         RevisionTaskInput,
     )
-    from app.domain.script import DialogueLine, EpisodeWriterInput, Scene, ScriptDraft  # noqa: F401
+    from app.domain.script import (  # noqa: F401
+        DialogueLine,
+        EpisodeWriterInput,
+        OrderedScriptDraft,
+        Scene,
+        ScriptDraft,
+    )
     from app.domain.story_bible import CharacterProfile, StoryBible, StoryBibleInput  # noqa: F401
     from app.domain.summary import (  # noqa: F401
         ConversationSummary,
@@ -158,6 +165,7 @@ def _auto_register_domain_schemas() -> None:
     register_schema("DialogueLine", DialogueLine)
     register_schema("EpisodeWriterInput", EpisodeWriterInput)
     register_schema("ScriptDraft", ScriptDraft)
+    register_schema("OrderedScriptDraft", OrderedScriptDraft)
     register_schema("EvaluationInput", EvaluationInput)
     register_schema("EvaluationIssue", EvaluationIssue)
     register_schema("EvaluationReport", EvaluationReport)
@@ -166,6 +174,7 @@ def _auto_register_domain_schemas() -> None:
     register_schema("RevisionPlanInput", RevisionPlanInput)
     register_schema("OperationExecution", OperationExecution)
     register_schema("RevisionResult", RevisionResult)
+    register_schema("OrderedRevisionResult", OrderedRevisionResult)
     register_schema("RevisionTaskInput", RevisionTaskInput)
     register_schema("ContinuityViolation", ContinuityViolation)
     register_schema("ContinuityWarning", ContinuityWarning)

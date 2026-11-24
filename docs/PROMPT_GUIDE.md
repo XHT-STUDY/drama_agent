@@ -1,8 +1,9 @@
 # DramaAgent Prompt 使用指南
 
-> 文档版本：1.1.0  
+> 文档版本：1.2.0
+>
 > 对应任务：C-01 ~ C-05（Prompt Loader + 创作 Skills 已完成）  
-> 最后更新：2026-07-24
+> 最后更新：2026-11-22
 
 ## 概述
 
@@ -168,6 +169,17 @@ register_schema("NewSchema", NewSchema)
 - `LLMCall.prompt_version` — 使用的 Prompt 版本号
 - `Artifact.prompt_version` — 生成的 Artifact 关联的 Prompt 版本
 - `Artifact.content_hash` 可与 `PromptTemplate.content_hash` 交叉校验
+
+## 剧本写作与修订
+
+| Prompt | 版本 | 模板 | 输出 Schema |
+| --- | --- | --- | --- |
+| `write_episode` | `2.0.0` | `episode_writer_v3.md` | `OrderedScriptDraft` |
+| `revise_episode` | `2.0.0` | `reviser_v2.md` | `OrderedRevisionResult` |
+
+两个模板都要求模型把动作、对白、画外音和内心独白按剧情发生顺序写进各场的 `blocks`。当某句台词触发角色反应时，先写台词，再写反应动作。连续动作或对白也可按剧情需要保留。动作前缀、兼容字段、成稿纯文本和统计由服务端生成。模型漏填 `blocks` 或返回无效块时进入现有结构化输出校验与重试。
+
+部署时先让读取和导出端兼容两种格式，再启用有序写作和修订。需要回退写入端时，继续保留能够读取 1.0 和 2.0 的版本。已存稿件可继续查看和导出。
 
 ## 修改 Prompt 的流程
 
